@@ -51,10 +51,15 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                   <AnimatedChart
                     chart={beat.chart}
                     backgroundClipPath={beat.footage?.clip_path ?? null}
+                    backgroundMediaType={beat.footage?.media_type ?? "video"}
                     durationInFrames={durationInFrames}
                   />
                 ) : beat.footage?.clip_path ? (
-                  <FootageClip clipPath={beat.footage.clip_path} />
+                  <FootageClip
+                    clipPath={beat.footage.clip_path}
+                    mediaType={beat.footage.media_type}
+                    durationInFrames={durationInFrames}
+                  />
                 ) : (
                   <AbsoluteFill style={{ backgroundColor: "#111111" }} />
                 )}

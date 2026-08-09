@@ -102,6 +102,7 @@ def _assemble_composition(
                 "footage": {
                     "clip_path": _path_str(footage["clip_path"]) if footage["clip_path"] else None,
                     "source": footage["source"],
+                    "media_type": footage["media_type"],
                     "search_terms": footage["search_terms"],
                 }
                 if footage["clip_path"]

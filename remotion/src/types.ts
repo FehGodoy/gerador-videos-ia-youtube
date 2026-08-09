@@ -12,6 +12,7 @@ export interface Caption {
 export interface Footage {
   clip_path: string;
   source: "pexels" | "pixabay" | "fallback" | "cache";
+  media_type: "video" | "image";
   search_terms: string[];
 }
 

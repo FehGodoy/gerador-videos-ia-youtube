@@ -18,8 +18,10 @@ from modules.config import PROJECT_ROOT, cache_dir, load_config
 
 logger = logging.getLogger(__name__)
 
-PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
-PIXABAY_SEARCH_URL = "https://pixabay.com/api/videos/"
+PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
+PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
+PIXABAY_VIDEO_SEARCH_URL = "https://pixabay.com/api/videos/"
+PIXABAY_PHOTO_SEARCH_URL = "https://pixabay.com/api/"
 
 MAX_CANDIDATES_TO_RANK = 8
 
@@ -28,14 +30,14 @@ class FootageNotFound(RuntimeError):
     pass
 
 
-def _search_pexels(term: str, cfg: dict) -> list[dict]:
+def _search_pexels_videos(term: str, cfg: dict) -> list[dict]:
     import os
 
     api_key = os.environ.get("PEXELS_API_KEY")
     if not api_key:
         return []
     resp = requests.get(
-        PEXELS_SEARCH_URL,
+        PEXELS_VIDEO_SEARCH_URL,
         headers={"Authorization": api_key},
         params={
             "query": term,
@@ -66,6 +68,7 @@ def _search_pexels(term: str, cfg: dict) -> list[dict]:
         candidates.append(
             {
                 "source": "pexels",
+                "media_type": "video",
                 "url": chosen["link"],
                 "thumbnail_url": video.get("image"),
                 "duration": video["duration"],
@@ -74,14 +77,49 @@ def _search_pexels(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
-def _search_pixabay(term: str, cfg: dict) -> list[dict]:
+def _search_pexels_photos(term: str, cfg: dict) -> list[dict]:
+    import os
+
+    api_key = os.environ.get("PEXELS_API_KEY")
+    if not api_key:
+        return []
+    resp = requests.get(
+        PEXELS_PHOTO_SEARCH_URL,
+        headers={"Authorization": api_key},
+        params={
+            "query": term,
+            "orientation": cfg["footage"]["orientation"],
+            "per_page": cfg["footage"]["candidates_per_beat"],
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    candidates = []
+    for photo in resp.json().get("photos", []):
+        src = photo.get("src", {})
+        url = src.get("large2x") or src.get("original")
+        if not url:
+            continue
+        candidates.append(
+            {
+                "source": "pexels",
+                "media_type": "image",
+                "url": url,
+                "thumbnail_url": src.get("medium") or src.get("small"),
+                "duration": None,
+            }
+        )
+    return candidates
+
+
+def _search_pixabay_videos(term: str, cfg: dict) -> list[dict]:
     import os
 
     api_key = os.environ.get("PIXABAY_API_KEY")
     if not api_key:
         return []
     resp = requests.get(
-        PIXABAY_SEARCH_URL,
+        PIXABAY_VIDEO_SEARCH_URL,
         params={
             "key": api_key,
             "q": term,
@@ -102,6 +140,7 @@ def _search_pixabay(term: str, cfg: dict) -> list[dict]:
         candidates.append(
             {
                 "source": "pixabay",
+                "media_type": "video",
                 "url": best["url"],
                 "thumbnail_url": best.get("thumbnail"),
                 "duration": duration,
@@ -110,21 +149,63 @@ def _search_pixabay(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
-_SEARCH_FUNCS = {"pexels": _search_pexels, "pixabay": _search_pixabay}
+def _search_pixabay_photos(term: str, cfg: dict) -> list[dict]:
+    import os
+
+    api_key = os.environ.get("PIXABAY_API_KEY")
+    if not api_key:
+        return []
+    resp = requests.get(
+        PIXABAY_PHOTO_SEARCH_URL,
+        params={
+            "key": api_key,
+            "q": term,
+            "image_type": "photo",
+            "per_page": max(cfg["footage"]["candidates_per_beat"], 3),  # mínimo exigido pela API
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    candidates = []
+    for hit in resp.json().get("hits", []):
+        url = hit.get("largeImageURL") or hit.get("webformatURL")
+        if not url:
+            continue
+        candidates.append(
+            {
+                "source": "pixabay",
+                "media_type": "image",
+                "url": url,
+                "thumbnail_url": hit.get("previewURL") or hit.get("webformatURL"),
+                "duration": None,
+            }
+        )
+    return candidates
+
+
+_SEARCH_FUNCS = {
+    "pexels": [_search_pexels_videos, _search_pexels_photos],
+    "pixabay": [_search_pixabay_videos, _search_pixabay_photos],
+}
 
 
 def search_candidates(search_terms: list[str]) -> list[dict]:
     """Busca candidatos (sem baixar) pro primeiro termo que trouxer algum
-    resultado, combinando Pexels + Pixabay. Cada candidato tem
-    {source, url, thumbnail_url, duration}."""
+    resultado, combinando vídeo + foto de Pexels e Pixabay. Cada candidato tem
+    {source, media_type, url, thumbnail_url, duration} — `duration` é None
+    para fotos. A revisão manual no painel decide qual usar; a IA de ranking
+    (footage_ranker.py) já compara os dois tipos pela miniatura."""
     cfg = load_config()
     for term in search_terms:
         combined: list[dict] = []
         for source_name in cfg["footage"]["sources"]:
-            try:
-                combined.extend(_SEARCH_FUNCS[source_name](term, cfg))
-            except requests.RequestException:
-                logger.exception("Busca de footage falhou em %s para o termo '%s'", source_name, term)
+            for search_func in _SEARCH_FUNCS[source_name]:
+                try:
+                    combined.extend(search_func(term, cfg))
+                except requests.RequestException:
+                    logger.exception(
+                        "Busca de footage falhou em %s para o termo '%s'", source_name, term
+                    )
         if combined:
             return combined[:MAX_CANDIDATES_TO_RANK]
     return []
@@ -145,7 +226,8 @@ def download_candidate(candidate: dict) -> str:
     if cached:
         return str(cached[0])
 
-    dest = footage_cache / f"{cache_key}.mp4"
+    ext = "jpg" if candidate.get("media_type") == "image" else "mp4"
+    dest = footage_cache / f"{cache_key}.{ext}"
     with requests.get(candidate["url"], stream=True, timeout=60) as resp:
         resp.raise_for_status()
         with open(dest, "wb") as f:
@@ -192,9 +274,10 @@ def search_and_download_footage(
     salva (evita rechamar a IA de ranking à toa numa regeneração) e grava a
     lista ranqueada completa pra revisão manual no painel web.
 
-    Retorna {"clip_path": str, "source": str, "search_terms": [...]}. Se a
-    busca não achar nada, usa um clipe genérico de assets/fallback/ em vez de
-    quebrar o pipeline; se nem isso existir, "clip_path" vem None.
+    Retorna {"clip_path": str, "source": str, "media_type": "video"|"image",
+    "search_terms": [...]}. Se a busca não achar nada, usa um clipe genérico
+    de assets/fallback/ em vez de quebrar o pipeline (sempre vídeo); se nem
+    isso existir, "clip_path" vem None.
     """
     from modules.footage_ranker import rank_candidates
 
@@ -206,7 +289,12 @@ def search_and_download_footage(
             chosen = cached_review["candidates"][cached_review["chosen_index"]]
             try:
                 clip_path = download_candidate(chosen)
-                return {"clip_path": clip_path, "source": chosen["source"], "search_terms": search_terms}
+                return {
+                    "clip_path": clip_path,
+                    "source": chosen["source"],
+                    "media_type": chosen.get("media_type", "video"),
+                    "search_terms": search_terms,
+                }
             except requests.RequestException:
                 logger.exception(
                     "Falha ao reaproveitar candidato salvo do beat %d, buscando de novo", beat_id
@@ -224,6 +312,7 @@ def search_and_download_footage(
         return {
             "clip_path": str(fallback) if fallback else None,
             "source": "fallback" if fallback else None,
+            "media_type": "video",
             "search_terms": search_terms,
         }
 
@@ -238,13 +327,19 @@ def search_and_download_footage(
         return {
             "clip_path": str(fallback) if fallback else None,
             "source": "fallback" if fallback else None,
+            "media_type": "video",
             "search_terms": search_terms,
         }
 
     if slug:
         save_candidates_for_review(slug, beat_id, ranked, chosen_index=0)
 
-    return {"clip_path": clip_path, "source": chosen["source"], "search_terms": search_terms}
+    return {
+        "clip_path": clip_path,
+        "source": chosen["source"],
+        "media_type": chosen.get("media_type", "video"),
+        "search_terms": search_terms,
+    }
 
 
 if __name__ == "__main__":

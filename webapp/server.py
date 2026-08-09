@@ -226,6 +226,7 @@ async def choose_footage_candidate(job_id: str, beat_id: int, req: FootageChoice
             beat_entry["footage"] = {
                 "clip_path": Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix(),
                 "source": chosen["source"],
+                "media_type": chosen.get("media_type", "video"),
                 "search_terms": old_terms,
             }
             break

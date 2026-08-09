@@ -831,6 +831,21 @@ progress::-webkit-progress-value {
   cursor: wait;
 }
 
+.candidate-type-badge {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 /* --- Result --- */
 
 video {

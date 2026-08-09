@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
 import type { ChartData } from "./types";
 
@@ -28,8 +28,9 @@ function formatValue(value: number, unidade: string): string {
 export const AnimatedChart: React.FC<{
   chart: ChartData;
   backgroundClipPath: string | null;
+  backgroundMediaType: "video" | "image";
   durationInFrames: number;
-}> = ({ chart, backgroundClipPath, durationInFrames }) => {
+}> = ({ chart, backgroundClipPath, backgroundMediaType, durationInFrames }) => {
   const frame = useCurrentFrame();
 
   const entrance = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: "clamp" });
@@ -50,16 +51,29 @@ export const AnimatedChart: React.FC<{
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {backgroundClipPath && (
-        <OffthreadVideo
-          src={staticFile(backgroundClipPath)}
-          style={{
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            filter: "blur(20px) brightness(0.32) saturate(0.9)",
-            transform: "scale(1.12)",
-          }}
-        />
+        backgroundMediaType === "image" ? (
+          <Img
+            src={staticFile(backgroundClipPath)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(20px) brightness(0.32) saturate(0.9)",
+              transform: "scale(1.12)",
+            }}
+          />
+        ) : (
+          <OffthreadVideo
+            src={staticFile(backgroundClipPath)}
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              filter: "blur(20px) brightness(0.32) saturate(0.9)",
+              transform: "scale(1.12)",
+            }}
+          />
+        )
       )}
       <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
         <div

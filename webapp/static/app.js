@@ -461,6 +461,11 @@ function renderReviewBeats(jobId, beatsData) {
       img.alt = `Candidato ${index + 1}`;
       thumb.appendChild(img);
 
+      const typeBadge = document.createElement("span");
+      typeBadge.className = "candidate-type-badge";
+      typeBadge.textContent = candidate.media_type === "image" ? "Foto" : "Vídeo";
+      thumb.appendChild(typeBadge);
+
       if (index === beat.chosen_index) {
         const badge = document.createElement("span");
         badge.className = "candidate-badge";

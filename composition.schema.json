@@ -48,10 +48,15 @@
         "footage": {
           "type": ["object", "null"],
           "description": "Presente quando type='concreto'. Nulo se a busca falhou e não há nem fallback.",
-          "required": ["clip_path", "search_terms"],
+          "required": ["clip_path", "media_type", "search_terms"],
           "properties": {
             "clip_path": { "type": "string" },
             "source": { "type": "string", "enum": ["pexels", "pixabay", "fallback", "cache"] },
+            "media_type": {
+              "type": "string",
+              "enum": ["video", "image"],
+              "description": "'image' usa <Img> com Ken Burns sutil no Remotion em vez de <OffthreadVideo>."
+            },
             "search_terms": { "type": "array", "items": { "type": "string" } }
           }
         },
@@ -102,6 +107,7 @@
           "footage": {
             "clip_path": "cache/footage/a1b2c3.mp4",
             "source": "pexels",
+            "media_type": "video",
             "search_terms": ["satellite launch", "1950s rocket", "soviet space program"]
           },
           "chart": null,
