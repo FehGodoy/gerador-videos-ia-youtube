@@ -19,7 +19,7 @@ from modules.config import PROJECT_ROOT, load_config, output_dir
 from modules.footage_search import search_and_download_footage
 from modules.keyword_extractor import extract_keywords
 from modules.narration import build_narration
-from modules.script_parser import parse_script
+from modules.script_parser import Beat, parse_script
 
 logger = logging.getLogger(__name__)
 
@@ -50,18 +50,18 @@ def validate_composition(data: dict) -> None:
     jsonschema.validate(instance=data, schema=schema)
 
 
-def build_composition(
-    script_path: str,
-    slug: str | None = None,
+def _assemble_composition(
+    beats: list[Beat],
+    slug: str,
     on_beat_progress: OnBeatProgress | None = None,
     voice_id: str | None = None,
     language: str | None = None,
 ) -> dict:
+    """Monta o composition.json a partir de uma lista de beats já pronta —
+    tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
+    chegaram prontos (painel web, onde o usuário monta os blocos um a um).
+    """
     cfg = load_config()
-    script_path = Path(script_path)
-    slug = slug or script_path.stem
-
-    beats = parse_script(script_path)
 
     on_narration_beat_done = None
     if on_beat_progress is not None:
@@ -128,6 +128,32 @@ def build_composition(
     logger.info("composition.json salvo em %s", out_path)
 
     return composition
+
+
+def build_composition(
+    script_path: str,
+    slug: str | None = None,
+    on_beat_progress: OnBeatProgress | None = None,
+    voice_id: str | None = None,
+    language: str | None = None,
+) -> dict:
+    """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
+    script_path = Path(script_path)
+    slug = slug or script_path.stem
+    beats = parse_script(script_path)
+    return _assemble_composition(beats, slug, on_beat_progress, voice_id, language)
+
+
+def build_composition_from_beats(
+    beats: list[Beat],
+    slug: str,
+    on_beat_progress: OnBeatProgress | None = None,
+    voice_id: str | None = None,
+    language: str | None = None,
+) -> dict:
+    """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
+    roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
+    return _assemble_composition(beats, slug, on_beat_progress, voice_id, language)
 
 
 if __name__ == "__main__":

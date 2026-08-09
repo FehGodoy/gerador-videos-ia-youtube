@@ -1,24 +1,25 @@
 """
-Orquestra os jobs do painel web: recebe roteiro + voz escolhida, roda o
-pipeline em background reaproveitando os módulos já existentes
-(script_parser, composition_builder, renderer — nenhum deles foi reescrito,
-só ganharam callbacks opcionais de progresso), e transmite o progresso por
-uma fila de eventos por job, consumida via SSE em webapp/server.py.
+Orquestra os jobs do painel web: recebe os blocos do roteiro (já narrados
+individualmente pela fila de blocos, ver webapp/server.py:/api/narration-blocks)
+mais a voz escolhida, roda o resto do pipeline em background reaproveitando os
+módulos já existentes (composition_builder, renderer — nenhum deles foi
+reescrito, só ganharam callbacks opcionais de progresso), e transmite o
+progresso por uma fila de eventos por job, consumida via SSE em
+webapp/server.py.
 """
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from modules.composition_builder import build_composition
-from modules.config import cache_dir, output_dir
+from modules.composition_builder import build_composition_from_beats
+from modules.config import output_dir
 from modules.renderer import render_with_remotion
-from modules.script_parser import parse_script
+from modules.script_parser import Beat
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,6 @@ class Job:
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
 
 
-def _write_temp_script(slug: str, script_text: str) -> Path:
-    path = cache_dir("web_scripts") / f"{slug}.md"
-    path.write_text(script_text, encoding="utf-8")
-    return path
-
-
 class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
@@ -47,23 +42,18 @@ class JobManager:
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
-    def create_job(self, script_text: str, voice_id: str, language: str) -> Job:
-        # slug depende do texto E da voz: se o usuário trocar a voz e regerar
-        # o mesmo roteiro, não queremos reaproveitar narração cacheada da
-        # voz antiga (cache/narration/<slug>/ ficaria com áudio da voz errada).
-        digest = hashlib.sha1(f"{script_text}|{voice_id}".encode("utf-8")).hexdigest()[:10]
-        slug = f"web-{digest}"
-
-        script_path = _write_temp_script(slug, script_text)
-        beats = parse_script(script_path)
-
+    def create_job(self, slug: str, beats: list[Beat], voice_id: str, language: str) -> Job:
+        # o slug do rascunho já vem do painel web (gerado quando a voz foi
+        # escolhida) — os blocos já foram narrados individualmente sob esse
+        # mesmo slug pela fila de blocos, então build_narration só vai achar
+        # tudo em cache e recombinar, sem chamar a Cartesia de novo aqui.
         job = Job(id=uuid.uuid4().hex[:12], slug=slug, beats=[b.to_dict() for b in beats])
         self._jobs[job.id] = job
 
-        asyncio.create_task(self._run(job, script_path, voice_id, language))
+        asyncio.create_task(self._run(job, beats, voice_id, language))
         return job
 
-    async def _run(self, job: Job, script_path: Path, voice_id: str, language: str) -> None:
+    async def _run(self, job: Job, beats: list[Beat], voice_id: str, language: str) -> None:
         loop = asyncio.get_running_loop()
 
         def emit(event: str, data: dict[str, Any]) -> None:
@@ -77,8 +67,8 @@ class JobManager:
 
         try:
             await asyncio.to_thread(
-                build_composition,
-                str(script_path),
+                build_composition_from_beats,
+                beats,
                 job.slug,
                 on_beat_progress=on_beat_progress,
                 voice_id=voice_id,

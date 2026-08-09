@@ -117,13 +117,21 @@ def _synthesize_via_cartesia(
 
 
 def synthesize_beat(
-    beat: Beat, slug: str, voice_id: str | None = None, language: str | None = None
+    beat: Beat,
+    slug: str,
+    voice_id: str | None = None,
+    language: str | None = None,
+    force: bool = False,
 ) -> dict:
     """Sintetiza (ou reaproveita do cache) o áudio de um único beat.
 
     `voice_id`/`language`, se passados, sobrepõem o que está em config.yaml
     (usado pelo painel web, onde a voz é escolhida por job, não fixa no
     config). O CLI não passa nada e continua usando o config.yaml de sempre.
+
+    `force=True` ignora o cache e sintetiza de novo mesmo se já existir
+    (usado pelo botão "Regenerar" do painel web, quando o usuário não gostou
+    do resultado de um bloco específico).
 
     Retorna {"audio_path": Path, "duration_seconds": float,
     "captions": [{"word", "start_seconds", "end_seconds"}]} com timestamps
@@ -135,7 +143,7 @@ def synthesize_beat(
     wav_path = beat_dir / f"beat_{beat.id:03d}.wav"
     meta_path = beat_dir / f"beat_{beat.id:03d}.json"
 
-    if wav_path.exists() and meta_path.exists():
+    if not force and wav_path.exists() and meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         return {"audio_path": wav_path, **meta}
 

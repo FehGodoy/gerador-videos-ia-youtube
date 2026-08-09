@@ -16,6 +16,11 @@ cache/*
 output/*
 !output/.gitkeep
 
+# Estado local do usuário (canais/favoritos) — dado pessoal, não é cache
+# regenerável nem faz sentido versionar
+state/*
+!state/.gitkeep
+
 # Sistema
 .DS_Store
 Thumbs.db

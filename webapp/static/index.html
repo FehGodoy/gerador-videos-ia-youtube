@@ -9,51 +9,96 @@
 <body>
 <main>
   <h1>Gerador de vídeo documentário</h1>
+  <p class="subtitle">Monte a narração bloco a bloco, depois gere o vídeo.</p>
 
-  <section id="step-script">
-    <h2>1. Roteiro</h2>
-    <textarea id="script-text" rows="10" placeholder="Cole aqui o roteiro do vídeo..."></textarea>
+  <section id="step-channel">
+    <h2><span class="step-number">1</span>Canal</h2>
+    <div class="row">
+      <select id="channel-select"></select>
+      <input type="text" id="new-channel-input" placeholder="Nome do novo canal" style="max-width: 220px;">
+      <button id="new-channel-btn" class="ghost">Criar canal</button>
+    </div>
+    <p class="hint">Favoritos de voz ficam salvos por canal.</p>
   </section>
 
   <section id="step-voice">
-    <h2>2. Voz da narração</h2>
-    <label class="inline-label">
-      Idioma
-      <select id="language-select">
-        <option value="pt">Português</option>
-        <option value="en">Inglês</option>
-        <option value="es">Espanhol</option>
-        <option value="fr">Francês</option>
-        <option value="de">Alemão</option>
-        <option value="it">Italiano</option>
-        <option value="ja">Japonês</option>
-      </select>
-    </label>
+    <h2><span class="step-number">2</span>Voz da narração</h2>
+    <div class="locked-note" id="voice-locked-note">
+      Voz travada para este rascunho. Clique em "Novo vídeo" para trocar.
+    </div>
+    <div class="row-between">
+      <label class="row">
+        Idioma
+        <select id="language-select">
+          <option value="pt">Português</option>
+          <option value="en">Inglês</option>
+          <option value="es">Espanhol</option>
+          <option value="fr">Francês</option>
+          <option value="de">Alemão</option>
+          <option value="it">Italiano</option>
+          <option value="ja">Japonês</option>
+        </select>
+      </label>
+      <div class="tabs" id="favorites-tabs">
+        <button data-filter="favorites" class="active">Favoritas</button>
+        <button data-filter="all">Todas</button>
+      </div>
+    </div>
     <p id="voices-status" class="hint">Carregando vozes...</p>
     <div id="voices-grid" class="voices-grid"></div>
   </section>
 
-  <button id="generate-btn" disabled>Gerar vídeo</button>
+  <section id="step-blocks">
+    <div class="row-between">
+      <h2><span class="step-number">3</span>Blocos do roteiro</h2>
+      <button id="new-draft-btn" class="ghost">Novo vídeo</button>
+    </div>
+    <p class="hint">Cole um bloco por vez (um parágrafo, por exemplo) e gere a narração antes de colar o próximo.</p>
+    <textarea id="block-text" rows="4" placeholder="Cole aqui um bloco do roteiro..."></textarea>
+    <div class="row" style="margin-top: 8px;">
+      <button id="generate-block-btn" class="primary" disabled>Gerar narração deste bloco</button>
+    </div>
+    <ul id="blocks-list" class="blocks-list"></ul>
+    <div class="row" style="margin-top: 16px;">
+      <button id="generate-video-btn" class="primary" disabled>Gerar vídeo</button>
+    </div>
+  </section>
 
   <section id="step-progress" class="hidden">
-    <h2>3. Progresso</h2>
+    <h2><span class="step-number">4</span>Progresso</h2>
     <ul id="beats-list" class="beats-list"></ul>
 
-    <div id="render-progress-wrap" class="hidden">
-      <p>Renderizando vídeo...</p>
+    <div id="render-progress-wrap" class="hidden" style="margin-top: 16px;">
+      <p class="hint">Renderizando vídeo...</p>
       <progress id="render-progress" max="100" value="0"></progress>
-      <span id="render-progress-label"></span>
+      <p class="hint" id="render-progress-label"></p>
     </div>
   </section>
 
   <section id="step-result" class="hidden">
     <h2>Vídeo pronto</h2>
     <video id="result-video" controls></video>
-    <a id="download-link" download>Baixar vídeo</a>
+    <div class="row" style="margin-top: 12px;">
+      <a id="download-link" download><button class="primary">Baixar vídeo</button></a>
+    </div>
   </section>
 
   <p id="error-message" class="error hidden"></p>
 </main>
+
+<template id="icon-star-outline">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.5 15.09 8.76 22 9.77 17 14.64 18.18 21.52 12 18.27 5.82 21.52 7 14.64 2 9.77 8.91 8.76 12 2.5"/></svg>
+</template>
+<template id="icon-star-filled">
+  <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2.5 15.09 8.76 22 9.77 17 14.64 18.18 21.52 12 18.27 5.82 21.52 7 14.64 2 9.77 8.91 8.76 12 2.5"/></svg>
+</template>
+<template id="icon-trash">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+</template>
+<template id="icon-refresh">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+</template>
+
 <script src="/static/app.js"></script>
 </body>
 </html>

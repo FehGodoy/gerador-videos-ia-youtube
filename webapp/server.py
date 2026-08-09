@@ -7,6 +7,7 @@ Rodar com: uvicorn webapp.server:app --reload --port 8000
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -16,7 +17,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from modules.config import PROJECT_ROOT, load_config
+from modules.config import PROJECT_ROOT, cache_dir, load_config
+from modules.narration import synthesize_beat
+from modules.script_parser import Beat
+from webapp import channels as channels_module
 from webapp import voices as voices_module
 from webapp.job_runner import Job, job_manager
 
@@ -29,15 +33,36 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 cfg = load_config()
 VOICE_PREVIEWS_DIR = PROJECT_ROOT / cfg["paths"]["cache_dir"] / "voice_previews"
 VOICE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+NARRATION_CACHE_DIR = cache_dir("narration")
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/voice_previews", StaticFiles(directory=str(VOICE_PREVIEWS_DIR)), name="voice_previews")
+app.mount("/narration_cache", StaticFiles(directory=str(NARRATION_CACHE_DIR)), name="narration_cache")
+
+
+class BlockIn(BaseModel):
+    id: int
+    text: str
+
+
+class NarrationBlockRequest(BaseModel):
+    slug: str
+    block_id: int
+    text: str
+    voice_id: str
+    language: str = "pt"
+    force: bool = False
 
 
 class CreateJobRequest(BaseModel):
-    script_text: str
+    slug: str
+    blocks: list[BlockIn]
     voice_id: str
     language: str = "pt"
+
+
+class ChannelRequest(BaseModel):
+    name: str
 
 
 @app.get("/")
@@ -53,14 +78,41 @@ async def get_voices(language: str = "pt") -> list[dict]:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@app.post("/api/narration-blocks")
+async def create_narration_block(req: NarrationBlockRequest) -> dict:
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Bloco vazio.")
+
+    beat = Beat(id=req.block_id, text=req.text)
+    try:
+        result = await asyncio.to_thread(
+            synthesize_beat,
+            beat,
+            req.slug,
+            voice_id=req.voice_id,
+            language=req.language,
+            force=req.force,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "block_id": req.block_id,
+        "duration_seconds": result["duration_seconds"],
+        "audio_url": f"/narration_cache/{req.slug}/beat_{req.block_id:03d}.wav",
+        "captions": result["captions"],
+    }
+
+
 @app.post("/api/jobs")
 async def create_job(req: CreateJobRequest) -> dict:
-    if not req.script_text.strip():
-        raise HTTPException(status_code=400, detail="Roteiro vazio.")
+    if not req.blocks:
+        raise HTTPException(status_code=400, detail="Nenhum bloco de narração adicionado.")
     if not req.voice_id:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
 
-    job = job_manager.create_job(req.script_text, req.voice_id, req.language)
+    beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
+    job = job_manager.create_job(req.slug, beats, req.voice_id, req.language)
     return {"job_id": job.id, "beats": job.beats}
 
 
@@ -97,3 +149,33 @@ async def job_video(job_id: str) -> FileResponse:
     if job is None or job.video_path is None or not job.video_path.exists():
         raise HTTPException(status_code=404, detail="Vídeo ainda não está pronto.")
     return FileResponse(job.video_path, media_type="video/mp4")
+
+
+@app.get("/api/channels")
+async def get_channels() -> list[str]:
+    return channels_module.list_channels()
+
+
+@app.post("/api/channels")
+async def post_channel(req: ChannelRequest) -> list[str]:
+    name = req.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nome do canal vazio.")
+    return channels_module.create_channel(name)
+
+
+@app.get("/api/channels/{name}/favorites")
+async def get_favorites(name: str) -> list[dict]:
+    return channels_module.get_favorites(name)
+
+
+@app.post("/api/channels/{name}/favorites")
+async def post_favorite(name: str, voice: dict) -> list[dict]:
+    if "id" not in voice:
+        raise HTTPException(status_code=400, detail="Voz sem id.")
+    return channels_module.add_favorite(name, voice)
+
+
+@app.delete("/api/channels/{name}/favorites/{voice_id}")
+async def delete_favorite(name: str, voice_id: str) -> list[dict]:
+    return channels_module.remove_favorite(name, voice_id)
