@@ -5,7 +5,10 @@ pelo painel web (webapp/job_runner.py, com callback que empurra pra fila SSE).
 """
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,6 +19,42 @@ from modules.config import PROJECT_ROOT, load_config, output_dir
 _PROGRESS_RE = re.compile(r"Rendered (\d+)/(\d+)")
 
 OnProgress = Callable[[int, int], None]
+
+
+def _stage_media_for_render(composition_path: Path, slug: str) -> Path:
+    """Copia só os arquivos de mídia que este composition.json realmente
+    referencia (áudio + clipes de footage) para uma pasta de staging isolada,
+    usada como public dir do Remotion neste render.
+
+    Antes, o public dir apontava pra raiz do projeto inteira — o Remotion
+    copia recursivamente tudo que está lá antes de renderizar, então cada
+    render copiava cache/ inteiro (todo footage já baixado em qualquer
+    execução, não só desta) e output/ inteiro (todo vídeo já renderizado
+    antes), um diretório que só cresce e nunca é limpo. Isso não só desperdiça
+    tempo copiando dado que não é usado neste render, como piora a cada
+    execução.
+    """
+    staging_dir = PROJECT_ROOT / "cache" / "render_staging" / slug
+    if staging_dir.exists():
+        shutil.rmtree(staging_dir)
+    staging_dir.mkdir(parents=True)
+
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    referenced_paths = {composition["audio"]["path"]}
+    if composition.get("music"):
+        referenced_paths.add(composition["music"]["path"])
+    for beat in composition["beats"]:
+        footage = beat.get("footage")
+        if footage and footage.get("clip_path"):
+            referenced_paths.add(footage["clip_path"])
+
+    for rel_path in referenced_paths:
+        src = PROJECT_ROOT / rel_path
+        dest = staging_dir / rel_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+
+    return staging_dir
 
 
 def render_with_remotion(
@@ -37,36 +76,41 @@ def render_with_remotion(
         )
 
     video_path = output_dir(slug) / "video.mp4"
-    cmd = [
-        "npx",
-        "remotion",
-        "render",
-        "src/index.ts",
-        cfg["remotion"]["composition_id"],
-        str(video_path),
-        f"--props={composition_path}",
-    ]
-    print(f"Renderizando com Remotion: {' '.join(cmd)}")
+    staging_dir = _stage_media_for_render(composition_path, slug)
+    try:
+        cmd = [
+            "npx",
+            "remotion",
+            "render",
+            "src/index.ts",
+            cfg["remotion"]["composition_id"],
+            str(video_path),
+            f"--props={composition_path}",
+        ]
+        print(f"Renderizando com Remotion: {' '.join(cmd)}")
 
-    process = subprocess.Popen(
-        cmd,
-        cwd=remotion_dir,
-        shell=(sys.platform == "win32"),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    assert process.stdout is not None
-    for line in process.stdout:
-        line = line.rstrip("\n")
-        print(line)
-        if on_progress is not None:
-            match = _PROGRESS_RE.search(line)
-            if match:
-                on_progress(int(match.group(1)), int(match.group(2)))
+        process = subprocess.Popen(
+            cmd,
+            cwd=remotion_dir,
+            shell=(sys.platform == "win32"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            env={**os.environ, "REMOTION_PUBLIC_DIR": str(staging_dir)},
+        )
+        assert process.stdout is not None
+        for line in process.stdout:
+            line = line.rstrip("\n")
+            print(line)
+            if on_progress is not None:
+                match = _PROGRESS_RE.search(line)
+                if match:
+                    on_progress(int(match.group(1)), int(match.group(2)))
 
-    returncode = process.wait()
-    if returncode != 0:
-        raise RuntimeError(f"Render do Remotion falhou (exit code {returncode}).")
-    return video_path
+        returncode = process.wait()
+        if returncode != 0:
+            raise RuntimeError(f"Render do Remotion falhou (exit code {returncode}).")
+        return video_path
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
