@@ -281,6 +281,7 @@ function renderBlocksList() {
   blocks.forEach((block, index) => {
     const li = document.createElement("li");
     li.className = "block-row";
+    li.style.animationDelay = `${index * 40}ms`;
 
     const head = document.createElement("div");
     head.className = "block-row-head";

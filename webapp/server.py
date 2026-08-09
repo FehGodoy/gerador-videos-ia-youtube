@@ -35,7 +35,19 @@ VOICE_PREVIEWS_DIR = PROJECT_ROOT / cfg["paths"]["cache_dir"] / "voice_previews"
 VOICE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 NARRATION_CACHE_DIR = cache_dir("narration")
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+class NoCacheStaticFiles(StaticFiles):
+    """HTML/CSS/JS deste painel mudam com frequência durante o desenvolvimento
+    — sem isso, o navegador guarda uma cópia antiga em cache e a página
+    parece "quebrada" até um hard refresh."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/voice_previews", StaticFiles(directory=str(VOICE_PREVIEWS_DIR)), name="voice_previews")
 app.mount("/narration_cache", StaticFiles(directory=str(NARRATION_CACHE_DIR)), name="narration_cache")
 

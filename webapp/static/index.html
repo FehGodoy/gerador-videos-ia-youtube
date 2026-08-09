@@ -4,30 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Painel do pipeline de vídeo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Karla:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
+<div class="grain"></div>
 <main>
-  <h1>Gerador de vídeo documentário</h1>
-  <p class="subtitle">Monte a narração bloco a bloco, depois gere o vídeo.</p>
+  <header class="masthead">
+    <div class="masthead-top">
+      <span class="rec-dot" aria-hidden="true"></span>
+      <span class="eyebrow">Studio pipeline</span>
+    </div>
+    <h1>Gerador de vídeo documentário</h1>
+    <p class="subtitle">Monte a narração bloco a bloco, confira cada voz, depois gere o corte final.</p>
+  </header>
 
-  <section id="step-channel">
-    <h2><span class="step-number">1</span>Canal</h2>
+  <section id="step-channel" class="panel">
+    <h2><span class="slate">01</span>Canal</h2>
     <div class="row">
       <select id="channel-select"></select>
-      <input type="text" id="new-channel-input" placeholder="Nome do novo canal" style="max-width: 220px;">
+      <input type="text" id="new-channel-input" placeholder="Nome do novo canal">
       <button id="new-channel-btn" class="ghost">Criar canal</button>
     </div>
     <p class="hint">Favoritos de voz ficam salvos por canal.</p>
   </section>
 
-  <section id="step-voice">
-    <h2><span class="step-number">2</span>Voz da narração</h2>
+  <section id="step-voice" class="panel">
+    <h2><span class="slate">02</span>Voz da narração</h2>
     <div class="locked-note" id="voice-locked-note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
       Voz travada para este rascunho. Clique em "Novo vídeo" para trocar.
     </div>
     <div class="row-between">
-      <label class="row">
+      <label class="row lang-label">
         Idioma
         <select id="language-select">
           <option value="pt">Português</option>
@@ -48,35 +59,35 @@
     <div id="voices-grid" class="voices-grid"></div>
   </section>
 
-  <section id="step-blocks">
+  <section id="step-blocks" class="panel">
     <div class="row-between">
-      <h2><span class="step-number">3</span>Blocos do roteiro</h2>
+      <h2><span class="slate">03</span>Blocos do roteiro</h2>
       <button id="new-draft-btn" class="ghost">Novo vídeo</button>
     </div>
     <p class="hint">Cole um bloco por vez (um parágrafo, por exemplo) e gere a narração antes de colar o próximo.</p>
     <textarea id="block-text" rows="4" placeholder="Cole aqui um bloco do roteiro..."></textarea>
-    <div class="row" style="margin-top: 8px;">
+    <div class="row block-submit-row">
       <button id="generate-block-btn" class="primary" disabled>Gerar narração deste bloco</button>
     </div>
     <ul id="blocks-list" class="blocks-list"></ul>
-    <div class="row" style="margin-top: 16px;">
-      <button id="generate-video-btn" class="primary" disabled>Gerar vídeo</button>
+    <div class="row generate-video-row">
+      <button id="generate-video-btn" class="primary large" disabled>Gerar vídeo</button>
     </div>
   </section>
 
-  <section id="step-progress" class="hidden">
-    <h2><span class="step-number">4</span>Progresso</h2>
+  <section id="step-progress" class="panel hidden">
+    <h2><span class="slate">04</span>Progresso</h2>
     <ul id="beats-list" class="beats-list"></ul>
 
-    <div id="render-progress-wrap" class="hidden" style="margin-top: 16px;">
+    <div id="render-progress-wrap" class="hidden render-progress-block">
       <p class="hint">Renderizando vídeo...</p>
       <progress id="render-progress" max="100" value="0"></progress>
-      <p class="hint" id="render-progress-label"></p>
+      <p class="hint mono" id="render-progress-label"></p>
     </div>
   </section>
 
-  <section id="step-result" class="hidden">
-    <h2>Vídeo pronto</h2>
+  <section id="step-result" class="panel hidden">
+    <h2><span class="slate">✓</span>Vídeo pronto</h2>
     <video id="result-video" controls></video>
     <div class="row" style="margin-top: 12px;">
       <a id="download-link" download><button class="primary">Baixar vídeo</button></a>
