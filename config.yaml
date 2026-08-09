@@ -1,0 +1,38 @@
+# Configuração do pipeline de vídeo (Fase 1).
+# Chaves de API ficam no .env, nunca aqui.
+
+video:
+  fps: 30
+  width: 1920
+  height: 1080
+
+narration:
+  provider: cartesia
+  voice_id: "" # preencha com o ID da voz escolhida no dashboard da Cartesia (play.cartesia.ai)
+  model_id: "sonic-3"
+  language: "pt"
+  sample_rate: 44100
+  silence_between_beats_ms: 350 # pausa inserida entre beats na concatenação
+  cartesia_api_version: "2026-03-01"
+
+keywords:
+  provider: anthropic # anthropic | openai
+  model: "claude-haiku-4-5-20251001"
+  terms_per_beat: 3 # 2-4 termos de busca visual por beat
+
+footage:
+  sources: [pexels, pixabay]
+  min_duration_seconds: 3
+  candidates_per_beat: 5 # quantos candidatos avaliar antes de escolher (Fase 1: pega o 1º válido)
+  orientation: "landscape"
+
+paths:
+  cache_dir: "cache"
+  output_dir: "output"
+  scripts_input_dir: "scripts_input"
+  fallback_footage: "assets/fallback"
+  music_dir: "assets/music"
+
+remotion:
+  project_dir: "remotion"
+  composition_id: "VideoComposition"

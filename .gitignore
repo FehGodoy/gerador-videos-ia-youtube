@@ -1,0 +1,21 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Env / secrets
+.env
+
+# Node / Remotion
+remotion/node_modules/
+remotion/out/
+
+# Gerado pelo pipeline (cache local e outputs, não versionar)
+cache/*
+!cache/.gitkeep
+output/*
+!output/.gitkeep
+
+# Sistema
+.DS_Store
+Thumbs.db

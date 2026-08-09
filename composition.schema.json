@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://local/composition.schema.json",
+  "title": "VideoComposition",
+  "description": "Schema do composition.json produzido pelo pipeline Python e consumido pelo projeto Remotion. Fase 1: todo beat é do tipo 'concreto' (footage); o tipo 'estatistico' (AnimatedChart) é reservado para a Fase 2 e já documentado aqui para não quebrar o schema quando for implementado.",
+  "type": "object",
+  "required": ["fps", "width", "height", "audio", "beats"],
+  "properties": {
+    "fps": { "type": "integer", "example": 30 },
+    "width": { "type": "integer", "example": 1920 },
+    "height": { "type": "integer", "example": 1080 },
+    "audio": {
+      "type": "object",
+      "description": "Narração final concatenada (todos os beats em um único arquivo).",
+      "required": ["path", "duration_seconds"],
+      "properties": {
+        "path": { "type": "string", "description": "Caminho relativo à raiz do repositório (ex: 'output/slug/narration.wav'), resolvido no Remotion via staticFile() com o public dir apontando para a raiz do projeto." },
+        "duration_seconds": { "type": "number" }
+      }
+    },
+    "music": {
+      "type": ["object", "null"],
+      "description": "Trilha de fundo (Fase 3). Ausente/nulo na Fase 1.",
+      "properties": {
+        "path": { "type": "string" },
+        "volume": { "type": "number" }
+      }
+    },
+    "beats": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/beat" }
+    }
+  },
+  "definitions": {
+    "beat": {
+      "type": "object",
+      "required": ["id", "text", "start_seconds", "end_seconds", "type", "captions"],
+      "properties": {
+        "id": { "type": "integer", "description": "Índice sequencial do beat, 0-based." },
+        "text": { "type": "string", "description": "Texto original do beat, preservado do roteiro." },
+        "start_seconds": { "type": "number", "description": "Início do beat na timeline global (áudio concatenado)." },
+        "end_seconds": { "type": "number", "description": "Fim do beat na timeline global." },
+        "type": {
+          "type": "string",
+          "enum": ["concreto", "estatistico"],
+          "description": "Fase 1: sempre 'concreto'. 'estatistico' ativa o <AnimatedChart> na Fase 2."
+        },
+        "footage": {
+          "type": ["object", "null"],
+          "description": "Presente quando type='concreto'. Nulo se a busca falhou e não há nem fallback.",
+          "required": ["clip_path", "search_terms"],
+          "properties": {
+            "clip_path": { "type": "string" },
+            "source": { "type": "string", "enum": ["pexels", "pixabay", "fallback"] },
+            "search_terms": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "chart": {
+          "type": ["object", "null"],
+          "description": "Reservado para a Fase 2 (type='estatistico'). Não populado na Fase 1.",
+          "properties": {
+            "tipo": { "type": "string", "example": "queda" },
+            "label": { "type": "string" },
+            "valor_inicial": { "type": "number" },
+            "valor_final": { "type": "number" },
+            "unidade": { "type": "string" }
+          }
+        },
+        "captions": {
+          "type": "array",
+          "description": "Timestamps por palavra deste beat, já na timeline global (mesma base do start_seconds/end_seconds do beat).",
+          "items": {
+            "type": "object",
+            "required": ["word", "start_seconds", "end_seconds"],
+            "properties": {
+              "word": { "type": "string" },
+              "start_seconds": { "type": "number" },
+              "end_seconds": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "fps": 30,
+      "width": 1920,
+      "height": 1080,
+      "audio": { "path": "output/exemplo-roteiro/narration.wav", "duration_seconds": 12.4 },
+      "music": null,
+      "beats": [
+        {
+          "id": 0,
+          "text": "Em 1957, a União Soviética lançou o Sputnik.",
+          "start_seconds": 0.0,
+          "end_seconds": 3.2,
+          "type": "concreto",
+          "footage": {
+            "clip_path": "cache/footage/a1b2c3.mp4",
+            "source": "pexels",
+            "search_terms": ["satellite launch", "1950s rocket", "soviet space program"]
+          },
+          "chart": null,
+          "captions": [
+            { "word": "Em", "start_seconds": 0.0, "end_seconds": 0.15 },
+            { "word": "1957,", "start_seconds": 0.15, "end_seconds": 0.6 }
+          ]
+        }
+      ]
+    }
+  ]
+}
