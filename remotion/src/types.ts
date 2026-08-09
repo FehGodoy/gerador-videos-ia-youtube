@@ -15,11 +15,12 @@ export interface Footage {
   search_terms: string[];
 }
 
-// Reservado para a Fase 2 (beats do tipo "estatistico"). Não populado na Fase 1.
+// Presente quando beat.type === "estatistico". Renderizado por <AnimatedChart>.
 export interface ChartData {
-  tipo: string;
+  tipo: "crescimento" | "queda" | "comparacao" | "destaque";
   label: string;
-  valor_inicial: number;
+  // null quando tipo === "destaque" (valor isolado, sem comparação antes/depois)
+  valor_inicial: number | null;
   valor_final: number;
   unidade: string;
 }

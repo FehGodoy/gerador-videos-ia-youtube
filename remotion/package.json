@@ -7,10 +7,12 @@
     "render": "remotion render src/index.ts VideoComposition ../output/render.mp4"
   },
   "dependencies": {
+    "@remotion/cli": "^4.0.507",
+    "@remotion/google-fonts": "^4.0.507",
+    "@remotion/transitions": "^4.0.507",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "remotion": "^4.0.507",
-    "@remotion/cli": "^4.0.507"
+    "remotion": "^4.0.507"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

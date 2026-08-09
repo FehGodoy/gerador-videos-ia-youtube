@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://local/composition.schema.json",
   "title": "VideoComposition",
-  "description": "Schema do composition.json produzido pelo pipeline Python e consumido pelo projeto Remotion. Fase 1: todo beat é do tipo 'concreto' (footage); o tipo 'estatistico' (AnimatedChart) é reservado para a Fase 2 e já documentado aqui para não quebrar o schema quando for implementado.",
+  "description": "Schema do composition.json produzido pelo pipeline Python e consumido pelo projeto Remotion. Cada beat é classificado como 'concreto' (footage em tela cheia) ou 'estatistico' (AnimatedChart sobre footage desfocado, quando o trecho tem um número/percentual/ano/índice que vale destacar).",
   "type": "object",
   "required": ["fps", "width", "height", "audio", "beats"],
   "properties": {
@@ -43,7 +43,7 @@
         "type": {
           "type": "string",
           "enum": ["concreto", "estatistico"],
-          "description": "Fase 1: sempre 'concreto'. 'estatistico' ativa o <AnimatedChart> na Fase 2."
+          "description": "'estatistico' ativa o <AnimatedChart> em vez do <FootageClip> em tela cheia."
         },
         "footage": {
           "type": ["object", "null"],
@@ -57,11 +57,14 @@
         },
         "chart": {
           "type": ["object", "null"],
-          "description": "Reservado para a Fase 2 (type='estatistico'). Não populado na Fase 1.",
+          "description": "Presente quando type='estatistico'. Renderizado por <AnimatedChart> no Remotion.",
           "properties": {
-            "tipo": { "type": "string", "example": "queda" },
+            "tipo": { "type": "string", "enum": ["crescimento", "queda", "comparacao", "destaque"] },
             "label": { "type": "string" },
-            "valor_inicial": { "type": "number" },
+            "valor_inicial": {
+              "type": ["number", "null"],
+              "description": "Null quando tipo='destaque' (valor isolado, sem comparação antes/depois)."
+            },
             "valor_final": { "type": "number" },
             "unidade": { "type": "string" }
           }

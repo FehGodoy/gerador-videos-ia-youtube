@@ -1,14 +1,27 @@
 import React from "react";
-import { AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, staticFile, useVideoConfig } from "remotion";
+import { TransitionSeries, linearTiming } from "@remotion/transitions";
+import { fade } from "@remotion/transitions/fade";
 import type { CompositionData } from "./types";
 import { FootageClip } from "./FootageClip";
-import { CaptionOverlay } from "./CaptionOverlay";
+import { AnimatedChart } from "./AnimatedChart";
+
+// ~300ms a 30fps. Cabe dentro do silêncio de 350ms que a narração já insere
+// entre beats (config.yaml: narration.silence_between_beats_ms) — o
+// crossfade consome esse intervalo ocioso em vez de cortar conteúdo falado.
+const TRANSITION_FRAMES = 9;
 
 /**
- * Componente raiz: itera os beats do composition.json e monta a sequência.
- * Fase 1: <Sequence> simples, sem <TransitionSeries>/cross-fade (Fase 2) e
- * sem <AnimatedChart> para beats "estatistico" (também Fase 2 — nesta fase
- * todo beat vem como "concreto").
+ * Componente raiz: itera os beats do composition.json e monta a sequência
+ * com crossfade entre cortes (<TransitionSeries> + fade). Escolhe
+ * <AnimatedChart> (beat.type === "estatistico") ou <FootageClip> em tela
+ * cheia por beat. Sem legendas — o usuário não quis.
+ *
+ * Cada beat é estendido visualmente até o start_seconds do PRÓXIMO beat (em
+ * vez de parar no próprio end_seconds) — absorve o silêncio entre beats na
+ * narração, evita um buraco preto entre cortes, e dá à transição onde
+ * sobrepor sem cortar fala. O <Audio> fica fora do <TransitionSeries> (irmão,
+ * não filho), então a sobreposição visual do crossfade nunca afeta o áudio.
  */
 export const VideoComposition: React.FC<CompositionData> = (data) => {
   const { fps } = useVideoConfig();
@@ -16,24 +29,40 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {data.audio.path && <Audio src={staticFile(data.audio.path)} />}
-      {data.beats.map((beat) => {
-        const from = Math.round(beat.start_seconds * fps);
-        const durationInFrames = Math.max(
-          1,
-          Math.round((beat.end_seconds - beat.start_seconds) * fps)
-        );
+      <TransitionSeries>
+        {data.beats.map((beat, index) => {
+          const nextBeat = data.beats[index + 1];
+          const visualEndSeconds = nextBeat ? nextBeat.start_seconds : data.audio.duration_seconds;
+          const durationInFrames = Math.max(
+            1,
+            Math.round((visualEndSeconds - beat.start_seconds) * fps)
+          );
 
-        return (
-          <Sequence key={beat.id} from={from} durationInFrames={durationInFrames}>
-            {beat.footage?.clip_path ? (
-              <FootageClip clipPath={beat.footage.clip_path} />
-            ) : (
-              <AbsoluteFill style={{ backgroundColor: "#111111" }} />
-            )}
-            <CaptionOverlay text={beat.text} />
-          </Sequence>
-        );
-      })}
+          return (
+            <React.Fragment key={beat.id}>
+              {index > 0 && (
+                <TransitionSeries.Transition
+                  presentation={fade()}
+                  timing={linearTiming({ durationInFrames: TRANSITION_FRAMES })}
+                />
+              )}
+              <TransitionSeries.Sequence durationInFrames={durationInFrames}>
+                {beat.type === "estatistico" && beat.chart ? (
+                  <AnimatedChart
+                    chart={beat.chart}
+                    backgroundClipPath={beat.footage?.clip_path ?? null}
+                    durationInFrames={durationInFrames}
+                  />
+                ) : beat.footage?.clip_path ? (
+                  <FootageClip clipPath={beat.footage.clip_path} />
+                ) : (
+                  <AbsoluteFill style={{ backgroundColor: "#111111" }} />
+                )}
+              </TransitionSeries.Sequence>
+            </React.Fragment>
+          );
+        })}
+      </TransitionSeries>
     </AbsoluteFill>
   );
 };

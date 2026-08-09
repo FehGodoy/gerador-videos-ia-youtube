@@ -1,9 +1,9 @@
 """
 Monta o composition.json final: junta beats + narração + footage + legendas,
-valida contra composition.schema.json antes de salvar.
-
-Fase 1: todo beat é do tipo "concreto" (footage). A classificação
-concreto/estatístico e o campo "chart" são trabalho da Fase 2.
+valida contra composition.schema.json antes de salvar. Tipo do beat
+(concreto/estatístico) e dados de gráfico vêm de modules/keyword_extractor.py
+(analyze_beat) — footage é buscado pra todo beat, mesmo estatístico, pra
+servir de fundo desfocado atrás do gráfico animado.
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ import jsonschema
 from modules.captions import ensure_captions
 from modules.config import PROJECT_ROOT, load_config, output_dir
 from modules.footage_search import search_and_download_footage
-from modules.keyword_extractor import extract_keywords
+from modules.keyword_extractor import analyze_beat
 from modules.narration import build_narration
 from modules.script_parser import Beat, parse_script
 
@@ -78,11 +78,13 @@ def _assemble_composition(
 
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "running")
-        terms = extract_keywords(beat, slug)
+        analysis = analyze_beat(beat, slug)
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "done")
             on_beat_progress(beat.id, "footage", "running")
-        footage = search_and_download_footage(beat.id, beat.text, terms, slug=slug)
+        # footage é buscado pra todo beat, mesmo "estatistico" — vira fundo
+        # desfocado atrás do gráfico animado (AnimatedChart.tsx)
+        footage = search_and_download_footage(beat.id, beat.text, analysis["search_terms"], slug=slug)
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "footage", "done")
             on_beat_progress(beat.id, "captions", "running")
@@ -96,7 +98,7 @@ def _assemble_composition(
                 "text": beat.text,
                 "start_seconds": beat_timing["start_seconds"],
                 "end_seconds": beat_timing["end_seconds"],
-                "type": "concreto",
+                "type": analysis["type"],
                 "footage": {
                     "clip_path": _path_str(footage["clip_path"]) if footage["clip_path"] else None,
                     "source": footage["source"],
@@ -104,7 +106,7 @@ def _assemble_composition(
                 }
                 if footage["clip_path"]
                 else None,
-                "chart": None,
+                "chart": analysis["chart"],
                 "captions": captions,
             }
         )
