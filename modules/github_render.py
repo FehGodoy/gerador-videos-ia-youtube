@@ -137,6 +137,15 @@ def render_via_github_actions(
     status("Preparando arquivos para envio...")
     staging_dir = stage_media_for_render(composition_path, slug)
     try:
+        # stage_media_for_render só copia a mídia referenciada (áudio,
+        # footage) — no render local o composition.json em si é passado
+        # direto via --props, fora da pasta de staging. Aqui ele também
+        # precisa estar dentro do zip, no mesmo caminho relativo, porque o
+        # workflow do GitHub aponta --props pra dentro da pasta descompactada.
+        composition_dest = staging_dir / composition_path.resolve().relative_to(PROJECT_ROOT)
+        composition_dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(composition_path, composition_dest)
+
         zip_path = _zip_staging_dir(staging_dir, slug)
 
         status("Enviando arquivos para o GitHub...")
