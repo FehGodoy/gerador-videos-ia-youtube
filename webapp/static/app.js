@@ -17,9 +17,12 @@ const blockText = document.getElementById("block-text");
 const generateBlockBtn = document.getElementById("generate-block-btn");
 const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
+const remoteRenderToggle = document.getElementById("remote-render-toggle");
 const newDraftBtn = document.getElementById("new-draft-btn");
 const stepProgress = document.getElementById("step-progress");
 const beatsList = document.getElementById("beats-list");
+const renderStatusWrap = document.getElementById("render-status-wrap");
+const renderStatusLabel = document.getElementById("render-status-label");
 const renderProgressWrap = document.getElementById("render-progress-wrap");
 const renderProgress = document.getElementById("render-progress");
 const renderProgressLabel = document.getElementById("render-progress-label");
@@ -365,6 +368,7 @@ function resetDraft() {
   stepProgress.classList.add("hidden");
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
+  renderStatusWrap.classList.add("hidden");
   clearError();
   unlockDraft();
   updateGenerateBlockButton();
@@ -424,11 +428,19 @@ function startJobEvents(jobId) {
     renderProgressLabel.textContent = `${data.frame}/${data.total} frames`;
   });
 
+  source.addEventListener("render_status", (e) => {
+    const data = JSON.parse(e.data);
+    renderStatusWrap.classList.remove("hidden");
+    renderStatusLabel.textContent = data.message;
+  });
+
   source.addEventListener("job_done", (e) => {
     const data = JSON.parse(e.data);
     resultVideo.src = data.video_url;
     downloadLink.href = data.video_url;
     stepResult.classList.remove("hidden");
+    renderStatusWrap.classList.add("hidden");
+    renderProgressWrap.classList.add("hidden");
     source.close();
   });
 
@@ -449,6 +461,7 @@ async function handleGenerateVideo() {
   generateVideoBtn.disabled = true;
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
+  renderStatusWrap.classList.add("hidden");
   renderProgress.value = 0;
 
   try {
@@ -460,6 +473,7 @@ async function handleGenerateVideo() {
         blocks: blocks.map((b) => ({ id: b.id, text: b.text })),
         voice_id: selectedVoiceId,
         language: selectedVoiceLanguage,
+        remote_render: remoteRenderToggle.checked,
       }),
     });
     if (!resp.ok) {

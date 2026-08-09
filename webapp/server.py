@@ -71,6 +71,7 @@ class CreateJobRequest(BaseModel):
     blocks: list[BlockIn]
     voice_id: str
     language: str = "pt"
+    remote_render: bool = True
 
 
 class ChannelRequest(BaseModel):
@@ -124,7 +125,9 @@ async def create_job(req: CreateJobRequest) -> dict:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
 
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
-    job = job_manager.create_job(req.slug, beats, req.voice_id, req.language)
+    job = job_manager.create_job(
+        req.slug, beats, req.voice_id, req.language, remote=req.remote_render
+    )
     return {"job_id": job.id, "beats": job.beats}
 
 

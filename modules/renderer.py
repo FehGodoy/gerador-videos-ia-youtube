@@ -21,7 +21,7 @@ _PROGRESS_RE = re.compile(r"Rendered (\d+)/(\d+)")
 OnProgress = Callable[[int, int], None]
 
 
-def _stage_media_for_render(composition_path: Path, slug: str) -> Path:
+def stage_media_for_render(composition_path: Path, slug: str) -> Path:
     """Copia só os arquivos de mídia que este composition.json realmente
     referencia (áudio + clipes de footage) para uma pasta de staging isolada,
     usada como public dir do Remotion neste render.
@@ -33,6 +33,10 @@ def _stage_media_for_render(composition_path: Path, slug: str) -> Path:
     antes), um diretório que só cresce e nunca é limpo. Isso não só desperdiça
     tempo copiando dado que não é usado neste render, como piora a cada
     execução.
+
+    Pública (não `_stage_media_for_render`) porque modules/github_render.py
+    também usa — lá, a pasta é zipada e enviada pro runner do GitHub em vez
+    de virar o public dir de um subprocess local.
     """
     staging_dir = PROJECT_ROOT / "cache" / "render_staging" / slug
     if staging_dir.exists():
@@ -76,7 +80,7 @@ def render_with_remotion(
         )
 
     video_path = output_dir(slug) / "video.mp4"
-    staging_dir = _stage_media_for_render(composition_path, slug)
+    staging_dir = stage_media_for_render(composition_path, slug)
     try:
         cmd = [
             "npx",

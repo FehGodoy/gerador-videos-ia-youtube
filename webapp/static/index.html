@@ -70,8 +70,20 @@
       <button id="generate-block-btn" class="primary" disabled>Gerar narração deste bloco</button>
     </div>
     <ul id="blocks-list" class="blocks-list"></ul>
-    <div class="row generate-video-row">
-      <button id="generate-video-btn" class="primary large" disabled>Gerar vídeo</button>
+    <div class="generate-video-row">
+      <label class="switch-row">
+        <span class="switch">
+          <input type="checkbox" id="remote-render-toggle" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+        <span class="switch-text">
+          <strong>Renderizar no GitHub</strong>
+          <span class="hint">Libera seu PC — o vídeo renderiza no GitHub Actions e você baixa quando terminar. Desligue para renderizar neste computador.</span>
+        </span>
+      </label>
+      <div class="row">
+        <button id="generate-video-btn" class="primary large" disabled>Gerar vídeo</button>
+      </div>
     </div>
   </section>
 
@@ -79,8 +91,15 @@
     <h2><span class="slate">04</span>Progresso</h2>
     <ul id="beats-list" class="beats-list"></ul>
 
+    <div id="render-status-wrap" class="hidden render-progress-block">
+      <div class="render-status-line">
+        <span class="rec-dot" aria-hidden="true"></span>
+        <p class="hint mono" id="render-status-label">Renderizando...</p>
+      </div>
+    </div>
+
     <div id="render-progress-wrap" class="hidden render-progress-block">
-      <p class="hint">Renderizando vídeo...</p>
+      <p class="hint">Renderizando vídeo (neste computador)...</p>
       <progress id="render-progress" max="100" value="0"></progress>
       <p class="hint mono" id="render-progress-label"></p>
     </div>

@@ -18,6 +18,7 @@ from typing import Any
 
 from modules.composition_builder import build_composition_from_beats
 from modules.config import output_dir
+from modules.github_render import render_via_github_actions
 from modules.renderer import render_with_remotion
 from modules.script_parser import Beat
 
@@ -42,7 +43,9 @@ class JobManager:
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
 
-    def create_job(self, slug: str, beats: list[Beat], voice_id: str, language: str) -> Job:
+    def create_job(
+        self, slug: str, beats: list[Beat], voice_id: str, language: str, remote: bool = True
+    ) -> Job:
         # o slug do rascunho já vem do painel web (gerado quando a voz foi
         # escolhida) — os blocos já foram narrados individualmente sob esse
         # mesmo slug pela fila de blocos, então build_narration só vai achar
@@ -50,10 +53,12 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex[:12], slug=slug, beats=[b.to_dict() for b in beats])
         self._jobs[job.id] = job
 
-        asyncio.create_task(self._run(job, beats, voice_id, language))
+        asyncio.create_task(self._run(job, beats, voice_id, language, remote))
         return job
 
-    async def _run(self, job: Job, beats: list[Beat], voice_id: str, language: str) -> None:
+    async def _run(
+        self, job: Job, beats: list[Beat], voice_id: str, language: str, remote: bool
+    ) -> None:
         loop = asyncio.get_running_loop()
 
         def emit(event: str, data: dict[str, Any]) -> None:
@@ -64,6 +69,9 @@ class JobManager:
 
         def on_render_progress(frame: int, total: int) -> None:
             emit("render_progress", {"frame": frame, "total": total})
+
+        def on_render_status(message: str) -> None:
+            emit("render_status", {"message": message})
 
         try:
             await asyncio.to_thread(
@@ -76,9 +84,14 @@ class JobManager:
             )
             composition_path = output_dir(job.slug) / "composition.json"
 
-            video_path = await asyncio.to_thread(
-                render_with_remotion, composition_path, job.slug, on_progress=on_render_progress
-            )
+            if remote:
+                video_path = await asyncio.to_thread(
+                    render_via_github_actions, composition_path, job.slug, on_status=on_render_status
+                )
+            else:
+                video_path = await asyncio.to_thread(
+                    render_with_remotion, composition_path, job.slug, on_progress=on_render_progress
+                )
             job.video_path = video_path
             job.status = "done"
             emit("job_done", {"video_url": f"/api/jobs/{job.id}/video"})
