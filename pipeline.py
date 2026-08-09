@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from modules.composition_builder import build_composition
 from modules.config import PROJECT_ROOT, load_config, output_dir, slugify
+from modules.renderer import render_with_remotion
 
 
 def _clear_cache(slug: str) -> None:
@@ -31,32 +31,6 @@ def _clear_cache(slug: str) -> None:
             shutil.rmtree(target)
     # cache/footage é compartilhado entre roteiros (por hash do termo de busca)
     # e não é limpo pelo --force: é um cache de download, não de resultado.
-
-
-def _render_with_remotion(composition_path: Path, slug: str) -> Path:
-    cfg = load_config()
-    remotion_dir = PROJECT_ROOT / cfg["remotion"]["project_dir"]
-    if not (remotion_dir / "node_modules").exists():
-        raise RuntimeError(
-            f"'{remotion_dir}/node_modules' não existe. Rode 'npm install' dentro de "
-            f"'{remotion_dir}' antes de renderizar."
-        )
-
-    video_path = output_dir(slug) / "video.mp4"
-    cmd = [
-        "npx",
-        "remotion",
-        "render",
-        "src/index.ts",
-        cfg["remotion"]["composition_id"],
-        str(video_path),
-        f"--props={composition_path}",
-    ]
-    print(f"[6/6] Renderizando com Remotion: {' '.join(cmd)}")
-    result = subprocess.run(cmd, cwd=remotion_dir, shell=(sys.platform == "win32"))
-    if result.returncode != 0:
-        raise RuntimeError(f"Render do Remotion falhou (exit code {result.returncode}).")
-    return video_path
 
 
 def run_pipeline(script_path: str, force: bool = False, skip_render: bool = False) -> None:
@@ -80,7 +54,8 @@ def run_pipeline(script_path: str, force: bool = False, skip_render: bool = Fals
         print("        --skip-render: pulando etapa de renderização.")
         return
 
-    video_path = _render_with_remotion(composition_path, slug)
+    print("[6/6] Renderizando com Remotion...")
+    video_path = render_with_remotion(composition_path, slug)
     print(f"[OK] Vídeo final: {video_path}")
 
 

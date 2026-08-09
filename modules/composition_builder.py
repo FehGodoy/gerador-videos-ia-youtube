@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Callable
 
 import jsonschema
 
@@ -23,6 +24,11 @@ from modules.script_parser import parse_script
 logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = PROJECT_ROOT / "composition.schema.json"
+
+# (beat_id, stage, status) — stage: narration|keywords|footage|captions,
+# status: running|done. Usado pelo painel web para progresso ao vivo; o CLI
+# não passa nada e o comportamento de hoje não muda.
+OnBeatProgress = Callable[[int, str, str], None]
 
 
 def _path_str(p) -> str:
@@ -44,22 +50,45 @@ def validate_composition(data: dict) -> None:
     jsonschema.validate(instance=data, schema=schema)
 
 
-def build_composition(script_path: str, slug: str | None = None) -> dict:
+def build_composition(
+    script_path: str,
+    slug: str | None = None,
+    on_beat_progress: OnBeatProgress | None = None,
+    voice_id: str | None = None,
+    language: str | None = None,
+) -> dict:
     cfg = load_config()
     script_path = Path(script_path)
     slug = slug or script_path.stem
 
     beats = parse_script(script_path)
-    narration = build_narration(beats, slug)
+
+    on_narration_beat_done = None
+    if on_beat_progress is not None:
+        on_narration_beat_done = lambda beat_id: on_beat_progress(beat_id, "narration", "done")
+    narration = build_narration(
+        beats, slug, on_beat_done=on_narration_beat_done, voice_id=voice_id, language=language
+    )
 
     beats_by_id = {b["id"]: b for b in narration["beats"]}
 
     composition_beats = []
     for beat in beats:
         beat_timing = beats_by_id[beat.id]
+
+        if on_beat_progress is not None:
+            on_beat_progress(beat.id, "keywords", "running")
         terms = extract_keywords(beat, slug)
+        if on_beat_progress is not None:
+            on_beat_progress(beat.id, "keywords", "done")
+            on_beat_progress(beat.id, "footage", "running")
         footage = search_and_download_footage(beat.id, terms)
+        if on_beat_progress is not None:
+            on_beat_progress(beat.id, "footage", "done")
+            on_beat_progress(beat.id, "captions", "running")
         captions = ensure_captions(beat_timing, slug)
+        if on_beat_progress is not None:
+            on_beat_progress(beat.id, "captions", "done")
 
         composition_beats.append(
             {

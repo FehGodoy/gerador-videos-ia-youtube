@@ -19,6 +19,7 @@ import os
 import uuid
 import wave
 from pathlib import Path
+from typing import Callable
 
 import websocket
 from pydub import AudioSegment
@@ -41,7 +42,9 @@ def _write_wav(pcm_bytes: bytes, path: Path, sample_rate: int) -> None:
         wf.writeframes(pcm_bytes)
 
 
-def _synthesize_via_cartesia(text: str, cfg: dict) -> tuple[bytes, dict]:
+def _synthesize_via_cartesia(
+    text: str, cfg: dict, voice_id: str | None = None, language: str | None = None
+) -> tuple[bytes, dict]:
     """Chama a Cartesia por WebSocket para um único trecho de texto.
 
     Retorna (pcm_bytes, word_timestamps) onde word_timestamps tem
@@ -55,10 +58,12 @@ def _synthesize_via_cartesia(text: str, cfg: dict) -> tuple[bytes, dict]:
             "e preencha a chave (veja https://play.cartesia.ai/keys)."
         )
     narration_cfg = cfg["narration"]
-    if not narration_cfg.get("voice_id"):
+    resolved_voice_id = voice_id or narration_cfg.get("voice_id")
+    if not resolved_voice_id:
         raise CartesiaError(
-            "narration.voice_id não está definido em config.yaml. Escolha uma voz "
-            "em https://play.cartesia.ai/voices e cole o ID lá."
+            "Nenhum voice_id informado (nem em config.yaml, nem passado explicitamente). "
+            "Escolha uma voz em https://play.cartesia.ai/voices e cole o ID lá, ou selecione "
+            "uma voz no painel web."
         )
 
     url = f"{CARTESIA_WS_URL}?cartesia_version={narration_cfg['cartesia_api_version']}"
@@ -67,8 +72,8 @@ def _synthesize_via_cartesia(text: str, cfg: dict) -> tuple[bytes, dict]:
         request = {
             "model_id": narration_cfg["model_id"],
             "transcript": text,
-            "voice": {"mode": "id", "id": narration_cfg["voice_id"]},
-            "language": narration_cfg["language"],
+            "voice": {"mode": "id", "id": resolved_voice_id},
+            "language": language or narration_cfg["language"],
             "context_id": str(uuid.uuid4()),
             "output_format": {
                 "container": "raw",
@@ -111,8 +116,14 @@ def _synthesize_via_cartesia(text: str, cfg: dict) -> tuple[bytes, dict]:
     return pcm_bytes, word_timestamps
 
 
-def synthesize_beat(beat: Beat, slug: str) -> dict:
+def synthesize_beat(
+    beat: Beat, slug: str, voice_id: str | None = None, language: str | None = None
+) -> dict:
     """Sintetiza (ou reaproveita do cache) o áudio de um único beat.
+
+    `voice_id`/`language`, se passados, sobrepõem o que está em config.yaml
+    (usado pelo painel web, onde a voz é escolhida por job, não fixa no
+    config). O CLI não passa nada e continua usando o config.yaml de sempre.
 
     Retorna {"audio_path": Path, "duration_seconds": float,
     "captions": [{"word", "start_seconds", "end_seconds"}]} com timestamps
@@ -128,7 +139,9 @@ def synthesize_beat(beat: Beat, slug: str) -> dict:
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         return {"audio_path": wav_path, **meta}
 
-    pcm_bytes, word_timestamps = _synthesize_via_cartesia(beat.text, cfg)
+    pcm_bytes, word_timestamps = _synthesize_via_cartesia(
+        beat.text, cfg, voice_id=voice_id, language=language
+    )
     sample_rate = cfg["narration"]["sample_rate"]
     _write_wav(pcm_bytes, wav_path, sample_rate)
 
@@ -144,11 +157,22 @@ def synthesize_beat(beat: Beat, slug: str) -> dict:
     return {"audio_path": wav_path, **meta}
 
 
-def build_narration(beats: list[Beat], slug: str) -> dict:
+def build_narration(
+    beats: list[Beat],
+    slug: str,
+    on_beat_done: Callable[[int], None] | None = None,
+    voice_id: str | None = None,
+    language: str | None = None,
+) -> dict:
     """Sintetiza todos os beats e concatena em um único WAV final.
 
     Retorna {"audio_path", "duration_seconds", "beats": [{id, start_seconds,
     end_seconds, captions}]} pronto para alimentar o composition_builder.
+
+    `on_beat_done`, se passado, é chamado com o id de cada beat assim que sua
+    narração termina de ser sintetizada (usado pelo painel web para mostrar
+    progresso ao vivo; o CLI não passa nada e o comportamento não muda).
+    `voice_id`/`language` sobrepõem o config.yaml (ver synthesize_beat).
     """
     cfg = load_config()
     silence_ms = cfg["narration"]["silence_between_beats_ms"]
@@ -159,7 +183,7 @@ def build_narration(beats: list[Beat], slug: str) -> dict:
     cursor_seconds = 0.0
 
     for beat in beats:
-        result = synthesize_beat(beat, slug)
+        result = synthesize_beat(beat, slug, voice_id=voice_id, language=language)
         segment = AudioSegment.from_wav(result["audio_path"])
 
         start_seconds = cursor_seconds
@@ -184,6 +208,9 @@ def build_narration(beats: list[Beat], slug: str) -> dict:
 
         final_audio += segment + silence
         cursor_seconds = end_seconds + (silence_ms / 1000.0)
+
+        if on_beat_done is not None:
+            on_beat_done(beat.id)
 
     out_dir = output_dir(slug)
     audio_path = out_dir / "narration.wav"

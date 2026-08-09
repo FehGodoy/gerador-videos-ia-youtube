@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel do pipeline de vídeo</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<main>
+  <h1>Gerador de vídeo documentário</h1>
+
+  <section id="step-script">
+    <h2>1. Roteiro</h2>
+    <textarea id="script-text" rows="10" placeholder="Cole aqui o roteiro do vídeo..."></textarea>
+  </section>
+
+  <section id="step-voice">
+    <h2>2. Voz da narração</h2>
+    <label class="inline-label">
+      Idioma
+      <select id="language-select">
+        <option value="pt">Português</option>
+        <option value="en">Inglês</option>
+        <option value="es">Espanhol</option>
+        <option value="fr">Francês</option>
+        <option value="de">Alemão</option>
+        <option value="it">Italiano</option>
+        <option value="ja">Japonês</option>
+      </select>
+    </label>
+    <p id="voices-status" class="hint">Carregando vozes...</p>
+    <div id="voices-grid" class="voices-grid"></div>
+  </section>
+
+  <button id="generate-btn" disabled>Gerar vídeo</button>
+
+  <section id="step-progress" class="hidden">
+    <h2>3. Progresso</h2>
+    <ul id="beats-list" class="beats-list"></ul>
+
+    <div id="render-progress-wrap" class="hidden">
+      <p>Renderizando vídeo...</p>
+      <progress id="render-progress" max="100" value="0"></progress>
+      <span id="render-progress-label"></span>
+    </div>
+  </section>
+
+  <section id="step-result" class="hidden">
+    <h2>Vídeo pronto</h2>
+    <video id="result-video" controls></video>
+    <a id="download-link" download>Baixar vídeo</a>
+  </section>
+
+  <p id="error-message" class="error hidden"></p>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

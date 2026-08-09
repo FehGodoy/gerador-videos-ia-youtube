@@ -19,3 +19,6 @@ output/*
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Estado local do Claude Code (aprovações de permissão, locks) — não é config compartilhada
+.claude/

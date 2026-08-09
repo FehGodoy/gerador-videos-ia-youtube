@@ -51,7 +51,7 @@
           "required": ["clip_path", "search_terms"],
           "properties": {
             "clip_path": { "type": "string" },
-            "source": { "type": "string", "enum": ["pexels", "pixabay", "fallback"] },
+            "source": { "type": "string", "enum": ["pexels", "pixabay", "fallback", "cache"] },
             "search_terms": { "type": "array", "items": { "type": "string" } }
           }
         },

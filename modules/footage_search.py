@@ -43,16 +43,25 @@ def _search_pexels(term: str, cfg: dict) -> list[dict]:
         timeout=15,
     )
     resp.raise_for_status()
+    target_width = cfg["video"]["width"]
     candidates = []
     for video in resp.json().get("videos", []):
         if video.get("duration", 0) < cfg["footage"]["min_duration_seconds"]:
             continue
-        # escolhe o video_file de maior resolução disponível (a Remotion/ffmpeg
-        # lidam bem com redimensionar para baixo; o inverso não vale a pena)
-        files = sorted(video.get("video_files", []), key=lambda f: f.get("width", 0), reverse=True)
+        files = video.get("video_files", [])
         if not files:
             continue
-        candidates.append({"source": "pexels", "url": files[0]["link"], "duration": video["duration"]})
+        # Pexels costuma oferecer variantes em 4K. Pegar sempre a maior parecia
+        # razoável ("dá pra redimensionar pra baixo"), mas o Remotion decodifica
+        # cada clipe via Chromium (<OffthreadVideo>) — decodificar 4K real chegou
+        # a travar o render por completo num teste. Pega o menor arquivo que
+        # ainda cobre a resolução de saída; só usa o maior disponível se nenhum
+        # cobrir (melhor um upscale leve do que travar).
+        suitable = [f for f in files if f.get("width", 0) >= target_width]
+        chosen = min(suitable, key=lambda f: f["width"]) if suitable else max(
+            files, key=lambda f: f.get("width", 0)
+        )
+        candidates.append({"source": "pexels", "url": chosen["link"], "duration": video["duration"]})
     return candidates
 
 

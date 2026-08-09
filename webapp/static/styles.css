@@ -1,0 +1,170 @@
+:root {
+  color-scheme: light dark;
+  --border: #d0d0d0;
+  --muted: #6b6b6b;
+  --accent: #2f6feb;
+  --pending: #9a9a9a;
+  --running: #d99a00;
+  --done: #1a8a4a;
+  --error: #c93a3a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  max-width: 760px;
+  margin: 2rem auto;
+  padding: 0 1rem;
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+
+h2 {
+  font-size: 1.1rem;
+  margin-top: 2rem;
+}
+
+textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.inline-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+select {
+  padding: 0.3rem 0.5rem;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.voices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.voice-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.voice-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.voice-name {
+  font-weight: 600;
+}
+
+.voice-desc {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.voice-card audio {
+  width: 100%;
+  height: 32px;
+}
+
+.voice-card button {
+  align-self: flex-start;
+}
+
+#generate-btn {
+  margin-top: 1.5rem;
+  padding: 0.6rem 1.2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#generate-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.beats-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.beat-row {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.beat-text {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.beat-stages {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stage-badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--pending);
+  color: var(--pending);
+}
+
+.stage-badge.running {
+  border-color: var(--running);
+  color: var(--running);
+}
+
+.stage-badge.done {
+  border-color: var(--done);
+  color: var(--done);
+}
+
+progress {
+  width: 100%;
+}
+
+video {
+  width: 100%;
+  border-radius: 8px;
+}
+
+.hidden {
+  display: none;
+}
+
+.error {
+  color: var(--error);
+  font-weight: 600;
+}
