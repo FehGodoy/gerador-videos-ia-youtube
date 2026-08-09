@@ -55,6 +55,12 @@
         <button data-filter="all">Todas</button>
       </div>
     </div>
+    <label class="speed-row" id="speed-row">
+      Velocidade da narração
+      <input type="range" id="speed-slider" min="0.6" max="1.5" step="0.05" value="1">
+      <span id="speed-value" class="speed-value">1.0x</span>
+    </label>
+    <p class="hint">Vale pros próximos blocos gerados. Blocos já gerados mantêm a velocidade com que nasceram — use "Regenerar" neles se quiser aplicar a nova.</p>
     <p id="voices-status" class="hint">Carregando vozes...</p>
     <div id="voices-grid" class="voices-grid"></div>
   </section>

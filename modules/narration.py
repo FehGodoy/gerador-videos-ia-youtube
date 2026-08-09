@@ -42,8 +42,16 @@ def _write_wav(pcm_bytes: bytes, path: Path, sample_rate: int) -> None:
         wf.writeframes(pcm_bytes)
 
 
+MIN_SPEED = 0.6
+MAX_SPEED = 1.5
+
+
 def _synthesize_via_cartesia(
-    text: str, cfg: dict, voice_id: str | None = None, language: str | None = None
+    text: str,
+    cfg: dict,
+    voice_id: str | None = None,
+    language: str | None = None,
+    speed: float | None = None,
 ) -> tuple[bytes, dict]:
     """Chama a Cartesia por WebSocket para um único trecho de texto.
 
@@ -65,6 +73,12 @@ def _synthesize_via_cartesia(
             "Escolha uma voz em https://play.cartesia.ai/voices e cole o ID lá, ou selecione "
             "uma voz no painel web."
         )
+    resolved_speed = speed if speed is not None else narration_cfg.get("speed", 1.0)
+    # generation_config.speed é o parâmetro atual da Cartesia (o antigo campo
+    # top-level "speed" com slow/normal/fast está deprecated). Clampa em vez
+    # de deixar a API rejeitar um valor vindo de fora da faixa (ex: slider do
+    # painel web com passo arredondado).
+    resolved_speed = max(MIN_SPEED, min(MAX_SPEED, resolved_speed))
 
     url = f"{CARTESIA_WS_URL}?cartesia_version={narration_cfg['cartesia_api_version']}"
     ws = websocket.create_connection(url, header=[f"X-API-Key: {api_key}"])
@@ -82,6 +96,7 @@ def _synthesize_via_cartesia(
             },
             "add_timestamps": True,
             "continue": False,
+            "generation_config": {"speed": resolved_speed},
         }
         ws.send(json.dumps(request))
 
@@ -121,17 +136,20 @@ def synthesize_beat(
     slug: str,
     voice_id: str | None = None,
     language: str | None = None,
+    speed: float | None = None,
     force: bool = False,
 ) -> dict:
     """Sintetiza (ou reaproveita do cache) o áudio de um único beat.
 
-    `voice_id`/`language`, se passados, sobrepõem o que está em config.yaml
-    (usado pelo painel web, onde a voz é escolhida por job, não fixa no
-    config). O CLI não passa nada e continua usando o config.yaml de sempre.
+    `voice_id`/`language`/`speed`, se passados, sobrepõem o que está em
+    config.yaml (usado pelo painel web, onde são escolhidos por rascunho, não
+    fixos no config). O CLI não passa nada e continua usando o config.yaml de
+    sempre.
 
     `force=True` ignora o cache e sintetiza de novo mesmo se já existir
     (usado pelo botão "Regenerar" do painel web, quando o usuário não gostou
-    do resultado de um bloco específico).
+    do resultado de um bloco específico — inclusive depois de ajustar a
+    velocidade, já que o cache não é invalidado automaticamente por isso).
 
     Retorna {"audio_path": Path, "duration_seconds": float,
     "captions": [{"word", "start_seconds", "end_seconds"}]} com timestamps
@@ -148,7 +166,7 @@ def synthesize_beat(
         return {"audio_path": wav_path, **meta}
 
     pcm_bytes, word_timestamps = _synthesize_via_cartesia(
-        beat.text, cfg, voice_id=voice_id, language=language
+        beat.text, cfg, voice_id=voice_id, language=language, speed=speed
     )
     sample_rate = cfg["narration"]["sample_rate"]
     _write_wav(pcm_bytes, wav_path, sample_rate)
@@ -171,6 +189,7 @@ def build_narration(
     on_beat_done: Callable[[int], None] | None = None,
     voice_id: str | None = None,
     language: str | None = None,
+    speed: float | None = None,
 ) -> dict:
     """Sintetiza todos os beats e concatena em um único WAV final.
 
@@ -180,7 +199,7 @@ def build_narration(
     `on_beat_done`, se passado, é chamado com o id de cada beat assim que sua
     narração termina de ser sintetizada (usado pelo painel web para mostrar
     progresso ao vivo; o CLI não passa nada e o comportamento não muda).
-    `voice_id`/`language` sobrepõem o config.yaml (ver synthesize_beat).
+    `voice_id`/`language`/`speed` sobrepõem o config.yaml (ver synthesize_beat).
     """
     cfg = load_config()
     silence_ms = cfg["narration"]["silence_between_beats_ms"]
@@ -191,7 +210,7 @@ def build_narration(
     cursor_seconds = 0.0
 
     for beat in beats:
-        result = synthesize_beat(beat, slug, voice_id=voice_id, language=language)
+        result = synthesize_beat(beat, slug, voice_id=voice_id, language=language, speed=speed)
         segment = AudioSegment.from_wav(result["audio_path"])
 
         start_seconds = cursor_seconds

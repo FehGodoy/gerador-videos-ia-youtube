@@ -173,6 +173,29 @@ label {
   gap: var(--space-2);
 }
 
+.speed-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.speed-row input[type="range"] {
+  flex: 1;
+  max-width: 320px;
+  accent-color: var(--orange);
+  height: 4px;
+  cursor: pointer;
+}
+
+.speed-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--orange);
+  min-width: 3.5ch;
+}
+
 textarea,
 select,
 input[type="text"] {

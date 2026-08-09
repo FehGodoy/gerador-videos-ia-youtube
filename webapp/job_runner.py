@@ -48,20 +48,34 @@ class JobManager:
         return self._jobs.get(job_id)
 
     def create_job(
-        self, slug: str, beats: list[Beat], voice_id: str, language: str, remote: bool = True
+        self,
+        slug: str,
+        beats: list[Beat],
+        voice_id: str,
+        language: str,
+        speed: float,
+        remote: bool = True,
     ) -> Job:
         # o slug do rascunho já vem do painel web (gerado quando a voz foi
         # escolhida) — os blocos já foram narrados individualmente sob esse
         # mesmo slug pela fila de blocos, então build_narration só vai achar
         # tudo em cache e recombinar, sem chamar a Cartesia de novo aqui.
+        # voice_id/language/speed só entram em jogo de fato se o cache tiver
+        # sido limpo entre a fila e a criação do job.
         job = Job(id=uuid.uuid4().hex[:12], slug=slug, beats=[b.to_dict() for b in beats])
         self._jobs[job.id] = job
 
-        asyncio.create_task(self._run(job, beats, voice_id, language, remote))
+        asyncio.create_task(self._run(job, beats, voice_id, language, speed, remote))
         return job
 
     async def _run(
-        self, job: Job, beats: list[Beat], voice_id: str, language: str, remote: bool
+        self,
+        job: Job,
+        beats: list[Beat],
+        voice_id: str,
+        language: str,
+        speed: float,
+        remote: bool,
     ) -> None:
         loop = asyncio.get_running_loop()
 
@@ -85,6 +99,7 @@ class JobManager:
                 on_beat_progress=on_beat_progress,
                 voice_id=voice_id,
                 language=language,
+                speed=speed,
             )
             composition_path = output_dir(job.slug) / "composition.json"
 

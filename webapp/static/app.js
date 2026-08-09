@@ -9,6 +9,8 @@ const channelSelect = document.getElementById("channel-select");
 const newChannelInput = document.getElementById("new-channel-input");
 const newChannelBtn = document.getElementById("new-channel-btn");
 const languageSelect = document.getElementById("language-select");
+const speedSlider = document.getElementById("speed-slider");
+const speedValue = document.getElementById("speed-value");
 const favoritesTabs = document.getElementById("favorites-tabs");
 const voicesStatus = document.getElementById("voices-status");
 const voicesGrid = document.getElementById("voices-grid");
@@ -263,6 +265,7 @@ async function generateBlock() {
         text,
         voice_id: selectedVoiceId,
         language: selectedVoiceLanguage,
+        speed: Number(speedSlider.value),
       }),
     });
     if (!resp.ok) {
@@ -339,6 +342,7 @@ async function regenerateBlock(block) {
         text: block.text,
         voice_id: selectedVoiceId,
         language: selectedVoiceLanguage,
+        speed: Number(speedSlider.value),
         force: true,
       }),
     });
@@ -599,6 +603,7 @@ async function handleGenerateVideo() {
         blocks: blocks.map((b) => ({ id: b.id, text: b.text })),
         voice_id: selectedVoiceId,
         language: selectedVoiceLanguage,
+        speed: Number(speedSlider.value),
         remote_render: remoteRenderToggle.checked,
       }),
     });
@@ -647,6 +652,9 @@ favoritesTabs.addEventListener("click", (e) => {
 });
 
 languageSelect.addEventListener("change", () => loadVoices(languageSelect.value));
+speedSlider.addEventListener("input", () => {
+  speedValue.textContent = `${Number(speedSlider.value).toFixed(2)}x`;
+});
 blockText.addEventListener("input", updateGenerateBlockButton);
 generateBlockBtn.addEventListener("click", generateBlock);
 generateVideoBtn.addEventListener("click", handleGenerateVideo);

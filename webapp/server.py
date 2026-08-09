@@ -65,6 +65,7 @@ class NarrationBlockRequest(BaseModel):
     text: str
     voice_id: str
     language: str = "pt"
+    speed: float = 1.0
     force: bool = False
 
 
@@ -73,6 +74,7 @@ class CreateJobRequest(BaseModel):
     blocks: list[BlockIn]
     voice_id: str
     language: str = "pt"
+    speed: float = 1.0
     remote_render: bool = True
 
 
@@ -110,6 +112,7 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
             req.slug,
             voice_id=req.voice_id,
             language=req.language,
+            speed=req.speed,
             force=req.force,
         )
     except RuntimeError as e:
@@ -132,7 +135,7 @@ async def create_job(req: CreateJobRequest) -> dict:
 
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
     job = job_manager.create_job(
-        req.slug, beats, req.voice_id, req.language, remote=req.remote_render
+        req.slug, beats, req.voice_id, req.language, req.speed, remote=req.remote_render
     )
     return {"job_id": job.id, "beats": job.beats}
 

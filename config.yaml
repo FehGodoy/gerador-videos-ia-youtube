@@ -14,6 +14,7 @@ narration:
   sample_rate: 44100
   silence_between_beats_ms: 350 # pausa inserida entre beats na concatenação
   cartesia_api_version: "2026-03-01"
+  speed: 1.0 # 0.6 (mais lento) a 1.5 (mais rápido); painel web deixa ajustar por rascunho
 
 keywords:
   provider: anthropic # anthropic | openai
