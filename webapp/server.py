@@ -17,7 +17,9 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from modules.config import PROJECT_ROOT, cache_dir, load_config
+from modules import footage_search
+from modules.composition_builder import validate_composition
+from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.narration import synthesize_beat
 from modules.script_parser import Beat
 from webapp import channels as channels_module
@@ -78,6 +80,10 @@ class ChannelRequest(BaseModel):
     name: str
 
 
+class FootageChoiceRequest(BaseModel):
+    candidate_index: int
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -136,12 +142,16 @@ def _sse_format(event: str, data: dict) -> str:
 
 
 async def _event_stream(job: Job):
-    if job.status != "running":
-        if job.status == "done":
-            yield _sse_format("job_done", {"video_url": f"/api/jobs/{job.id}/video"})
-        else:
-            yield _sse_format("job_error", {"message": job.error or "erro desconhecido"})
+    if job.status == "done":
+        yield _sse_format("job_done", {"video_url": f"/api/jobs/{job.id}/video"})
         return
+    if job.status == "error":
+        yield _sse_format("job_error", {"message": job.error or "erro desconhecido"})
+        return
+    if job.status == "awaiting_review":
+        # cliente reconectando depois que "composition_ready" já passou pela
+        # fila da primeira vez — reemite pra ele não ficar sem saber
+        yield _sse_format("composition_ready", {})
 
     while True:
         item = await job.queue.get()
@@ -164,6 +174,76 @@ async def job_video(job_id: str) -> FileResponse:
     if job is None or job.video_path is None or not job.video_path.exists():
         raise HTTPException(status_code=404, detail="Vídeo ainda não está pronto.")
     return FileResponse(job.video_path, media_type="video/mp4")
+
+
+@app.get("/api/jobs/{job_id}/footage-candidates")
+async def get_footage_candidates(job_id: str) -> list[dict]:
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+
+    result = []
+    for beat in job.beats:
+        review = footage_search.load_candidates_for_review(job.slug, beat["id"])
+        result.append(
+            {
+                "beat_id": beat["id"],
+                "text": beat["text"],
+                "candidates": review["candidates"] if review else [],
+                "chosen_index": review["chosen_index"] if review else None,
+            }
+        )
+    return result
+
+
+@app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}")
+async def choose_footage_candidate(job_id: str, beat_id: int, req: FootageChoiceRequest) -> dict:
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+
+    review = footage_search.load_candidates_for_review(job.slug, beat_id)
+    if review is None or not (0 <= req.candidate_index < len(review["candidates"])):
+        raise HTTPException(status_code=400, detail="Candidato inválido.")
+
+    chosen = review["candidates"][req.candidate_index]
+    try:
+        clip_path = await asyncio.to_thread(footage_search.download_candidate, chosen)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao baixar o candidato escolhido: {e}")
+
+    footage_search.save_candidates_for_review(
+        job.slug, beat_id, review["candidates"], req.candidate_index
+    )
+
+    # atualiza o beat correspondente no composition.json já salvo em disco —
+    # é o que o render (local ou GitHub) de fato lê depois da confirmação
+    composition_path = output_dir(job.slug) / "composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    for beat_entry in composition["beats"]:
+        if beat_entry["id"] == beat_id:
+            old_terms = beat_entry["footage"]["search_terms"] if beat_entry.get("footage") else []
+            beat_entry["footage"] = {
+                "clip_path": Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix(),
+                "source": chosen["source"],
+                "search_terms": old_terms,
+            }
+            break
+    validate_composition(composition)
+    composition_path.write_text(json.dumps(composition, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {"beat_id": beat_id, "chosen_index": req.candidate_index, "source": chosen["source"]}
+
+
+@app.post("/api/jobs/{job_id}/confirm-render")
+async def confirm_render(job_id: str) -> dict:
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+    if job.status != "awaiting_review":
+        raise HTTPException(status_code=400, detail="Job não está aguardando revisão no momento.")
+    job.review_event.set()
+    return {"status": "ok"}
 
 
 @app.get("/api/channels")

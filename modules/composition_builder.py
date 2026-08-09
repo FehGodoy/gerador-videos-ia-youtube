@@ -82,7 +82,7 @@ def _assemble_composition(
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "done")
             on_beat_progress(beat.id, "footage", "running")
-        footage = search_and_download_footage(beat.id, terms)
+        footage = search_and_download_footage(beat.id, beat.text, terms, slug=slug)
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "footage", "done")
             on_beat_progress(beat.id, "captions", "running")

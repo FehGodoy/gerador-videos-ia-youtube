@@ -30,10 +30,14 @@ class Job:
     id: str
     slug: str
     beats: list[dict]
-    status: str = "running"  # running | done | error
+    status: str = "running"  # running | awaiting_review | done | error
     video_path: Path | None = None
     error: str | None = None
     queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # setado por webapp/server.py:/api/jobs/{id}/confirm-render quando o
+    # usuário termina de revisar o footage escolhido pra cada beat (ou aceita
+    # a escolha da IA sem mexer) — _run fica esperando isso antes de renderizar
+    review_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 class JobManager:
@@ -83,6 +87,11 @@ class JobManager:
                 language=language,
             )
             composition_path = output_dir(job.slug) / "composition.json"
+
+            job.status = "awaiting_review"
+            emit("composition_ready", {})
+            await job.review_event.wait()
+            job.status = "running"
 
             if remote:
                 video_path = await asyncio.to_thread(

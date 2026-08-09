@@ -1,14 +1,14 @@
 """
-Passo 4 do pipeline (Fase 1: busca simples por keyword, sem reranking CLIP —
-isso é trabalho da Fase 2).
-
-Busca candidatos nas APIs gratuitas do Pexels e Pixabay Video usando os termos
-do passo 3, baixa o primeiro candidato válido e mantém cache local em disco
-para não rebaixar o mesmo material em execuções futuras.
+Passo 4 do pipeline: busca de footage no Pexels/Pixabay + ranking por IA
+(modules/footage_ranker.py) antes de escolher qual baixar — evita pegar
+cegamente o primeiro resultado da busca por palavra-chave, que às vezes nem
+bate visualmente com o que está sendo narrado (ex: busca por "Honda HR-V"
+sem achar o modelo exato e trazendo outro carro qualquer).
 """
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 
@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 PEXELS_SEARCH_URL = "https://api.pexels.com/videos/search"
 PIXABAY_SEARCH_URL = "https://pixabay.com/api/videos/"
+
+MAX_CANDIDATES_TO_RANK = 8
 
 
 class FootageNotFound(RuntimeError):
@@ -61,7 +63,14 @@ def _search_pexels(term: str, cfg: dict) -> list[dict]:
         chosen = min(suitable, key=lambda f: f["width"]) if suitable else max(
             files, key=lambda f: f.get("width", 0)
         )
-        candidates.append({"source": "pexels", "url": chosen["link"], "duration": video["duration"]})
+        candidates.append(
+            {
+                "source": "pexels",
+                "url": chosen["link"],
+                "thumbnail_url": video.get("image"),
+                "duration": video["duration"],
+            }
+        )
     return candidates
 
 
@@ -90,19 +99,59 @@ def _search_pixabay(term: str, cfg: dict) -> list[dict]:
         best = videos.get("large") or videos.get("medium") or videos.get("small")
         if not best:
             continue
-        candidates.append({"source": "pixabay", "url": best["url"], "duration": duration})
+        candidates.append(
+            {
+                "source": "pixabay",
+                "url": best["url"],
+                "thumbnail_url": best.get("thumbnail"),
+                "duration": duration,
+            }
+        )
     return candidates
 
 
 _SEARCH_FUNCS = {"pexels": _search_pexels, "pixabay": _search_pixabay}
 
 
-def _download(url: str, dest: Path) -> None:
-    with requests.get(url, stream=True, timeout=60) as resp:
+def search_candidates(search_terms: list[str]) -> list[dict]:
+    """Busca candidatos (sem baixar) pro primeiro termo que trouxer algum
+    resultado, combinando Pexels + Pixabay. Cada candidato tem
+    {source, url, thumbnail_url, duration}."""
+    cfg = load_config()
+    for term in search_terms:
+        combined: list[dict] = []
+        for source_name in cfg["footage"]["sources"]:
+            try:
+                combined.extend(_SEARCH_FUNCS[source_name](term, cfg))
+            except requests.RequestException:
+                logger.exception("Busca de footage falhou em %s para o termo '%s'", source_name, term)
+        if combined:
+            return combined[:MAX_CANDIDATES_TO_RANK]
+    return []
+
+
+def _candidate_cache_key(candidate: dict) -> str:
+    # hash da URL do próprio candidato, não do termo de busca — trocar de
+    # candidato num beat não invalida o cache de nenhum dos dois, e o mesmo
+    # clipe usado em beats diferentes é baixado uma vez só.
+    return hashlib.sha1(candidate["url"].encode("utf-8")).hexdigest()[:16]
+
+
+def download_candidate(candidate: dict) -> str:
+    """Baixa (ou reaproveita do cache) um candidato específico."""
+    footage_cache = cache_dir("footage")
+    cache_key = _candidate_cache_key(candidate)
+    cached = list(footage_cache.glob(f"{cache_key}.*"))
+    if cached:
+        return str(cached[0])
+
+    dest = footage_cache / f"{cache_key}.mp4"
+    with requests.get(candidate["url"], stream=True, timeout=60) as resp:
         resp.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in resp.iter_content(chunk_size=1 << 20):
                 f.write(chunk)
+    return str(dest)
 
 
 def _fallback_clip(cfg: dict) -> Path | None:
@@ -111,66 +160,100 @@ def _fallback_clip(cfg: dict) -> Path | None:
     return clips[0] if clips else None
 
 
-def search_and_download_footage(beat_id: int, search_terms: list[str]) -> dict:
-    """Busca, baixa (ou reaproveita do cache) o footage para um beat.
+def _review_path(slug: str, beat_id: int) -> Path:
+    return cache_dir("footage_candidates", slug) / f"beat_{beat_id:03d}.json"
 
-    Retorna {"clip_path": str, "source": str, "search_terms": [...]}. Se todas
-    as buscas falharem, loga o erro e usa um clipe genérico de
-    assets/fallback/ em vez de quebrar o pipeline; se nem isso existir,
-    "clip_path" vem como None (composition_builder decide o que fazer).
-    """
-    cfg = load_config()
-    footage_cache = cache_dir("footage")
 
-    for term in search_terms:
-        cache_key = hashlib.sha1(term.encode("utf-8")).hexdigest()[:16]
-        cached = list(footage_cache.glob(f"{cache_key}.*"))
-        if cached:
-            return {
-                "clip_path": str(cached[0]),
-                "source": "cache",
-                "search_terms": search_terms,
-            }
+def load_candidates_for_review(slug: str, beat_id: int) -> dict | None:
+    """Lê a lista ranqueada + escolha atual salva pra este beat, se existir.
+    Usado tanto pra reaproveitar (não regerar/re-ranquear à toa quando o beat
+    já foi processado) quanto pela tela de revisão do painel web."""
+    path = _review_path(slug, beat_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
 
-        for source_name in cfg["footage"]["sources"]:
-            try:
-                candidates = _SEARCH_FUNCS[source_name](term, cfg)
-            except requests.RequestException:
-                logger.exception("Busca de footage falhou em %s para o termo '%s'", source_name, term)
-                continue
-            if not candidates:
-                continue
 
-            chosen = candidates[0]
-            dest = footage_cache / f"{cache_key}.mp4"
-            try:
-                _download(chosen["url"], dest)
-            except requests.RequestException:
-                logger.exception("Download de footage falhou (%s, termo '%s')", source_name, term)
-                continue
-            return {"clip_path": str(dest), "source": source_name, "search_terms": search_terms}
-
-    logger.warning(
-        "Nenhum footage encontrado para o beat %d (termos: %s). Usando fallback genérico.",
-        beat_id,
-        search_terms,
+def save_candidates_for_review(slug: str, beat_id: int, candidates: list[dict], chosen_index: int) -> None:
+    path = _review_path(slug, beat_id)
+    path.write_text(
+        json.dumps(
+            {"candidates": candidates, "chosen_index": chosen_index}, ensure_ascii=False, indent=2
+        ),
+        encoding="utf-8",
     )
-    fallback = _fallback_clip(cfg)
-    return {
-        "clip_path": str(fallback) if fallback else None,
-        "source": "fallback" if fallback else None,
-        "search_terms": search_terms,
-    }
+
+
+def search_and_download_footage(
+    beat_id: int, beat_text: str, search_terms: list[str], slug: str | None = None
+) -> dict:
+    """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
+    candidato pro beat. Se `slug` for passado, reaproveita uma escolha já
+    salva (evita rechamar a IA de ranking à toa numa regeneração) e grava a
+    lista ranqueada completa pra revisão manual no painel web.
+
+    Retorna {"clip_path": str, "source": str, "search_terms": [...]}. Se a
+    busca não achar nada, usa um clipe genérico de assets/fallback/ em vez de
+    quebrar o pipeline; se nem isso existir, "clip_path" vem None.
+    """
+    from modules.footage_ranker import rank_candidates
+
+    cfg = load_config()
+
+    if slug:
+        cached_review = load_candidates_for_review(slug, beat_id)
+        if cached_review is not None and cached_review["candidates"]:
+            chosen = cached_review["candidates"][cached_review["chosen_index"]]
+            try:
+                clip_path = download_candidate(chosen)
+                return {"clip_path": clip_path, "source": chosen["source"], "search_terms": search_terms}
+            except requests.RequestException:
+                logger.exception(
+                    "Falha ao reaproveitar candidato salvo do beat %d, buscando de novo", beat_id
+                )
+
+    candidates = search_candidates(search_terms)
+
+    if not candidates:
+        logger.warning(
+            "Nenhum footage encontrado para o beat %d (termos: %s). Usando fallback genérico.",
+            beat_id,
+            search_terms,
+        )
+        fallback = _fallback_clip(cfg)
+        return {
+            "clip_path": str(fallback) if fallback else None,
+            "source": "fallback" if fallback else None,
+            "search_terms": search_terms,
+        }
+
+    ranked = rank_candidates(beat_text, candidates)
+    chosen = ranked[0]
+
+    try:
+        clip_path = download_candidate(chosen)
+    except requests.RequestException:
+        logger.exception("Download de footage falhou (beat %d, %s)", beat_id, chosen["source"])
+        fallback = _fallback_clip(cfg)
+        return {
+            "clip_path": str(fallback) if fallback else None,
+            "source": "fallback" if fallback else None,
+            "search_terms": search_terms,
+        }
+
+    if slug:
+        save_candidates_for_review(slug, beat_id, ranked, chosen_index=0)
+
+    return {"clip_path": clip_path, "source": chosen["source"], "search_terms": search_terms}
 
 
 if __name__ == "__main__":
-    import json
     import sys
 
-    if len(sys.argv) < 2:
-        print("Uso: python -m modules.footage_search <termo1> [termo2 ...]")
+    if len(sys.argv) < 3:
+        print("Uso: python -m modules.footage_search <texto-do-beat> <termo1> [termo2 ...]")
         sys.exit(1)
 
     logging.basicConfig(level=logging.INFO)
-    result = search_and_download_footage(0, sys.argv[1:])
+    result = search_and_download_footage(0, sys.argv[1], sys.argv[2:])
     print(json.dumps(result, ensure_ascii=False, indent=2))

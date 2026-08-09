@@ -742,6 +742,95 @@ progress::-webkit-progress-value {
   transition: width 200ms ease;
 }
 
+/* --- Revisão de footage --- */
+
+.review-beats {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.review-beat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  background: var(--bg-2);
+}
+
+.review-beat-text {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.review-beat-empty {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.review-candidates {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: var(--space-2);
+}
+
+.candidate-thumb {
+  position: relative;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-3);
+  transition: border-color 180ms ease, transform 120ms ease;
+  padding: 0;
+}
+
+.candidate-thumb:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  transform: scale(1.02);
+}
+
+.candidate-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.candidate-thumb.chosen {
+  border-color: var(--orange);
+}
+
+.candidate-thumb.chosen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--orange);
+  box-shadow: inset 0 0 0 1px var(--orange);
+}
+
+.candidate-badge {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: var(--orange);
+  color: var(--orange-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.candidate-thumb.loading {
+  opacity: 0.5;
+  cursor: wait;
+}
+
 /* --- Result --- */
 
 video {

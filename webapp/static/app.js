@@ -19,6 +19,9 @@ const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
 const newDraftBtn = document.getElementById("new-draft-btn");
+const stepReview = document.getElementById("step-review");
+const reviewBeats = document.getElementById("review-beats");
+const confirmRenderBtn = document.getElementById("confirm-render-btn");
 const stepProgress = document.getElementById("step-progress");
 const beatsList = document.getElementById("beats-list");
 const renderStatusWrap = document.getElementById("render-status-wrap");
@@ -41,6 +44,7 @@ let draftSlug = null;
 let draftLocked = false;
 let blocks = [];
 let nextBlockId = 0;
+let currentJobId = null;
 
 function icon(templateId) {
   const tpl = document.getElementById(templateId);
@@ -365,6 +369,9 @@ function resetDraft() {
   nextBlockId = 0;
   blockText.value = "";
   blocksList.innerHTML = "";
+  currentJobId = null;
+  stepReview.classList.add("hidden");
+  reviewBeats.innerHTML = "";
   stepProgress.classList.add("hidden");
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
@@ -412,12 +419,124 @@ function updateBeatStage(beatId, stage, status) {
   if (status === "running" || status === "done") badge.classList.add(status);
 }
 
+async function loadFootageReview(jobId) {
+  const resp = await fetch(`/api/jobs/${jobId}/footage-candidates`);
+  if (!resp.ok) return;
+  const beatsData = await resp.json();
+  renderReviewBeats(jobId, beatsData);
+  stepReview.classList.remove("hidden");
+}
+
+function renderReviewBeats(jobId, beatsData) {
+  reviewBeats.innerHTML = "";
+  for (const beat of beatsData) {
+    const wrap = document.createElement("div");
+    wrap.className = "review-beat";
+    wrap.dataset.beatId = beat.beat_id;
+
+    const text = document.createElement("div");
+    text.className = "review-beat-text";
+    text.textContent = `${beat.beat_id + 1}. ${beat.text}`;
+    wrap.appendChild(text);
+
+    if (!beat.candidates.length) {
+      const empty = document.createElement("div");
+      empty.className = "review-beat-empty";
+      empty.textContent = "Nenhum candidato encontrado — usando footage genérico (fallback).";
+      wrap.appendChild(empty);
+      reviewBeats.appendChild(wrap);
+      continue;
+    }
+
+    const grid = document.createElement("div");
+    grid.className = "review-candidates";
+    beat.candidates.forEach((candidate, index) => {
+      const thumb = document.createElement("button");
+      thumb.className = "candidate-thumb" + (index === beat.chosen_index ? " chosen" : "");
+      thumb.dataset.index = index;
+
+      const img = document.createElement("img");
+      img.src = candidate.thumbnail_url;
+      img.loading = "lazy";
+      img.alt = `Candidato ${index + 1}`;
+      thumb.appendChild(img);
+
+      if (index === beat.chosen_index) {
+        const badge = document.createElement("span");
+        badge.className = "candidate-badge";
+        badge.textContent = "Escolhido";
+        thumb.appendChild(badge);
+      }
+
+      thumb.title = candidate.ai_reasoning || "";
+      thumb.addEventListener("click", () => swapCandidate(jobId, beat.beat_id, index, thumb, grid));
+      grid.appendChild(thumb);
+    });
+    wrap.appendChild(grid);
+    reviewBeats.appendChild(wrap);
+  }
+}
+
+async function swapCandidate(jobId, beatId, index, thumbEl, gridEl) {
+  if (thumbEl.classList.contains("chosen") || thumbEl.classList.contains("loading")) return;
+  clearError();
+  thumbEl.classList.add("loading");
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/footage-candidates/${beatId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ candidate_index: Number(index) }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao trocar footage (${resp.status})`);
+    }
+    gridEl.querySelectorAll(".candidate-thumb").forEach((el) => {
+      el.classList.remove("chosen");
+      const badge = el.querySelector(".candidate-badge");
+      if (badge) badge.remove();
+    });
+    thumbEl.classList.add("chosen");
+    const badge = document.createElement("span");
+    badge.className = "candidate-badge";
+    badge.textContent = "Escolhido";
+    thumbEl.appendChild(badge);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    thumbEl.classList.remove("loading");
+  }
+}
+
+async function handleConfirmRender() {
+  if (!currentJobId) return;
+  clearError();
+  confirmRenderBtn.disabled = true;
+  try {
+    const resp = await fetch(`/api/jobs/${currentJobId}/confirm-render`, { method: "POST" });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao confirmar (${resp.status})`);
+    }
+    stepReview.classList.add("hidden");
+  } catch (err) {
+    showError(err.message);
+    confirmRenderBtn.disabled = false;
+  }
+}
+
 function startJobEvents(jobId) {
+  currentJobId = jobId;
   const source = new EventSource(`/api/jobs/${jobId}/events`);
 
   source.addEventListener("beat_progress", (e) => {
     const data = JSON.parse(e.data);
     updateBeatStage(data.beat_id, data.stage, data.status);
+  });
+
+  source.addEventListener("composition_ready", () => {
+    confirmRenderBtn.disabled = false;
+    loadFootageReview(jobId);
   });
 
   source.addEventListener("render_progress", (e) => {
@@ -459,6 +578,8 @@ function startJobEvents(jobId) {
 async function handleGenerateVideo() {
   clearError();
   generateVideoBtn.disabled = true;
+  stepReview.classList.add("hidden");
+  reviewBeats.innerHTML = "";
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
   renderStatusWrap.classList.add("hidden");
@@ -524,6 +645,7 @@ languageSelect.addEventListener("change", () => loadVoices(languageSelect.value)
 blockText.addEventListener("input", updateGenerateBlockButton);
 generateBlockBtn.addEventListener("click", generateBlock);
 generateVideoBtn.addEventListener("click", handleGenerateVideo);
+confirmRenderBtn.addEventListener("click", handleConfirmRender);
 newDraftBtn.addEventListener("click", resetDraft);
 
 loadChannels();
