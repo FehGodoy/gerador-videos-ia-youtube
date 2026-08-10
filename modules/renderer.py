@@ -6,6 +6,7 @@ pelo painel web (webapp/job_runner.py, com callback que empurra pra fila SSE).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -15,6 +16,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from modules.config import PROJECT_ROOT, load_config, output_dir
+
+logger = logging.getLogger(__name__)
 
 _PROGRESS_RE = re.compile(r"Rendered (\d+)/(\d+)")
 
@@ -47,10 +50,22 @@ def stage_media_for_render(composition_path: Path, slug: str) -> Path:
     referenced_paths = {composition["audio"]["path"]}
     if composition.get("music"):
         referenced_paths.add(composition["music"]["path"])
+    # O footage fica em beat["scenes"][i]["footage"] — um beat vira várias
+    # cenas curtas. Enquanto isto aqui lia o antigo beat["footage"], o staging
+    # saía só com a narração e o render morria no primeiro frame com 404 do
+    # clipe (não dá erro na hora de montar o pacote, só lá no runner).
     for beat in composition["beats"]:
-        footage = beat.get("footage")
-        if footage and footage.get("clip_path"):
-            referenced_paths.add(footage["clip_path"])
+        for scene in beat.get("scenes", []):
+            footage = scene.get("footage")
+            if footage and footage.get("clip_path"):
+                referenced_paths.add(footage["clip_path"])
+
+    missing = [p for p in sorted(referenced_paths) if not (PROJECT_ROOT / p).exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Arquivos de mídia referenciados no composition.json não existem em disco: "
+            + ", ".join(missing)
+        )
 
     for rel_path in referenced_paths:
         src = PROJECT_ROOT / rel_path
@@ -58,6 +73,7 @@ def stage_media_for_render(composition_path: Path, slug: str) -> Path:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
 
+    logger.info("Staging pronto: %d arquivos em %s", len(referenced_paths), staging_dir)
     return staging_dir
 
 
