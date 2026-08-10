@@ -24,8 +24,14 @@ keywords:
 footage:
   sources: [pexels, pixabay]
   min_duration_seconds: 3
-  candidates_per_beat: 5 # quantos candidatos avaliar antes de escolher (Fase 1: pega o 1º válido)
+  candidates_per_beat: 5 # quantos candidatos avaliar antes de escolher
   orientation: "landscape"
+  # Um bloco de narração vira várias cenas na tela. Sem isso, um bloco de 3min
+  # ficava com um clipe só, que acabava aos 30s e congelava no último frame.
+  scene_seconds: 7 # duração alvo de cada corte
+  seconds_per_shot: 25 # a cada ~25s de narração, mais uma ideia visual distinta
+  max_shots_per_beat: 8 # teto de clipes distintos baixados por bloco
+  chart_scene_seconds: 6 # quanto tempo o gráfico ocupa a tela num bloco estatístico
 
 paths:
   cache_dir: "cache"

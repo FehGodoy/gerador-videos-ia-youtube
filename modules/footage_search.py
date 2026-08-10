@@ -218,8 +218,28 @@ def _candidate_cache_key(candidate: dict) -> str:
     return hashlib.sha1(candidate["url"].encode("utf-8")).hexdigest()[:16]
 
 
+def candidate_clip_path(candidate: dict) -> str | None:
+    """Caminho no cache que este candidato ocuparia, se já tiver sido baixado.
+
+    Usado pela revisão no painel pra casar um candidato com as cenas do
+    composition.json (que guardam clip_path, não a URL de origem) sem
+    precisar baixar nada."""
+    cached = list(cache_dir("footage").glob(f"{_candidate_cache_key(candidate)}.*"))
+    return str(cached[0]) if cached else None
+
+
+DOWNLOAD_ATTEMPTS = 3
+
+
 def download_candidate(candidate: dict) -> str:
-    """Baixa (ou reaproveita do cache) um candidato específico."""
+    """Baixa (ou reaproveita do cache) um candidato específico.
+
+    Escreve num arquivo temporário e só renomeia pro nome definitivo quando o
+    download termina inteiro: uma conexão que cai no meio (acontece com os
+    CDNs de stock) deixava um arquivo truncado no cache, e como o cache é por
+    hash da URL esse arquivo quebrado seria reaproveitado pra sempre —
+    incluindo dentro do zip mandado pro render no GitHub.
+    """
     footage_cache = cache_dir("footage")
     cache_key = _candidate_cache_key(candidate)
     cached = list(footage_cache.glob(f"{cache_key}.*"))
@@ -228,12 +248,33 @@ def download_candidate(candidate: dict) -> str:
 
     ext = "jpg" if candidate.get("media_type") == "image" else "mp4"
     dest = footage_cache / f"{cache_key}.{ext}"
-    with requests.get(candidate["url"], stream=True, timeout=60) as resp:
-        resp.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-    return str(dest)
+    partial = footage_cache / f"{cache_key}.{ext}.part"
+
+    last_error: Exception | None = None
+    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+        try:
+            with requests.get(candidate["url"], stream=True, timeout=60) as resp:
+                resp.raise_for_status()
+                expected = int(resp.headers.get("Content-Length") or 0)
+                written = 0
+                with open(partial, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+                        written += len(chunk)
+            if expected and written < expected:
+                raise requests.RequestException(
+                    f"download incompleto: {written} de {expected} bytes"
+                )
+            partial.replace(dest)
+            return str(dest)
+        except requests.RequestException as e:
+            last_error = e
+            partial.unlink(missing_ok=True)
+            logger.warning(
+                "Download de footage falhou (tentativa %d/%d): %s", attempt, DOWNLOAD_ATTEMPTS, e
+            )
+
+    raise last_error if last_error else requests.RequestException("download falhou")
 
 
 def _fallback_clip(cfg: dict) -> Path | None:
@@ -242,22 +283,28 @@ def _fallback_clip(cfg: dict) -> Path | None:
     return clips[0] if clips else None
 
 
-def _review_path(slug: str, beat_id: int) -> Path:
-    return cache_dir("footage_candidates", slug) / f"beat_{beat_id:03d}.json"
+def _review_path(slug: str, beat_id: int, slot: int) -> Path:
+    return cache_dir("footage_candidates", slug) / f"beat_{beat_id:03d}_shot_{slot:02d}.json"
 
 
-def load_candidates_for_review(slug: str, beat_id: int) -> dict | None:
-    """Lê a lista ranqueada + escolha atual salva pra este beat, se existir.
+def load_candidates_for_review(slug: str, beat_id: int, slot: int = 0) -> dict | None:
+    """Lê a lista ranqueada + escolha atual salva pra este shot, se existir.
     Usado tanto pra reaproveitar (não regerar/re-ranquear à toa quando o beat
-    já foi processado) quanto pela tela de revisão do painel web."""
-    path = _review_path(slug, beat_id)
+    já foi processado) quanto pela tela de revisão do painel web.
+
+    `slot` é o índice do shot dentro do beat — um beat longo é preenchido por
+    vários shots visualmente distintos, cada um com sua própria lista de
+    candidatos e sua própria escolha."""
+    path = _review_path(slug, beat_id, slot)
     if not path.exists():
         return None
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save_candidates_for_review(slug: str, beat_id: int, candidates: list[dict], chosen_index: int) -> None:
-    path = _review_path(slug, beat_id)
+def save_candidates_for_review(
+    slug: str, beat_id: int, candidates: list[dict], chosen_index: int, slot: int = 0
+) -> None:
+    path = _review_path(slug, beat_id, slot)
     path.write_text(
         json.dumps(
             {"candidates": candidates, "chosen_index": chosen_index}, ensure_ascii=False, indent=2
@@ -266,80 +313,98 @@ def save_candidates_for_review(slug: str, beat_id: int, candidates: list[dict], 
     )
 
 
+def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:
+    fallback = _fallback_clip(cfg)
+    return {
+        "clip_path": str(fallback) if fallback else None,
+        "source": "fallback" if fallback else None,
+        "media_type": "video",
+        # duração desconhecida (clipe local, não veio de uma API com metadados)
+        # — o tiling de cenas trata None como "corte curto por segurança".
+        "duration": None,
+        "search_terms": search_terms,
+    }
+
+
+def _result_from_candidate(candidate: dict, clip_path: str, search_terms: list[str]) -> dict:
+    return {
+        "clip_path": clip_path,
+        "source": candidate["source"],
+        "media_type": candidate.get("media_type", "video"),
+        "duration": candidate.get("duration"),
+        "search_terms": search_terms,
+    }
+
+
 def search_and_download_footage(
-    beat_id: int, beat_text: str, search_terms: list[str], slug: str | None = None
+    beat_id: int,
+    beat_text: str,
+    search_terms: list[str],
+    slug: str | None = None,
+    slot: int = 0,
 ) -> dict:
     """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
-    candidato pro beat. Se `slug` for passado, reaproveita uma escolha já
-    salva (evita rechamar a IA de ranking à toa numa regeneração) e grava a
-    lista ranqueada completa pra revisão manual no painel web.
+    candidato pra um shot do beat. Se `slug` for passado, reaproveita uma
+    escolha já salva (evita rechamar a IA de ranking à toa numa regeneração)
+    e grava a lista ranqueada completa pra revisão manual no painel web.
 
-    Retorna {"clip_path": str, "source": str, "media_type": "video"|"image",
-    "search_terms": [...]}. Se a busca não achar nada, usa um clipe genérico
-    de assets/fallback/ em vez de quebrar o pipeline (sempre vídeo); se nem
-    isso existir, "clip_path" vem None.
+    `slot` identifica o shot dentro do beat (um beat longo tem vários).
+
+    Retorna {"clip_path", "source", "media_type", "duration", "search_terms"}.
+    `duration` é a duração do clipe em segundos (None pra imagem ou fallback)
+    — usada pelo composition_builder pra nunca criar uma cena mais longa que
+    o clipe, o que congelava o último frame por minutos. Se a busca não achar
+    nada, usa um clipe genérico de assets/fallback/ em vez de quebrar o
+    pipeline; se nem isso existir, "clip_path" vem None.
     """
     from modules.footage_ranker import rank_candidates
 
     cfg = load_config()
 
     if slug:
-        cached_review = load_candidates_for_review(slug, beat_id)
+        cached_review = load_candidates_for_review(slug, beat_id, slot)
         if cached_review is not None and cached_review["candidates"]:
             chosen = cached_review["candidates"][cached_review["chosen_index"]]
             try:
-                clip_path = download_candidate(chosen)
-                return {
-                    "clip_path": clip_path,
-                    "source": chosen["source"],
-                    "media_type": chosen.get("media_type", "video"),
-                    "search_terms": search_terms,
-                }
+                return _result_from_candidate(chosen, download_candidate(chosen), search_terms)
             except requests.RequestException:
                 logger.exception(
-                    "Falha ao reaproveitar candidato salvo do beat %d, buscando de novo", beat_id
+                    "Falha ao reaproveitar candidato salvo (beat %d, shot %d), buscando de novo",
+                    beat_id,
+                    slot,
                 )
 
     candidates = search_candidates(search_terms)
 
     if not candidates:
         logger.warning(
-            "Nenhum footage encontrado para o beat %d (termos: %s). Usando fallback genérico.",
+            "Nenhum footage encontrado (beat %d, shot %d, termos: %s). Usando fallback genérico.",
             beat_id,
+            slot,
             search_terms,
         )
-        fallback = _fallback_clip(cfg)
-        return {
-            "clip_path": str(fallback) if fallback else None,
-            "source": "fallback" if fallback else None,
-            "media_type": "video",
-            "search_terms": search_terms,
-        }
+        return _fallback_result(cfg, search_terms)
 
-    ranked = rank_candidates(beat_text, candidates)
+    # contexto curto e focado no shot em vez do beat inteiro: um beat pode ter
+    # centenas de palavras cobrindo vários assuntos, e mandar tudo faria a IA
+    # de ranking julgar a miniatura contra o assunto errado (além de custar
+    # tokens à toa).
+    context = f'Trecho: "{beat_text[:300]}" | Esta cena deve mostrar: {", ".join(search_terms)}'
+    ranked = rank_candidates(context, candidates)
     chosen = ranked[0]
 
     try:
         clip_path = download_candidate(chosen)
     except requests.RequestException:
-        logger.exception("Download de footage falhou (beat %d, %s)", beat_id, chosen["source"])
-        fallback = _fallback_clip(cfg)
-        return {
-            "clip_path": str(fallback) if fallback else None,
-            "source": "fallback" if fallback else None,
-            "media_type": "video",
-            "search_terms": search_terms,
-        }
+        logger.exception(
+            "Download de footage falhou (beat %d, shot %d, %s)", beat_id, slot, chosen["source"]
+        )
+        return _fallback_result(cfg, search_terms)
 
     if slug:
-        save_candidates_for_review(slug, beat_id, ranked, chosen_index=0)
+        save_candidates_for_review(slug, beat_id, ranked, chosen_index=0, slot=slot)
 
-    return {
-        "clip_path": clip_path,
-        "source": chosen["source"],
-        "media_type": chosen.get("media_type", "video"),
-        "search_terms": search_terms,
-    }
+    return _result_from_candidate(chosen, clip_path, search_terms)
 
 
 if __name__ == "__main__":

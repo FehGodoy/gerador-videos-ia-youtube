@@ -431,6 +431,54 @@ async function loadFootageReview(jobId) {
   stepReview.classList.remove("hidden");
 }
 
+function markChosen(gridEl, thumbEl) {
+  gridEl.querySelectorAll(".candidate-thumb").forEach((el) => {
+    el.classList.remove("chosen");
+    const badge = el.querySelector(".candidate-badge");
+    if (badge) badge.remove();
+  });
+  thumbEl.classList.add("chosen");
+  const badge = document.createElement("span");
+  badge.className = "candidate-badge";
+  badge.textContent = "Escolhido";
+  thumbEl.appendChild(badge);
+}
+
+function flashNote(el, message) {
+  el.textContent = message;
+  el.classList.add("visible");
+  clearTimeout(el._noteTimer);
+  el._noteTimer = setTimeout(() => el.classList.remove("visible"), 2600);
+}
+
+function buildCandidateThumb(candidate, index, isChosen) {
+  const thumb = document.createElement("button");
+  thumb.className = "candidate-thumb" + (isChosen ? " chosen" : "");
+  thumb.dataset.index = index;
+
+  const img = document.createElement("img");
+  img.src = candidate.thumbnail_url;
+  img.loading = "lazy";
+  img.alt = `Candidato ${index + 1}`;
+  thumb.appendChild(img);
+
+  const typeBadge = document.createElement("span");
+  typeBadge.className = "candidate-type-badge";
+  typeBadge.textContent =
+    candidate.media_type === "image" ? "Foto" : `Vídeo · ${Math.round(candidate.duration || 0)}s`;
+  thumb.appendChild(typeBadge);
+
+  if (isChosen) {
+    const badge = document.createElement("span");
+    badge.className = "candidate-badge";
+    badge.textContent = "Escolhido";
+    thumb.appendChild(badge);
+  }
+
+  thumb.title = candidate.ai_reasoning || "";
+  return thumb;
+}
+
 function renderReviewBeats(jobId, beatsData) {
   reviewBeats.innerHTML = "";
   for (const beat of beatsData) {
@@ -443,7 +491,7 @@ function renderReviewBeats(jobId, beatsData) {
     text.textContent = `${beat.beat_id + 1}. ${beat.text}`;
     wrap.appendChild(text);
 
-    if (!beat.candidates.length) {
+    if (!beat.shots.length) {
       const empty = document.createElement("div");
       empty.className = "review-beat-empty";
       empty.textContent = "Nenhum candidato encontrado — usando footage genérico (fallback).";
@@ -452,46 +500,77 @@ function renderReviewBeats(jobId, beatsData) {
       continue;
     }
 
-    const grid = document.createElement("div");
-    grid.className = "review-candidates";
-    beat.candidates.forEach((candidate, index) => {
-      const thumb = document.createElement("button");
-      thumb.className = "candidate-thumb" + (index === beat.chosen_index ? " chosen" : "");
-      thumb.dataset.index = index;
+    // um bloco longo é preenchido por vários shots que se revezam na tela;
+    // cada um tem sua própria lista de candidatos pra trocar
+    beat.shots.forEach((shot) => {
+      const shotWrap = document.createElement("div");
+      shotWrap.className = "review-shot";
 
-      const img = document.createElement("img");
-      img.src = candidate.thumbnail_url;
-      img.loading = "lazy";
-      img.alt = `Candidato ${index + 1}`;
-      thumb.appendChild(img);
+      const head = document.createElement("div");
+      head.className = "review-shot-head";
+      const label = document.createElement("span");
+      label.className = "review-shot-label";
+      const usage = shot.usage;
+      label.textContent = usage
+        ? `Cena ${shot.slot + 1} · ${usage.scene_count}× na tela · ${usage.screen_seconds}s no total`
+        : `Cena ${shot.slot + 1}`;
+      const note = document.createElement("span");
+      note.className = "review-shot-note";
+      head.append(label, note);
+      shotWrap.appendChild(head);
 
-      const typeBadge = document.createElement("span");
-      typeBadge.className = "candidate-type-badge";
-      typeBadge.textContent = candidate.media_type === "image" ? "Foto" : "Vídeo";
-      thumb.appendChild(typeBadge);
+      const preview = document.createElement("div");
+      preview.className = "candidate-preview hidden";
+      const previewVideo = document.createElement("video");
+      previewVideo.controls = true;
+      previewVideo.preload = "none";
+      preview.appendChild(previewVideo);
 
-      if (index === beat.chosen_index) {
-        const badge = document.createElement("span");
-        badge.className = "candidate-badge";
-        badge.textContent = "Escolhido";
-        thumb.appendChild(badge);
-      }
+      const grid = document.createElement("div");
+      grid.className = "review-candidates";
+      shot.candidates.forEach((candidate, index) => {
+        const thumb = buildCandidateThumb(candidate, index, index === shot.chosen_index);
+        thumb.addEventListener("click", () =>
+          swapCandidate(jobId, beat.beat_id, shot.slot, index, thumb, grid, note)
+        );
 
-      thumb.title = candidate.ai_reasoning || "";
-      thumb.addEventListener("click", () => swapCandidate(jobId, beat.beat_id, index, thumb, grid));
-      grid.appendChild(thumb);
+        if (candidate.media_type !== "image") {
+          const playBtn = document.createElement("span");
+          playBtn.className = "candidate-play";
+          playBtn.textContent = "▶";
+          playBtn.title = "Pré-visualizar o clipe";
+          playBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            previewVideo.src = candidate.url;
+            preview.classList.remove("hidden");
+            previewVideo.play().catch(() => {});
+          });
+          thumb.appendChild(playBtn);
+        }
+        grid.appendChild(thumb);
+      });
+
+      shotWrap.append(grid, preview);
+      wrap.appendChild(shotWrap);
     });
-    wrap.appendChild(grid);
+
     reviewBeats.appendChild(wrap);
   }
 }
 
-async function swapCandidate(jobId, beatId, index, thumbEl, gridEl) {
-  if (thumbEl.classList.contains("chosen") || thumbEl.classList.contains("loading")) return;
+async function swapCandidate(jobId, beatId, slot, index, thumbEl, gridEl, noteEl) {
+  if (thumbEl.classList.contains("loading")) return;
+  // clicar no que já está escolhido antes não dava sinal nenhum e parecia
+  // que a ferramenta tinha travado
+  if (thumbEl.classList.contains("chosen")) {
+    flashNote(noteEl, "Esse já é o clipe escolhido.");
+    return;
+  }
   clearError();
   thumbEl.classList.add("loading");
+  flashNote(noteEl, "Baixando o clipe...");
   try {
-    const resp = await fetch(`/api/jobs/${jobId}/footage-candidates/${beatId}`, {
+    const resp = await fetch(`/api/jobs/${jobId}/footage-candidates/${beatId}/${slot}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ candidate_index: Number(index) }),
@@ -500,18 +579,12 @@ async function swapCandidate(jobId, beatId, index, thumbEl, gridEl) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Erro ao trocar footage (${resp.status})`);
     }
-    gridEl.querySelectorAll(".candidate-thumb").forEach((el) => {
-      el.classList.remove("chosen");
-      const badge = el.querySelector(".candidate-badge");
-      if (badge) badge.remove();
-    });
-    thumbEl.classList.add("chosen");
-    const badge = document.createElement("span");
-    badge.className = "candidate-badge";
-    badge.textContent = "Escolhido";
-    thumbEl.appendChild(badge);
+    const result = await resp.json();
+    markChosen(gridEl, thumbEl);
+    flashNote(noteEl, `Trocado em ${result.updated_scenes} cena(s).`);
   } catch (err) {
     showError(err.message);
+    flashNote(noteEl, "Falhou — veja o erro acima.");
   } finally {
     thumbEl.classList.remove("loading");
   }

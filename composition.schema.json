@@ -32,22 +32,24 @@
     }
   },
   "definitions": {
-    "beat": {
+    "scene": {
       "type": "object",
-      "required": ["id", "text", "start_seconds", "end_seconds", "type", "captions"],
+      "required": ["start_seconds", "end_seconds", "kind", "clip_start_seconds", "footage"],
       "properties": {
-        "id": { "type": "integer", "description": "Índice sequencial do beat, 0-based." },
-        "text": { "type": "string", "description": "Texto original do beat, preservado do roteiro." },
-        "start_seconds": { "type": "number", "description": "Início do beat na timeline global (áudio concatenado)." },
-        "end_seconds": { "type": "number", "description": "Fim do beat na timeline global." },
-        "type": {
+        "start_seconds": { "type": "number" },
+        "end_seconds": { "type": "number" },
+        "kind": {
           "type": "string",
-          "enum": ["concreto", "estatistico"],
-          "description": "'estatistico' ativa o <AnimatedChart> em vez do <FootageClip> em tela cheia."
+          "enum": ["footage", "chart"],
+          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia."
+        },
+        "clip_start_seconds": {
+          "type": "number",
+          "description": "Offset dentro do clipe (trimBefore no Remotion). Quando o mesmo clipe reaparece no beat, cada reuso começa de um ponto diferente pra não parecer loop."
         },
         "footage": {
           "type": ["object", "null"],
-          "description": "Presente quando type='concreto'. Nulo se a busca falhou e não há nem fallback.",
+          "description": "Nulo se a busca falhou e não há nem fallback (cena fica preta).",
           "required": ["clip_path", "media_type", "search_terms"],
           "properties": {
             "clip_path": { "type": "string" },
@@ -59,6 +61,27 @@
             },
             "search_terms": { "type": "array", "items": { "type": "string" } }
           }
+        }
+      }
+    },
+    "beat": {
+      "type": "object",
+      "required": ["id", "text", "start_seconds", "end_seconds", "type", "scenes", "captions"],
+      "properties": {
+        "id": { "type": "integer", "description": "Índice sequencial do beat, 0-based." },
+        "text": { "type": "string", "description": "Texto original do beat, preservado do roteiro." },
+        "start_seconds": { "type": "number", "description": "Início do beat na timeline global (áudio concatenado)." },
+        "end_seconds": { "type": "number", "description": "Fim do beat na timeline global." },
+        "type": {
+          "type": "string",
+          "enum": ["concreto", "estatistico"],
+          "description": "'estatistico' faz a primeira cena do beat ser um <AnimatedChart> com o dado em destaque."
+        },
+        "scenes": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Cortes visuais que preenchem o beat. Cada cena dura no máximo o que o clipe aguenta (senão o Remotion congela no último frame) e vão até o início do próximo beat, absorvendo o silêncio entre blocos.",
+          "items": { "$ref": "#/definitions/scene" }
         },
         "chart": {
           "type": ["object", "null"],
@@ -104,12 +127,20 @@
           "start_seconds": 0.0,
           "end_seconds": 3.2,
           "type": "concreto",
-          "footage": {
-            "clip_path": "cache/footage/a1b2c3.mp4",
-            "source": "pexels",
-            "media_type": "video",
-            "search_terms": ["satellite launch", "1950s rocket", "soviet space program"]
-          },
+          "scenes": [
+            {
+              "start_seconds": 0.0,
+              "end_seconds": 3.2,
+              "kind": "footage",
+              "clip_start_seconds": 0.0,
+              "footage": {
+                "clip_path": "cache/footage/a1b2c3.mp4",
+                "source": "pexels",
+                "media_type": "video",
+                "search_terms": ["satellite launch", "1950s rocket", "soviet space program"]
+              }
+            }
+          ],
           "chart": null,
           "captions": [
             { "word": "Em", "start_seconds": 0.0, "end_seconds": 0.15 },

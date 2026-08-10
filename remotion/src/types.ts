@@ -26,13 +26,25 @@ export interface ChartData {
   unidade: string;
 }
 
+// Um corte visual dentro do beat. Um bloco de narração longo vira vários —
+// nenhum passa da duração do clipe que o preenche, senão o último frame
+// congela na tela pelo resto do bloco.
+export interface Scene {
+  start_seconds: number;
+  end_seconds: number;
+  kind: "footage" | "chart";
+  // offset dentro do clipe (trimBefore), pra reuso do mesmo clipe não parecer loop
+  clip_start_seconds: number;
+  footage: Footage | null;
+}
+
 export interface Beat {
   id: number;
   text: string;
   start_seconds: number;
   end_seconds: number;
   type: "concreto" | "estatistico";
-  footage: Footage | null;
+  scenes: Scene[];
   chart: ChartData | null;
   captions: Caption[];
 }

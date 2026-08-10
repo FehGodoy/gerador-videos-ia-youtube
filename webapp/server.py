@@ -179,36 +179,78 @@ async def job_video(job_id: str) -> FileResponse:
     return FileResponse(job.video_path, media_type="video/mp4")
 
 
+def _relative_clip_path(candidate: dict) -> str | None:
+    """Caminho do candidato como aparece no composition.json (relativo à raiz),
+    ou None se ele ainda não foi baixado."""
+    absolute = footage_search.candidate_clip_path(candidate)
+    if absolute is None:
+        return None
+    return Path(absolute).resolve().relative_to(PROJECT_ROOT).as_posix()
+
+
+def _scene_summary(scenes: list[dict], clip_path: str) -> dict:
+    """Quantas cenas do beat usam esse clipe e quanto tempo de tela ele ocupa
+    — é o que deixa claro na revisão o peso real de cada escolha."""
+    matching = [s for s in scenes if (s.get("footage") or {}).get("clip_path") == clip_path]
+    return {
+        "scene_count": len(matching),
+        "screen_seconds": round(
+            sum(s["end_seconds"] - s["start_seconds"] for s in matching), 1
+        ),
+    }
+
+
 @app.get("/api/jobs/{job_id}/footage-candidates")
 async def get_footage_candidates(job_id: str) -> list[dict]:
+    """Um beat longo é preenchido por vários shots, cada um com sua própria
+    lista de candidatos — a revisão é por (beat, shot), não por beat."""
     job = job_manager.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job não encontrado.")
+
+    composition_path = output_dir(job.slug) / "composition.json"
+    scenes_by_beat: dict[int, list[dict]] = {}
+    if composition_path.exists():
+        composition = json.loads(composition_path.read_text(encoding="utf-8"))
+        scenes_by_beat = {b["id"]: b.get("scenes", []) for b in composition["beats"]}
 
     result = []
     for beat in job.beats:
-        review = footage_search.load_candidates_for_review(job.slug, beat["id"])
-        result.append(
-            {
-                "beat_id": beat["id"],
-                "text": beat["text"],
-                "candidates": review["candidates"] if review else [],
-                "chosen_index": review["chosen_index"] if review else None,
-            }
-        )
+        beat_scenes = scenes_by_beat.get(beat["id"], [])
+        shots = []
+        slot = 0
+        while True:
+            review = footage_search.load_candidates_for_review(job.slug, beat["id"], slot)
+            if review is None:
+                break
+            chosen = review["candidates"][review["chosen_index"]] if review["candidates"] else None
+            chosen_path = _relative_clip_path(chosen) if chosen else None
+            shots.append(
+                {
+                    "slot": slot,
+                    "candidates": review["candidates"],
+                    "chosen_index": review["chosen_index"],
+                    "usage": _scene_summary(beat_scenes, chosen_path) if chosen_path else None,
+                }
+            )
+            slot += 1
+        result.append({"beat_id": beat["id"], "text": beat["text"], "shots": shots})
     return result
 
 
-@app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}")
-async def choose_footage_candidate(job_id: str, beat_id: int, req: FootageChoiceRequest) -> dict:
+@app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}")
+async def choose_footage_candidate(
+    job_id: str, beat_id: int, slot: int, req: FootageChoiceRequest
+) -> dict:
     job = job_manager.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Job não encontrado.")
 
-    review = footage_search.load_candidates_for_review(job.slug, beat_id)
+    review = footage_search.load_candidates_for_review(job.slug, beat_id, slot)
     if review is None or not (0 <= req.candidate_index < len(review["candidates"])):
         raise HTTPException(status_code=400, detail="Candidato inválido.")
 
+    previous_path = _relative_clip_path(review["candidates"][review["chosen_index"]])
     chosen = review["candidates"][req.candidate_index]
     try:
         clip_path = await asyncio.to_thread(footage_search.download_candidate, chosen)
@@ -216,27 +258,44 @@ async def choose_footage_candidate(job_id: str, beat_id: int, req: FootageChoice
         raise HTTPException(status_code=502, detail=f"Falha ao baixar o candidato escolhido: {e}")
 
     footage_search.save_candidates_for_review(
-        job.slug, beat_id, review["candidates"], req.candidate_index
+        job.slug, beat_id, review["candidates"], req.candidate_index, slot=slot
     )
 
-    # atualiza o beat correspondente no composition.json já salvo em disco —
-    # é o que o render (local ou GitHub) de fato lê depois da confirmação
+    # Troca o clipe em todas as cenas do beat que usavam o candidato anterior
+    # deste shot — é o composition.json em disco que o render (local ou
+    # GitHub) de fato lê depois da confirmação.
     composition_path = output_dir(job.slug) / "composition.json"
     composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    relative_path = Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix()
+    updated_scenes = 0
     for beat_entry in composition["beats"]:
-        if beat_entry["id"] == beat_id:
-            old_terms = beat_entry["footage"]["search_terms"] if beat_entry.get("footage") else []
-            beat_entry["footage"] = {
-                "clip_path": Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix(),
+        if beat_entry["id"] != beat_id:
+            continue
+        for scene in beat_entry.get("scenes", []):
+            footage = scene.get("footage") or {}
+            if footage.get("clip_path") != previous_path:
+                continue
+            scene["footage"] = {
+                "clip_path": relative_path,
                 "source": chosen["source"],
                 "media_type": chosen.get("media_type", "video"),
-                "search_terms": old_terms,
+                "search_terms": footage.get("search_terms", []),
             }
-            break
+            # o offset era calculado pra duração do clipe antigo; zera pra não
+            # começar depois do fim de um clipe mais curto (tela preta)
+            scene["clip_start_seconds"] = 0.0
+            updated_scenes += 1
+        break
     validate_composition(composition)
     composition_path.write_text(json.dumps(composition, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return {"beat_id": beat_id, "chosen_index": req.candidate_index, "source": chosen["source"]}
+    return {
+        "beat_id": beat_id,
+        "slot": slot,
+        "chosen_index": req.candidate_index,
+        "source": chosen["source"],
+        "updated_scenes": updated_scenes,
+    }
 
 
 @app.post("/api/jobs/{job_id}/confirm-render")

@@ -1,5 +1,13 @@
 import React from "react";
-import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
+import {
+  AbsoluteFill,
+  Img,
+  OffthreadVideo,
+  interpolate,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
 
 /**
  * `clipPath` vem do composition.json como caminho relativo à raiz do
@@ -8,15 +16,20 @@ import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentF
  *
  * `mediaType === "image"` acontece quando a busca (ou a troca manual na
  * revisão) resolveu numa foto em vez de vídeo — sem Ken Burns a imagem
- * ficaria "morta" na tela por toda a duração do beat, então aplica um zoom
- * lento e contínuo (`scale` via interpolate no frame local).
+ * ficaria "morta" na tela, então aplica um zoom lento e contínuo.
+ *
+ * `clipStartSeconds` (trimBefore) existe porque um bloco de narração longo
+ * reutiliza o mesmo clipe em várias cenas — começar cada reuso de um ponto
+ * diferente evita a sensação de loop.
  */
 export const FootageClip: React.FC<{
   clipPath: string;
   mediaType: "video" | "image";
+  clipStartSeconds: number;
   durationInFrames: number;
-}> = ({ clipPath, mediaType, durationInFrames }) => {
+}> = ({ clipPath, mediaType, clipStartSeconds, durationInFrames }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
   if (mediaType === "image") {
     const scale = interpolate(frame, [0, durationInFrames], [1, 1.08], {
@@ -37,6 +50,7 @@ export const FootageClip: React.FC<{
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       <OffthreadVideo
         src={staticFile(clipPath)}
+        trimBefore={Math.max(0, Math.round(clipStartSeconds * fps))}
         style={{ width: "100%", height: "100%", objectFit: "cover" }}
       />
     </AbsoluteFill>

@@ -1,9 +1,23 @@
 import React from "react";
-import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
+import {
+  AbsoluteFill,
+  Img,
+  OffthreadVideo,
+  interpolate,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
 import type { ChartData } from "./types";
 
 const { fontFamily } = loadFont();
+
+// A contagem tem duração fixa e curta — antes ela era esticada pela duração
+// inteira do beat, e num bloco de 70s o número ficava subindo por 70s.
+// Depois disso o valor final fica parado até a cena acabar.
+const COUNT_SECONDS = 2.5;
+const COUNT_DELAY_SECONDS = 0.4;
 
 function formatValue(value: number, unidade: string): string {
   const trimmedUnit = unidade.trim();
@@ -29,15 +43,15 @@ export const AnimatedChart: React.FC<{
   chart: ChartData;
   backgroundClipPath: string | null;
   backgroundMediaType: "video" | "image";
-  durationInFrames: number;
-}> = ({ chart, backgroundClipPath, backgroundMediaType, durationInFrames }) => {
+}> = ({ chart, backgroundClipPath, backgroundMediaType }) => {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
   const entrance = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: "clamp" });
   const hasComparison = chart.valor_inicial !== null;
 
-  const progressStart = 10;
-  const progressEnd = Math.max(progressStart + 1, durationInFrames - 20);
+  const progressStart = Math.round(COUNT_DELAY_SECONDS * fps);
+  const progressEnd = progressStart + Math.round(COUNT_SECONDS * fps);
   const progress = interpolate(frame, [progressStart, progressEnd], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",

@@ -36,21 +36,28 @@ def _download_thumbnail(url: str) -> bytes | None:
         return None
 
 
-def _ask_claude(beat_text: str, images: list[bytes]) -> tuple[int | None, str]:
+def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tuple[int | None, str]:
     import anthropic
 
     cfg = load_config()
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    kinds = ", ".join(
+        f"{i}={'foto' if mt == 'image' else 'vídeo'}" for i, mt in enumerate(media_types)
+    )
 
     content: list[dict] = [
         {
             "type": "text",
             "text": (
-                "Você está escolhendo footage de stock para um vídeo documentário. "
-                f'Trecho da narração: "{beat_text}"\n\n'
-                f"Abaixo estão {len(images)} imagens (miniaturas de vídeos candidatos), "
-                "numeradas a partir de 0 na ordem que aparecem. Escolha a que melhor "
-                "representa visualmente esse trecho — o assunto, a ação, o contexto. "
+                "Você está escolhendo footage de stock para um vídeo documentário.\n"
+                f"{context}\n\n"
+                f"Abaixo estão {len(images)} miniaturas de candidatos, numeradas a partir de 0 na "
+                "ordem que aparecem. Escolha a que melhor representa visualmente essa cena — o "
+                "assunto, a ação, o contexto.\n"
+                f"Tipo de cada candidato: {kinds}.\n"
+                "PREFIRA VÍDEO: a miniatura de uma foto costuma parecer mais bonita que o frame "
+                "de um vídeo, mas o resultado final é um documentário e foto parada quebra o "
+                "ritmo. Só escolha uma foto se nenhum vídeo representar bem o assunto. "
                 "Responda APENAS com um JSON, sem markdown: "
                 '{"best_index": N, "reasoning": "motivo em uma frase curta"}'
             ),
@@ -83,12 +90,13 @@ def _ask_claude(beat_text: str, images: list[bytes]) -> tuple[int | None, str]:
     return parsed.get("best_index"), parsed.get("reasoning", "")
 
 
-def rank_candidates(beat_text: str, candidates: list[dict]) -> list[dict]:
+def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
     """Reordena `candidates` (melhor primeiro) usando visão do Claude pra
-    comparar cada miniatura com o texto do beat. Se algo falhar (sem chave de
-    API, erro de rede, resposta não parseável), devolve a lista na ordem
-    original — o mesmo princípio de fallback já usado em keyword_extractor.py,
-    o ranking nunca deve derrubar o pipeline.
+    comparar cada miniatura com o contexto da cena (trecho da narração + o
+    que essa cena específica deve mostrar — ver footage_search). Se algo
+    falhar (sem chave de API, erro de rede, resposta não parseável), devolve
+    a lista na ordem original — o mesmo princípio de fallback já usado em
+    keyword_extractor.py, o ranking nunca deve derrubar o pipeline.
     """
     if len(candidates) <= 1:
         return candidates
@@ -112,7 +120,9 @@ def rank_candidates(beat_text: str, candidates: list[dict]) -> list[dict]:
         return candidates
 
     try:
-        best_index, reasoning = _ask_claude(beat_text, images)
+        best_index, reasoning = _ask_claude(
+            context, images, [c.get("media_type", "video") for c in valid_candidates]
+        )
     except Exception:
         logger.exception("Ranking de footage por IA falhou, mantendo ordem original.")
         return candidates

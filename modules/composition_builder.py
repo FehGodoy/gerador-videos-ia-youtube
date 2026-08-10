@@ -4,6 +4,13 @@ valida contra composition.schema.json antes de salvar. Tipo do beat
 (concreto/estatístico) e dados de gráfico vêm de modules/keyword_extractor.py
 (analyze_beat) — footage é buscado pra todo beat, mesmo estatístico, pra
 servir de fundo desfocado atrás do gráfico animado.
+
+Cada beat é fatiado em CENAS (`beat.scenes`): um bloco de narração pode ter
+minutos, e um clipe de stock tem ~10-30s. Antes o beat inteiro era uma cena
+só, então o clipe acabava e o Remotion congelava no último frame pelo resto
+do bloco (chegou a 3min de imagem parada num teste real). Agora o beat é
+preenchido por vários shots visualmente distintos que se revezam em cortes
+de ~7s, e nenhuma cena é mais longa que o clipe que a preenche.
 """
 from __future__ import annotations
 
@@ -43,6 +50,132 @@ def _path_str(p) -> str:
     return Path(p).resolve().relative_to(PROJECT_ROOT).as_posix()
 
 
+# Margem pra sobreposição do crossfade não passar do fim do clipe
+# (ver TRANSITION_FRAMES em remotion/src/VideoComposition.tsx).
+_TRANSITION_MARGIN_SECONDS = 0.4
+# Abaixo disso um corte vira "piscada" — usado pra decidir se vale encolher a
+# cena anterior em vez de deixar uma sobra minúscula no fim do beat.
+_MIN_SCENE_SECONDS = 1.2
+# Clipe sem duração conhecida (fallback local): corta curto por segurança.
+_UNKNOWN_CLIP_SECONDS = 4.0
+# Em quantos pontos distintos do clipe os reusos podem começar.
+_OFFSET_STEPS = 3
+
+
+def _max_scene_seconds(footage: dict, scene_seconds: float) -> float:
+    """Quanto tempo esse footage aguenta na tela sem congelar no último frame.
+
+    Imagem nunca congela (tem Ken Burns em FootageClip.tsx), então usa o alvo
+    cheio. Vídeo é limitado pela própria duração, com margem pro crossfade.
+    """
+    if footage.get("clip_path") is None or footage.get("media_type") == "image":
+        return scene_seconds
+    duration = footage.get("duration")
+    if not duration:
+        return min(scene_seconds, _UNKNOWN_CLIP_SECONDS)
+    return max(_MIN_SCENE_SECONDS, min(scene_seconds, duration - _TRANSITION_MARGIN_SECONDS))
+
+
+def _scene_footage(footage: dict) -> dict | None:
+    if not footage.get("clip_path"):
+        return None
+    return {
+        "clip_path": _path_str(footage["clip_path"]),
+        "source": footage["source"],
+        "media_type": footage["media_type"],
+        "search_terms": footage["search_terms"],
+    }
+
+
+def _tile_scenes(
+    start_seconds: float, end_seconds: float, shots: list[dict], cfg: dict, has_chart: bool
+) -> list[dict]:
+    """Preenche o intervalo [start, end) com cenas curtas, revezando os shots.
+
+    Nenhuma cena passa da duração do clipe que a preenche — é isso que impede
+    o congelamento. Quando o mesmo clipe é reutilizado (beat longo, poucos
+    shots), cada reuso começa de um ponto diferente do clipe
+    (`clip_start_seconds`) pra não parecer o mesmo trecho em loop.
+    """
+    scene_seconds = cfg["footage"]["scene_seconds"]
+    scenes: list[dict] = []
+    cursor = start_seconds
+
+    # Um shot pode ter vindo sem clipe (busca vazia, download falhou e não há
+    # nem fallback local). Antes isso virava tela preta pelo tempo daquele
+    # shot; melhor reaproveitar os clipes que os outros shots do mesmo beat
+    # conseguiram — só fica preto se o beat inteiro ficou sem nada.
+    shots = [s for s in shots if s.get("clip_path")]
+
+    if has_chart and shots:
+        chart_seconds = min(cfg["footage"]["chart_scene_seconds"], end_seconds - start_seconds)
+        scenes.append(
+            {
+                "start_seconds": round(cursor, 3),
+                "end_seconds": round(cursor + chart_seconds, 3),
+                "kind": "chart",
+                "clip_start_seconds": 0.0,
+                "footage": _scene_footage(shots[0]),
+            }
+        )
+        cursor += chart_seconds
+
+    if not shots:
+        if end_seconds - cursor > 0.01:
+            scenes.append(
+                {
+                    "start_seconds": round(cursor, 3),
+                    "end_seconds": round(end_seconds, 3),
+                    "kind": "footage",
+                    "clip_start_seconds": 0.0,
+                    "footage": None,
+                }
+            )
+        return scenes
+
+    reuse_count: dict[str, int] = {}
+    # depois do gráfico, começa do shot seguinte: o fundo desfocado do gráfico
+    # já era o shot 0, e emendar ele de novo em tela cheia parece repetição
+    index = 1 if scenes and len(shots) > 1 else 0
+    while end_seconds - cursor > 0.01:
+        footage = shots[index % len(shots)]
+        remaining = end_seconds - cursor
+        duration = min(_max_scene_seconds(footage, scene_seconds), remaining)
+
+        # sobra curta demais pro próximo corte: encolhe esta cena pra sobra
+        # virar uma cena decente; se não der, absorve a sobra aqui mesmo.
+        tail = remaining - duration
+        if 0 < tail < _MIN_SCENE_SECONDS:
+            shrunk = duration - (_MIN_SCENE_SECONDS - tail)
+            duration = shrunk if shrunk >= _MIN_SCENE_SECONDS else remaining
+
+        clip_path = footage.get("clip_path") or ""
+        used = reuse_count.get(clip_path, 0)
+        # Espalha os reusos em pontos distintos do clipe. Multiplicar pela
+        # duração da cena e tirar o módulo da folga não funcionava: com um
+        # clipe de 8s e cena de 7s a folga é 1s, e 7 % 1 dá sempre 0 — todos
+        # os reusos começavam do mesmo lugar.
+        slack = (footage.get("duration") or 0) - duration
+        clip_start = (
+            round(slack * ((used % _OFFSET_STEPS) / _OFFSET_STEPS), 3) if slack > 0.5 else 0.0
+        )
+        reuse_count[clip_path] = used + 1
+
+        scenes.append(
+            {
+                "start_seconds": round(cursor, 3),
+                "end_seconds": round(cursor + duration, 3),
+                "kind": "footage",
+                "clip_start_seconds": clip_start,
+                "footage": _scene_footage(footage),
+            }
+        )
+        cursor += duration
+        index += 1
+
+    return scenes
+
+
 def validate_composition(data: dict) -> None:
     """Valida um composition.json (ou dict equivalente) contra o schema.
     Levanta jsonschema.ValidationError se algo estiver fora do formato."""
@@ -77,20 +210,46 @@ def _assemble_composition(
     )
 
     beats_by_id = {b["id"]: b for b in narration["beats"]}
+    footage_cfg = cfg["footage"]
 
     composition_beats = []
-    for beat in beats:
+    for position, beat in enumerate(beats):
         beat_timing = beats_by_id[beat.id]
+
+        # A cena vai até o começo do PRÓXIMO beat (não até o fim da fala deste)
+        # pra absorver o silêncio entre beats — sem isso sobrava um buraco
+        # preto entre blocos e a transição não teria onde sobrepor.
+        next_beat = beats[position + 1] if position + 1 < len(beats) else None
+        visual_end = (
+            beats_by_id[next_beat.id]["start_seconds"]
+            if next_beat
+            else narration["duration_seconds"]
+        )
+        visual_start = beat_timing["start_seconds"]
+        visual_duration = max(0.1, visual_end - visual_start)
+
+        # quanto mais longo o bloco, mais ideias visuais distintas ele precisa
+        n_shots = max(
+            1,
+            min(
+                footage_cfg["max_shots_per_beat"],
+                round(visual_duration / footage_cfg["seconds_per_shot"]),
+            ),
+        )
 
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "running")
-        analysis = analyze_beat(beat, slug)
+        analysis = analyze_beat(beat, slug, n_shots=n_shots, language=language or cfg["narration"]["language"])
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "done")
             on_beat_progress(beat.id, "footage", "running")
-        # footage é buscado pra todo beat, mesmo "estatistico" — vira fundo
-        # desfocado atrás do gráfico animado (AnimatedChart.tsx)
-        footage = search_and_download_footage(beat.id, beat.text, analysis["search_terms"], slug=slug)
+
+        # footage é buscado pra todo beat, mesmo "estatistico" — o primeiro
+        # shot também vira o fundo desfocado atrás do gráfico (AnimatedChart)
+        shots = [
+            search_and_download_footage(beat.id, beat.text, shot["terms"], slug=slug, slot=slot)
+            for slot, shot in enumerate(analysis["shots"])
+        ]
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "footage", "done")
             on_beat_progress(beat.id, "captions", "running")
@@ -98,6 +257,7 @@ def _assemble_composition(
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "captions", "done")
 
+        has_chart = analysis["type"] == "estatistico" and analysis["chart"] is not None
         composition_beats.append(
             {
                 "id": beat.id,
@@ -105,15 +265,8 @@ def _assemble_composition(
                 "start_seconds": beat_timing["start_seconds"],
                 "end_seconds": beat_timing["end_seconds"],
                 "type": analysis["type"],
-                "footage": {
-                    "clip_path": _path_str(footage["clip_path"]) if footage["clip_path"] else None,
-                    "source": footage["source"],
-                    "media_type": footage["media_type"],
-                    "search_terms": footage["search_terms"],
-                }
-                if footage["clip_path"]
-                else None,
                 "chart": analysis["chart"],
+                "scenes": _tile_scenes(visual_start, visual_end, shots, cfg, has_chart),
                 "captions": captions,
             }
         )

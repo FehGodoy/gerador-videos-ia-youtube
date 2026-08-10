@@ -6,40 +6,44 @@ import type { CompositionData } from "./types";
 import { FootageClip } from "./FootageClip";
 import { AnimatedChart } from "./AnimatedChart";
 
-// ~300ms a 30fps. Cabe dentro do silêncio de 350ms que a narração já insere
-// entre beats (config.yaml: narration.silence_between_beats_ms) — o
-// crossfade consome esse intervalo ocioso em vez de cortar conteúdo falado.
-const TRANSITION_FRAMES = 9;
+const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
 /**
- * Componente raiz: itera os beats do composition.json e monta a sequência
- * com crossfade entre cortes (<TransitionSeries> + fade). Escolhe
- * <AnimatedChart> (beat.type === "estatistico") ou <FootageClip> em tela
- * cheia por beat. Sem legendas — o usuário não quis.
+ * Componente raiz: achata as cenas de todos os beats numa única
+ * <TransitionSeries> com crossfade entre cortes. Cada cena escolhe
+ * <AnimatedChart> (kind "chart") ou <FootageClip> em tela cheia. Sem
+ * legendas — o usuário não quis.
  *
- * Cada beat é estendido visualmente até o start_seconds do PRÓXIMO beat (em
- * vez de parar no próprio end_seconds) — absorve o silêncio entre beats na
- * narração, evita um buraco preto entre cortes, e dá à transição onde
- * sobrepor sem cortar fala. O <Audio> fica fora do <TransitionSeries> (irmão,
- * não filho), então a sobreposição visual do crossfade nunca afeta o áudio.
+ * Sincronia com o áudio: <TransitionSeries> SOBREPÕE as sequências vizinhas
+ * pra fazer o crossfade, então a série encolhe TRANSITION_FRAMES a cada
+ * corte. Com dezenas de cenas isso somaria dezenas de segundos de
+ * dessincronia. Compensa somando TRANSITION_FRAMES na duração de toda cena
+ * menos a última: cada cena passa a começar exatamente no seu
+ * start_seconds e o total volta a bater com a duração do áudio.
+ * O <Audio> fica fora da <TransitionSeries> (irmão, não filho), então a
+ * sobreposição visual nunca afeta o áudio.
  */
 export const VideoComposition: React.FC<CompositionData> = (data) => {
   const { fps } = useVideoConfig();
+
+  const scenes = data.beats.flatMap((beat) =>
+    beat.scenes.map((scene) => ({ scene, chart: beat.chart, key: `${beat.id}-${scene.start_seconds}` }))
+  );
 
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {data.audio.path && <Audio src={staticFile(data.audio.path)} />}
       <TransitionSeries>
-        {data.beats.map((beat, index) => {
-          const nextBeat = data.beats[index + 1];
-          const visualEndSeconds = nextBeat ? nextBeat.start_seconds : data.audio.duration_seconds;
-          const durationInFrames = Math.max(
+        {scenes.map(({ scene, chart, key }, index) => {
+          const isLast = index === scenes.length - 1;
+          const baseFrames = Math.max(
             1,
-            Math.round((visualEndSeconds - beat.start_seconds) * fps)
+            Math.round((scene.end_seconds - scene.start_seconds) * fps)
           );
+          const durationInFrames = isLast ? baseFrames : baseFrames + TRANSITION_FRAMES;
 
           return (
-            <React.Fragment key={beat.id}>
+            <React.Fragment key={key}>
               {index > 0 && (
                 <TransitionSeries.Transition
                   presentation={fade()}
@@ -47,17 +51,17 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                 />
               )}
               <TransitionSeries.Sequence durationInFrames={durationInFrames}>
-                {beat.type === "estatistico" && beat.chart ? (
+                {scene.kind === "chart" && chart ? (
                   <AnimatedChart
-                    chart={beat.chart}
-                    backgroundClipPath={beat.footage?.clip_path ?? null}
-                    backgroundMediaType={beat.footage?.media_type ?? "video"}
-                    durationInFrames={durationInFrames}
+                    chart={chart}
+                    backgroundClipPath={scene.footage?.clip_path ?? null}
+                    backgroundMediaType={scene.footage?.media_type ?? "video"}
                   />
-                ) : beat.footage?.clip_path ? (
+                ) : scene.footage?.clip_path ? (
                   <FootageClip
-                    clipPath={beat.footage.clip_path}
-                    mediaType={beat.footage.media_type}
+                    clipPath={scene.footage.clip_path}
+                    mediaType={scene.footage.media_type}
+                    clipStartSeconds={scene.clip_start_seconds}
                     durationInFrames={durationInFrames}
                   />
                 ) : (
