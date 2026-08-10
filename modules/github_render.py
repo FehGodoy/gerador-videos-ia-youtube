@@ -25,6 +25,13 @@ from modules.renderer import stage_media_for_render
 
 WORKFLOW_FILE = "render.yml"
 POLL_INTERVAL_SECONDS = 15
+# O gh às vezes falha de forma transitória (keyring do Windows momentaneamente
+# indisponível, renovação do token OAuth, blip de rede) e reporta como se não
+# houvesse login — visto na prática logo depois de uma revisão de footage, com
+# o mesmo comando funcionando normalmente segundos depois. Uma retentativa curta
+# evita perder o job inteiro por isso.
+GH_ATTEMPTS = 3
+GH_RETRY_SECONDS = 3
 
 OnStatus = Callable[[str], None]
 
@@ -41,15 +48,53 @@ def _gh_executable() -> str:
     )
 
 
-def _run_gh(args: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(
-        [_gh_executable(), *args], capture_output=True, text=True, cwd=PROJECT_ROOT
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"gh {' '.join(args)} falhou: {result.stderr.strip() or result.stdout.strip()}"
+def _gh_output(result: subprocess.CompletedProcess) -> str:
+    return (result.stderr or "").strip() or (result.stdout or "").strip()
+
+
+def _auth_hint() -> str:
+    """Diagnóstico pra anexar quando o gh reclama de autenticação.
+
+    Roda `gh auth status` na hora: se ele disser que está logado, o erro
+    anterior foi transitório; se não, mostra o motivo real em vez de deixar o
+    usuário adivinhando.
+    """
+    try:
+        status = subprocess.run(
+            [_gh_executable(), "auth", "status"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            timeout=30,
         )
-    return result
+    except Exception:
+        return ""
+    return (
+        f"\n\n'gh auth status' agora responde:\n{_gh_output(status)}\n\n"
+        "Se acima aparecer que você ESTÁ logado, foi uma falha momentânea — tente gerar de novo "
+        "(nada é reprocessado, tudo vem do cache). Se aparecer que não está, rode 'gh auth login' "
+        "ou coloque um token no .env como GH_TOKEN=ghp_... (o painel lê o .env automaticamente)."
+    )
+
+
+def _run_gh(args: list[str]) -> subprocess.CompletedProcess:
+    last: subprocess.CompletedProcess | None = None
+    for attempt in range(1, GH_ATTEMPTS + 1):
+        # env não é passado de propósito: o subprocess herda o os.environ do
+        # painel, onde o modules.config já carregou o .env — então um GH_TOKEN
+        # definido lá funciona como fallback ao login guardado no keyring.
+        last = subprocess.run(
+            [_gh_executable(), *args], capture_output=True, text=True, cwd=PROJECT_ROOT
+        )
+        if last.returncode == 0:
+            return last
+        if attempt < GH_ATTEMPTS:
+            time.sleep(GH_RETRY_SECONDS)
+
+    message = _gh_output(last) if last else "sem saída"
+    if "auth login" in message or "GH_TOKEN" in message:
+        message += _auth_hint()
+    raise RuntimeError(f"gh {' '.join(args)} falhou após {GH_ATTEMPTS} tentativas: {message}")
 
 
 def _delete_release_if_exists(repo: str, tag: str) -> None:
