@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from modules import footage_search
+from modules import footage_search, github_render
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.narration import synthesize_beat
@@ -132,6 +132,13 @@ async def create_job(req: CreateJobRequest) -> dict:
         raise HTTPException(status_code=400, detail="Nenhum bloco de narração adicionado.")
     if not req.voice_id:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
+
+    # Falha cedo: sem isso, um gh sem login só estourava lá na frente, depois
+    # da revisão manual de footage inteira — e jogava esse trabalho fora.
+    if req.remote_render:
+        auth_error = await asyncio.to_thread(github_render.check_auth)
+        if auth_error:
+            raise HTTPException(status_code=400, detail=auth_error)
 
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
     job = job_manager.create_job(

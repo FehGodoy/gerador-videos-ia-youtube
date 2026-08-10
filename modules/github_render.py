@@ -77,6 +77,46 @@ def _auth_hint() -> str:
     )
 
 
+def check_auth() -> str | None:
+    """Confere se o `gh` deste processo enxerga um login. Devolve None se está
+    tudo certo, ou a mensagem de erro pronta pro usuário.
+
+    Existe pra falhar cedo: a autenticação só era testada na hora de subir o
+    zip pro GitHub, ou seja, depois da revisão manual de footage inteira. Um
+    `gh` sem login jogava fora todo esse trabalho. O painel chama isso ao criar
+    o job e recusa na hora.
+
+    Por que pode falhar mesmo com `gh auth status` funcionando no seu terminal:
+    o `gh` guarda o token no keyring do Windows por padrão, e nem todo processo
+    consegue lê-lo. `gh auth refresh --insecure-storage` move o token pro
+    hosts.yml, que qualquer processo lê.
+    """
+    try:
+        result = subprocess.run(
+            [_gh_executable(), "auth", "status"],
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+            timeout=30,
+        )
+    except Exception as e:
+        return f"Não consegui executar o gh CLI: {e}"
+
+    if result.returncode == 0:
+        return None
+
+    return (
+        "O GitHub CLI não está autenticado para o processo do painel.\n\n"
+        f"'gh auth status' respondeu:\n{_gh_output(result)}\n\n"
+        "Correção: rode no terminal\n"
+        "    gh auth refresh --insecure-storage --scopes repo,workflow\n"
+        "e reinicie o painel. Isso tira o token do keyring do Windows (que este "
+        "processo não consegue ler) e grava no arquivo de config do gh.\n\n"
+        "Alternativa: coloque GH_TOKEN=<seu token> no .env do projeto.\n\n"
+        "Ou desligue 'Renderizar no GitHub' para renderizar neste computador."
+    )
+
+
 def _run_gh(args: list[str]) -> subprocess.CompletedProcess:
     last: subprocess.CompletedProcess | None = None
     for attempt in range(1, GH_ATTEMPTS + 1):
