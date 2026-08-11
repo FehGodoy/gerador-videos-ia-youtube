@@ -80,12 +80,15 @@ def _max_scene_seconds(footage: dict, scene_seconds: float) -> float:
 def _scene_footage(footage: dict) -> dict | None:
     if not footage.get("clip_path"):
         return None
-    return {
+    scene_footage = {
         "clip_path": _path_str(footage["clip_path"]),
         "source": footage["source"],
         "media_type": footage["media_type"],
         "search_terms": footage["search_terms"],
     }
+    if footage.get("attribution"):
+        scene_footage["attribution"] = footage["attribution"]
+    return scene_footage
 
 
 def _tile_scenes(
@@ -281,6 +284,43 @@ def _anchor_highlights(
     return spaced
 
 
+def _write_credits(composition: dict, slug: str) -> None:
+    """Grava output/<slug>/creditos.txt com a atribuição do que exige crédito.
+
+    Wikimedia Commons é CC BY / CC BY-SA na maioria: creditar é obrigação da
+    licença, não cortesia. Sai um arquivo pronto pra colar na descrição do
+    vídeo, com uma linha por mídia e sem repetir a mesma foto usada em várias
+    cenas. Se nada no vídeo exigir crédito, o arquivo não é criado.
+    """
+    linhas: dict[str, str] = {}
+    for beat in composition["beats"]:
+        for scene in beat["scenes"]:
+            footage = scene.get("footage") or {}
+            attribution = footage.get("attribution")
+            if not attribution:
+                continue
+            titulo = (attribution.get("title") or "").removeprefix("File:")
+            linhas[footage["clip_path"]] = (
+                f"- {titulo} — {attribution.get('author', 'desconhecido')} "
+                f"({attribution.get('license', 'licença desconhecida')})\n"
+                f"  {attribution.get('page', '')}"
+            )
+
+    path = output_dir(slug) / "creditos.txt"
+    if not linhas:
+        path.unlink(missing_ok=True)
+        return
+
+    path.write_text(
+        "Créditos de imagem\n"
+        "Estas mídias exigem atribuição pela licença. Cole na descrição do vídeo.\n\n"
+        + "\n".join(linhas.values())
+        + "\n",
+        encoding="utf-8",
+    )
+    logger.info("creditos.txt gravado com %d atribuição(ões)", len(linhas))
+
+
 def validate_composition(data: dict) -> None:
     """Valida um composition.json (ou dict equivalente) contra o schema.
     Levanta jsonschema.ValidationError se algo estiver fora do formato."""
@@ -412,6 +452,8 @@ def _assemble_composition(
     }
 
     validate_composition(composition)
+
+    _write_credits(composition, slug)
 
     out_path = output_dir(slug) / "composition.json"
     out_path.write_text(json.dumps(composition, ensure_ascii=False, indent=2), encoding="utf-8")

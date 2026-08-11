@@ -464,9 +464,20 @@ function buildCandidateThumb(candidate, index, isChosen) {
 
   const typeBadge = document.createElement("span");
   typeBadge.className = "candidate-type-badge";
-  typeBadge.textContent =
+  const tipo =
     candidate.media_type === "image" ? "Foto" : `Vídeo · ${Math.round(candidate.duration || 0)}s`;
+  // a fonte importa: Wikimedia exige crédito e costuma ser o único lugar com
+  // o assunto específico (modelo de carro, pessoa real, evento histórico)
+  typeBadge.textContent = `${tipo} · ${candidate.source}`;
   thumb.appendChild(typeBadge);
+
+  if (candidate.attribution) {
+    const creditBadge = document.createElement("span");
+    creditBadge.className = "candidate-credit-badge";
+    creditBadge.textContent = candidate.attribution.license;
+    creditBadge.title = `Exige crédito: ${candidate.attribution.author}`;
+    thumb.appendChild(creditBadge);
+  }
 
   if (isChosen) {
     const badge = document.createElement("span");

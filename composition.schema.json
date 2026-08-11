@@ -70,13 +70,26 @@
           "required": ["clip_path", "media_type", "search_terms"],
           "properties": {
             "clip_path": { "type": "string" },
-            "source": { "type": "string", "enum": ["pexels", "pixabay", "fallback", "cache"] },
+            "source": {
+              "type": "string",
+              "enum": ["pexels", "pixabay", "wikimedia", "fallback", "cache"]
+            },
             "media_type": {
               "type": "string",
               "enum": ["video", "image"],
               "description": "'image' usa <Img> com Ken Burns sutil no Remotion em vez de <OffthreadVideo>."
             },
-            "search_terms": { "type": "array", "items": { "type": "string" } }
+            "search_terms": { "type": "array", "items": { "type": "string" } },
+            "attribution": {
+              "type": "object",
+              "description": "Presente em fontes que exigem crédito (Wikimedia Commons é CC BY / CC BY-SA na maioria). Creditar não é opcional — use na descrição do vídeo.",
+              "properties": {
+                "author": { "type": "string" },
+                "license": { "type": "string" },
+                "page": { "type": "string" },
+                "title": { "type": "string" }
+              }
+            }
           }
         }
       }

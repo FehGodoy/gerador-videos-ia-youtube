@@ -22,7 +22,10 @@ keywords:
   terms_per_beat: 3 # 2-4 termos de busca visual por beat
 
 footage:
-  sources: [pexels, pixabay]
+  # wikimedia é foto e cobre o que stock genérico não tem: modelo de carro,
+  # evento histórico, pessoa pública, lugar nomeado. Exige crédito (CC BY/BY-SA)
+  # — a atribuição vai junto no composition.json.
+  sources: [pexels, pixabay, wikimedia]
   # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
   # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
   min_duration_seconds: 8

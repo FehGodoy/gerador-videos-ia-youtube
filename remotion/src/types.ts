@@ -11,9 +11,12 @@ export interface Caption {
 
 export interface Footage {
   clip_path: string;
-  source: "pexels" | "pixabay" | "fallback" | "cache";
+  source: "pexels" | "pixabay" | "wikimedia" | "fallback" | "cache";
   media_type: "video" | "image";
   search_terms: string[];
+  // Só em fontes que exigem crédito (Wikimedia). Não é renderizado na tela —
+  // serve pra montar os créditos na descrição do vídeo.
+  attribution?: { author: string; license: string; page: string; title: string };
 }
 
 // Presente quando beat.type === "estatistico". Renderizado por <AnimatedChart>.

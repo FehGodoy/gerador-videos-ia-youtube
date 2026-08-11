@@ -26,9 +26,33 @@ logger = logging.getLogger(__name__)
 THUMBNAIL_TIMEOUT = 10
 
 
+def _image_media_type(data: bytes) -> str:
+    """Tipo real da miniatura, pelos bytes iniciais.
+
+    Antes ia tudo como image/jpeg fixo. Funcionou enquanto só existia
+    Pexels/Pixabay, mas o Wikimedia serve PNG também e a API recusa a
+    requisição inteira com 400 quando o tipo declarado não bate — derrubando o
+    ranking de todos os candidatos daquela cena, não só o PNG.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"GIF8"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
 def _download_thumbnail(url: str) -> bytes | None:
     try:
-        resp = requests.get(url, timeout=THUMBNAIL_TIMEOUT)
+        # Sem User-Agent próprio a Wikimedia responde 403 — e candidato sem
+        # miniatura é descartado pelo ranker, o que faria o Commons nunca ser
+        # escolhido.
+        from modules.footage_search import WIKIMEDIA_USER_AGENT
+
+        resp = requests.get(
+            url, timeout=THUMBNAIL_TIMEOUT, headers={"User-Agent": WIKIMEDIA_USER_AGENT}
+        )
         resp.raise_for_status()
         return resp.content
     except requests.RequestException:
@@ -55,9 +79,17 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
                 "ordem que aparecem. Escolha a que melhor representa visualmente essa cena — o "
                 "assunto, a ação, o contexto.\n"
                 f"Tipo de cada candidato: {kinds}.\n"
-                "PREFIRA VÍDEO: a miniatura de uma foto costuma parecer mais bonita que o frame "
-                "de um vídeo, mas o resultado final é um documentário e foto parada quebra o "
-                "ritmo. Só escolha uma foto se nenhum vídeo representar bem o assunto. "
+                "Decida em dois passos.\n"
+                "1) A cena pede um assunto IDENTIFICÁVEL — um modelo de veículo, uma pessoa "
+                "real, um objeto histórico, um lugar com nome próprio? Se sim, FIDELIDADE VENCE "
+                "TUDO: escolha o candidato que mostra aquilo de verdade, mesmo sendo foto. Um "
+                "vídeo bonito de um carro genérico está ERRADO quando a cena pede um modelo "
+                "específico. E não afirme que um candidato é o assunto exato se você não "
+                "consegue confirmar isso pela miniatura — se for só parecido, diga que é "
+                "aproximado no seu motivo.\n"
+                "2) Se a cena pede algo GENÉRICO (uma profissão, uma ação comum, um ambiente), "
+                "aí sim PREFIRA VÍDEO: foto parada quebra o ritmo do documentário. Só pegue "
+                "foto se nenhum vídeo representar bem a cena. "
                 "Responda APENAS com um JSON, sem markdown: "
                 '{"best_index": N, "reasoning": "motivo em uma frase curta"}'
             ),
@@ -70,7 +102,7 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
                 "type": "image",
                 "source": {
                     "type": "base64",
-                    "media_type": "image/jpeg",
+                    "media_type": _image_media_type(img_bytes),
                     "data": base64.b64encode(img_bytes).decode("ascii"),
                 },
             }

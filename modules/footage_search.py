@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from itertools import zip_longest
 from pathlib import Path
 
 import requests
@@ -17,6 +19,22 @@ import requests
 from modules.config import PROJECT_ROOT, cache_dir, load_config
 
 logger = logging.getLogger(__name__)
+
+WIKIMEDIA_SEARCH_URL = "https://commons.wikimedia.org/w/api.php"
+# Política da Wikimedia exige User-Agent identificável; requisição anônima
+# genérica pode ser bloqueada.
+WIKIMEDIA_USER_AGENT = (
+    "gerador-videos-ia-youtube/1.0 (uso pessoal; https://github.com/FehGodoy/gerador-videos-ia-youtube)"
+)
+# Só licenças que permitem uso comercial com atribuição. O Commons também
+# hospeda material "fair use", que NÃO pode ir pra um vídeo monetizado.
+WIKIMEDIA_OK_LICENSES = ("cc0", "cc-by", "cc by", "pd", "public domain")
+WIKIMEDIA_MIN_WIDTH = 1280
+# Largura da miniatura mandada pra IA de ranking. Não dá pra derivar essa URL
+# trocando a largura na URL de download: o upload.wikimedia.org só serve as
+# larguras que ele mesmo gerou (320/400/640/800/1024 respondem HTTP 400 no
+# mesmo arquivo em que 1280 e 1920 funcionam). Por isso a segunda chamada.
+WIKIMEDIA_THUMB_WIDTH = 480
 
 PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
@@ -183,9 +201,113 @@ def _search_pixabay_photos(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
+def _strip_html(value: str) -> str:
+    return re.sub(r"<[^>]+>", "", value or "").strip()
+
+
+def _wikimedia_license_ok(license_short: str, license_id: str) -> bool:
+    haystack = f"{license_short} {license_id}".lower()
+    if "fair use" in haystack or "non-free" in haystack or "nonfree" in haystack:
+        return False
+    return any(ok in haystack for ok in WIKIMEDIA_OK_LICENSES)
+
+
+def _search_wikimedia(term: str, cfg: dict) -> list[dict]:
+    """Fotos do Wikimedia Commons. Sem chave de API.
+
+    Existe pelo motivo que os bancos de stock não resolvem: assunto
+    ESPECÍFICO. Buscar "Honda HR-V" no Pexels devolve um SUV qualquer; no
+    Commons devolve a foto do modelo. Vale pra carro, evento histórico, pessoa
+    pública, lugar nomeado.
+
+    Filtra por licença: o Commons também hospeda material "fair use", que não
+    pode ir num vídeo monetizado. Só passa o que permite uso comercial com
+    atribuição — e a atribuição é carregada junto pra você poder creditar.
+    """
+    def query(params: dict) -> dict:
+        resp = requests.get(
+            WIKIMEDIA_SEARCH_URL,
+            params={"action": "query", "format": "json", **params},
+            headers={"User-Agent": WIKIMEDIA_USER_AGENT},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        return resp.json().get("query", {}).get("pages", {})
+
+    try:
+        pages = query(
+            {
+                "generator": "search",
+                "gsrsearch": term,
+                "gsrnamespace": "6",  # namespace File:
+                "gsrlimit": str(max(cfg["footage"]["candidates_per_beat"], 3)),
+                "prop": "imageinfo",
+                "iiprop": "url|size|mime|extmetadata",
+                "iiurlwidth": str(cfg["video"]["width"]),
+            }
+        )
+        # segunda chamada só pelas miniaturas de ranking (ver
+        # WIKIMEDIA_THUMB_WIDTH): sem busca, só pelos pageids já encontrados
+        thumbs: dict[str, str] = {}
+        if pages:
+            thumb_pages = query(
+                {
+                    "pageids": "|".join(str(p) for p in pages),
+                    "prop": "imageinfo",
+                    "iiprop": "url",
+                    "iiurlwidth": str(WIKIMEDIA_THUMB_WIDTH),
+                }
+            )
+            for page_id, page in thumb_pages.items():
+                url = (page.get("imageinfo") or [{}])[0].get("thumburl")
+                if url:
+                    thumbs[str(page_id)] = url
+    except requests.RequestException:
+        logger.exception("Busca no Wikimedia Commons falhou para o termo '%s'", term)
+        return []
+
+    candidates = []
+    for page_id, page in pages.items():
+        info = (page.get("imageinfo") or [{}])[0]
+        if info.get("mime") not in ("image/jpeg", "image/png"):
+            continue
+        if (info.get("width") or 0) < WIKIMEDIA_MIN_WIDTH:
+            continue
+
+        meta = info.get("extmetadata", {})
+        license_short = _strip_html(meta.get("LicenseShortName", {}).get("value", ""))
+        if not _wikimedia_license_ok(license_short, meta.get("License", {}).get("value", "")):
+            continue
+
+        # thumburl já vem na largura do vídeo — evita baixar o original, que
+        # costuma passar de 5 MB e iria inteiro pro pacote do render remoto.
+        download_url = info.get("thumburl") or info.get("url")
+        thumb_url = thumbs.get(str(page_id))
+        if not download_url or not thumb_url:
+            continue
+
+        candidates.append(
+            {
+                "source": "wikimedia",
+                "media_type": "image",
+                "url": download_url,
+                "thumbnail_url": thumb_url,
+                "duration": None,
+                "attribution": {
+                    "author": _strip_html(meta.get("Artist", {}).get("value", "")) or "desconhecido",
+                    "license": license_short or "desconhecida",
+                    "page": info.get("descriptionurl", ""),
+                    "title": page.get("title", ""),
+                },
+            }
+        )
+    return candidates
+
+
 _SEARCH_FUNCS = {
     "pexels": [_search_pexels_videos, _search_pexels_photos],
     "pixabay": [_search_pixabay_videos, _search_pixabay_photos],
+    "wikimedia": [_search_wikimedia],
 }
 
 
@@ -197,15 +319,28 @@ def search_candidates(search_terms: list[str]) -> list[dict]:
     (footage_ranker.py) já compara os dois tipos pela miniatura."""
     cfg = load_config()
     for term in search_terms:
-        combined: list[dict] = []
+        per_source: list[list[dict]] = []
         for source_name in cfg["footage"]["sources"]:
             for search_func in _SEARCH_FUNCS[source_name]:
                 try:
-                    combined.extend(search_func(term, cfg))
+                    found = search_func(term, cfg)
                 except requests.RequestException:
                     logger.exception(
                         "Busca de footage falhou em %s para o termo '%s'", source_name, term
                     )
+                    continue
+                if found:
+                    per_source.append(found)
+
+        # Reveza entre as fontes em vez de concatenar e cortar. Concatenando, o
+        # Pexels sozinho já enchia as 8 vagas e nenhuma fonte listada depois
+        # dele chegava a ser avaliada — o Wikimedia entrou no config e não
+        # aparecia em candidato nenhum.
+        combined: list[dict] = []
+        for row in zip_longest(*per_source):
+            for candidate in row:
+                if candidate is not None:
+                    combined.append(candidate)
         if combined:
             return combined[:MAX_CANDIDATES_TO_RANK]
     return []
@@ -253,7 +388,15 @@ def download_candidate(candidate: dict) -> str:
     last_error: Exception | None = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         try:
-            with requests.get(candidate["url"], stream=True, timeout=60) as resp:
+            # User-Agent identificável em todo download: os servidores da
+            # Wikimedia respondem 403 a requisição sem UA próprio, e mandar o
+            # nosso não atrapalha os CDNs de Pexels/Pixabay.
+            with requests.get(
+                candidate["url"],
+                stream=True,
+                timeout=60,
+                headers={"User-Agent": WIKIMEDIA_USER_AGENT},
+            ) as resp:
                 resp.raise_for_status()
                 expected = int(resp.headers.get("Content-Length") or 0)
                 written = 0
@@ -327,13 +470,18 @@ def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:
 
 
 def _result_from_candidate(candidate: dict, clip_path: str, search_terms: list[str]) -> dict:
-    return {
+    result = {
         "clip_path": clip_path,
         "source": candidate["source"],
         "media_type": candidate.get("media_type", "video"),
         "duration": candidate.get("duration"),
         "search_terms": search_terms,
     }
+    # Wikimedia é CC BY / CC BY-SA na maioria: creditar não é opcional. Carrega
+    # a atribuição até o composition.json pra dar pra montar os créditos.
+    if candidate.get("attribution"):
+        result["attribution"] = candidate["attribution"]
+    return result
 
 
 def search_and_download_footage(

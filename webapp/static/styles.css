@@ -923,6 +923,20 @@ progress::-webkit-progress-value {
   color: var(--orange-text);
 }
 
+.candidate-credit-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--teal-dim);
+  color: #04201d;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
 .candidate-type-badge {
   position: absolute;
   bottom: 4px;
