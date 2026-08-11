@@ -1,10 +1,11 @@
 import React from "react";
-import { AbsoluteFill, Audio, staticFile, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig } from "remotion";
 import { TransitionSeries, linearTiming } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
 import type { CompositionData } from "./types";
 import { FootageClip } from "./FootageClip";
 import { AnimatedChart } from "./AnimatedChart";
+import { HighlightOverlay } from "./HighlightOverlay";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
@@ -72,6 +73,30 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
           );
         })}
       </TransitionSeries>
+
+      {/* Camada de selos de informação, ACIMA dos cortes. Usa <Sequence> com
+          tempo absoluto em vez de virar cena: a <TransitionSeries> sobrepõe
+          frames entre cenas vizinhas, então qualquer coisa colocada lá dentro
+          precisaria entrar na compensação do crossfade. Aqui não — cada selo
+          cai exatamente no segundo em que o dado é falado. */}
+      {data.beats.flatMap((beat) =>
+        beat.highlights.map((highlight) => {
+          const from = Math.round(highlight.start_seconds * fps);
+          const durationInFrames = Math.max(
+            1,
+            Math.round((highlight.end_seconds - highlight.start_seconds) * fps)
+          );
+          return (
+            <Sequence
+              key={`${beat.id}-hl-${highlight.start_seconds}`}
+              from={from}
+              durationInFrames={durationInFrames}
+            >
+              <HighlightOverlay highlight={highlight} durationInFrames={durationInFrames} />
+            </Sequence>
+          );
+        })
+      )}
     </AbsoluteFill>
   );
 };

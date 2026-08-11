@@ -33,6 +33,14 @@ footage:
   max_shots_per_beat: 8 # teto de clipes distintos baixados por bloco
   chart_scene_seconds: 6 # quanto tempo o gráfico ocupa a tela num bloco estatístico
 
+highlights:
+  # Selos de informação sobrepostos ao footage, posicionados no segundo exato
+  # em que o dado é falado (via timestamps por palavra da Cartesia).
+  seconds_per_highlight: 25 # a cada ~25s de narração, mais um selo
+  max_per_beat: 12
+  duration_seconds: 4.5 # quanto tempo cada selo fica na tela
+  min_gap_seconds: 3.0 # espaço mínimo entre o fim de um selo e o início do próximo
+
 paths:
   cache_dir: "cache"
   output_dir: "output"

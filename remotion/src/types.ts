@@ -38,6 +38,22 @@ export interface Scene {
   footage: Footage | null;
 }
 
+// Selo de informação sobreposto ao footage, no segundo em que o dado é falado.
+// Não é cena: vive numa camada acima da TransitionSeries, com tempo absoluto,
+// então não interfere nos cortes nem na compensação das transições.
+export interface Highlight {
+  kind: "numero" | "comparacao" | "termo";
+  start_seconds: number;
+  end_seconds: number;
+  valor?: string;
+  unidade?: string;
+  label?: string;
+  de?: string;
+  para?: string;
+  termo?: string;
+  definicao?: string;
+}
+
 export interface Beat {
   id: number;
   text: string;
@@ -46,6 +62,7 @@ export interface Beat {
   type: "concreto" | "estatistico";
   scenes: Scene[];
   chart: ChartData | null;
+  highlights: Highlight[];
   captions: Caption[];
 }
 

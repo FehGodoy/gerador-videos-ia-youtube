@@ -176,6 +176,67 @@ def _tile_scenes(
     return scenes
 
 
+_WORD_NOISE = str.maketrans("", "", ".,;:!?\"'()[]—–")
+
+
+def _normalize_word(word: str) -> str:
+    return word.lower().translate(_WORD_NOISE).strip()
+
+
+def _anchor_highlights(
+    highlights: list[dict], captions: list[dict], chart_ranges: list[tuple[float, float]], cfg: dict
+) -> list[dict]:
+    """Posiciona cada destaque no segundo em que a informação é FALADA.
+
+    O `trigger` que o LLM devolveu é um recorte literal da narração; aqui ele
+    é casado com a sequência de palavras do beat (que já vem com timestamp por
+    palavra da Cartesia, na timeline global) pra achar o instante exato. Sem
+    isso o selo apareceria no início do bloco — que pode estar minutos longe do
+    momento em que o dado é dito.
+
+    Descarta destaque cujo trigger não bate, que colidiria com o anterior, ou
+    que cairia em cima de uma cena de gráfico (informação duplicada na tela).
+    """
+    hl_cfg = cfg["highlights"]
+    duration = hl_cfg["duration_seconds"]
+    min_gap = hl_cfg["min_gap_seconds"]
+
+    words = [_normalize_word(c["word"]) for c in captions]
+
+    anchored: list[dict] = []
+    for highlight in highlights:
+        needle = [_normalize_word(w) for w in highlight["trigger"].split()]
+        needle = [w for w in needle if w]
+        if not needle:
+            continue
+
+        start_seconds = None
+        for i in range(len(words) - len(needle) + 1):
+            if words[i : i + len(needle)] == needle:
+                start_seconds = captions[i]["start_seconds"]
+                break
+        if start_seconds is None:
+            logger.info("Destaque sem âncora nos timestamps: %r", highlight["trigger"])
+            continue
+
+        end_seconds = start_seconds + duration
+        if any(start_seconds < c_end and end_seconds > c_start for c_start, c_end in chart_ranges):
+            continue
+
+        payload = {k: v for k, v in highlight.items() if k != "trigger"}
+        anchored.append(
+            {**payload, "start_seconds": round(start_seconds, 3), "end_seconds": round(end_seconds, 3)}
+        )
+
+    anchored.sort(key=lambda h: h["start_seconds"])
+    spaced: list[dict] = []
+    for highlight in anchored:
+        if spaced and highlight["start_seconds"] < spaced[-1]["end_seconds"] + min_gap:
+            continue
+        spaced.append(highlight)
+    return spaced
+
+
 def validate_composition(data: dict) -> None:
     """Valida um composition.json (ou dict equivalente) contra o schema.
     Levanta jsonschema.ValidationError se algo estiver fora do formato."""
@@ -237,9 +298,20 @@ def _assemble_composition(
             ),
         )
 
+        n_highlights = min(
+            cfg["highlights"]["max_per_beat"],
+            round(visual_duration / cfg["highlights"]["seconds_per_highlight"]),
+        )
+
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "running")
-        analysis = analyze_beat(beat, slug, n_shots=n_shots, language=language or cfg["narration"]["language"])
+        analysis = analyze_beat(
+            beat,
+            slug,
+            n_shots=n_shots,
+            language=language or cfg["narration"]["language"],
+            n_highlights=n_highlights,
+        )
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "done")
             on_beat_progress(beat.id, "footage", "running")
@@ -258,6 +330,10 @@ def _assemble_composition(
             on_beat_progress(beat.id, "captions", "done")
 
         has_chart = analysis["type"] == "estatistico" and analysis["chart"] is not None
+        scenes = _tile_scenes(visual_start, visual_end, shots, cfg, has_chart)
+        chart_ranges = [
+            (s["start_seconds"], s["end_seconds"]) for s in scenes if s["kind"] == "chart"
+        ]
         composition_beats.append(
             {
                 "id": beat.id,
@@ -266,7 +342,10 @@ def _assemble_composition(
                 "end_seconds": beat_timing["end_seconds"],
                 "type": analysis["type"],
                 "chart": analysis["chart"],
-                "scenes": _tile_scenes(visual_start, visual_end, shots, cfg, has_chart),
+                "scenes": scenes,
+                "highlights": _anchor_highlights(
+                    analysis.get("highlights", []), captions, chart_ranges, cfg
+                ),
                 "captions": captions,
             }
         )

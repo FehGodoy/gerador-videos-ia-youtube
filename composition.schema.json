@@ -32,6 +32,23 @@
     }
   },
   "definitions": {
+    "highlight": {
+      "type": "object",
+      "description": "Selo de informação sobreposto ao footage, posicionado no segundo em que o dado é FALADO (casando o trecho literal da narração com os timestamps por palavra da Cartesia). Não é uma cena: vive numa camada acima da TransitionSeries e não afeta os cortes.",
+      "required": ["kind", "start_seconds", "end_seconds"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["numero", "comparacao", "termo"] },
+        "start_seconds": { "type": "number" },
+        "end_seconds": { "type": "number" },
+        "valor": { "type": "string", "description": "kind='numero': o número em destaque." },
+        "unidade": { "type": "string" },
+        "label": { "type": "string", "description": "kind='numero'/'comparacao': legenda curta." },
+        "de": { "type": "string", "description": "kind='comparacao': valor de partida." },
+        "para": { "type": "string", "description": "kind='comparacao': valor de chegada." },
+        "termo": { "type": "string", "description": "kind='termo': o jargão ou sigla." },
+        "definicao": { "type": "string", "description": "kind='termo': explicação curta." }
+      }
+    },
     "scene": {
       "type": "object",
       "required": ["start_seconds", "end_seconds", "kind", "clip_start_seconds", "footage"],
@@ -66,7 +83,7 @@
     },
     "beat": {
       "type": "object",
-      "required": ["id", "text", "start_seconds", "end_seconds", "type", "scenes", "captions"],
+      "required": ["id", "text", "start_seconds", "end_seconds", "type", "scenes", "highlights", "captions"],
       "properties": {
         "id": { "type": "integer", "description": "Índice sequencial do beat, 0-based." },
         "text": { "type": "string", "description": "Texto original do beat, preservado do roteiro." },
@@ -82,6 +99,11 @@
           "minItems": 1,
           "description": "Cortes visuais que preenchem o beat. Cada cena dura no máximo o que o clipe aguenta (senão o Remotion congela no último frame) e vão até o início do próximo beat, absorvendo o silêncio entre blocos.",
           "items": { "$ref": "#/definitions/scene" }
+        },
+        "highlights": {
+          "type": "array",
+          "description": "Selos de informação deste beat, já com tempo absoluto na timeline global. Vazio quando o trecho não tem nada que valha destacar.",
+          "items": { "$ref": "#/definitions/highlight" }
         },
         "chart": {
           "type": ["object", "null"],
@@ -142,6 +164,15 @@
             }
           ],
           "chart": null,
+          "highlights": [
+            {
+              "kind": "numero",
+              "start_seconds": 1.2,
+              "end_seconds": 5.7,
+              "valor": "1957",
+              "label": "Lançamento do Sputnik"
+            }
+          ],
           "captions": [
             { "word": "Em", "start_seconds": 0.0, "end_seconds": 0.15 },
             { "word": "1957,", "start_seconds": 0.15, "end_seconds": 0.6 }

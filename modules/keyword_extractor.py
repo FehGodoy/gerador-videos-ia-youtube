@@ -64,7 +64,15 @@ markdown e sem lista no nível de cima:
     "valor_inicial": number ou null,
     "valor_final": number,
     "unidade": "string curta, ex: %, anos, mil, x"
-  }}
+  }},
+  "highlights": [
+    {{"kind": "numero", "trigger": "trecho literal", "valor": "5.000", "unidade": "milhas",
+      "label": "texto curto em {language_name}"}},
+    {{"kind": "comparacao", "trigger": "trecho literal", "de": "60 dolares", "para": "4.000 dolares",
+      "label": "texto curto em {language_name}"}},
+    {{"kind": "termo", "trigger": "trecho literal", "termo": "VTEC",
+      "definicao": "explicação de até 10 palavras em {language_name}"}}
+  ]
 }}
 
 Regras:
@@ -83,6 +91,19 @@ comparação clara (antes → depois) — preencha valor_inicial E valor_final.
 - Quando "estatistico" com "chart.tipo" "destaque": só um valor marcante isolado (ano, índice, \
 quantidade), sem comparação — valor_inicial fica null, só valor_final.
 - Quando "concreto", "chart" é null.
+
+Sobre "highlights" — são selos que aparecem sobrepostos ao vídeo NO SEGUNDO EXATO em que a \
+informação é falada, para o trecho ficar mais informativo:
+- Gere APROXIMADAMENTE {n_highlights} deles, espalhados ao longo do trecho (não amontoe no começo).
+- "trigger" é a REGRA MAIS IMPORTANTE: precisa ser um recorte LITERAL de 3 a 8 palavras copiado \
+exatamente do trecho abaixo, incluindo a informação. É por ele que o selo é posicionado no tempo; \
+se você reescrever, parafrasear ou traduzir, o selo é descartado. Copie e cole do texto.
+- Cada trigger deve ser único dentro do trecho e aparecer só uma vez no texto.
+- "numero": um valor citado que vale fixar na tela (quantia, distância, prazo, percentual).
+- "comparacao": dois valores contrapostos na fala (antes/depois, barato/caro, com/sem).
+- "termo": jargão técnico ou sigla que o espectador pode não conhecer.
+- NÃO repita aqui o dado que você já colocou em "chart".
+- Se o trecho não tiver nada que valha destacar, devolva "highlights": [].
 - Responda o objeto JSON e nada mais, começando com {{ e terminando com }}.
 
 Trecho: "{text}"
@@ -132,7 +153,52 @@ def _call_openai(prompt: str, model: str) -> str:
     return response.choices[0].message.content
 
 
-def _parse_analysis(raw_response: str, n_shots: int) -> dict:
+_HIGHLIGHT_FIELDS = {
+    "numero": ("valor", "label"),
+    "comparacao": ("de", "para", "label"),
+    "termo": ("termo", "definicao"),
+}
+
+
+def _parse_highlights(raw: object, beat_text: str) -> list[dict]:
+    """Valida os destaques e joga fora os que não dá pra posicionar no tempo.
+
+    Um destaque só serve se o `trigger` existir literalmente na narração — é
+    por ele que o composition_builder acha o segundo exato da fala nos
+    timestamps por palavra. Trigger parafraseado é descartado aqui em vez de
+    virar um selo no lugar errado.
+    """
+    if not isinstance(raw, list):
+        return []
+    normalized_text = " ".join(beat_text.lower().split())
+
+    clean: list[dict] = []
+    seen_triggers: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        fields = _HIGHLIGHT_FIELDS.get(kind)
+        if fields is None:
+            continue
+        trigger = item.get("trigger")
+        if not isinstance(trigger, str) or not trigger.strip():
+            continue
+        normalized_trigger = " ".join(trigger.lower().split())
+        if normalized_trigger not in normalized_text:
+            logger.info("Destaque descartado, trigger não está na narração: %r", trigger)
+            continue
+        if normalized_trigger in seen_triggers:
+            continue
+        values = {f: item.get(f) for f in fields}
+        if any(not isinstance(v, str) or not v.strip() for v in values.values()):
+            continue
+        seen_triggers.add(normalized_trigger)
+        clean.append({"kind": kind, "trigger": trigger.strip(), **values})
+    return clean
+
+
+def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dict:
     text = raw_response.strip()
     # o modelo às vezes envolve o JSON em ```json ... ``` apesar da instrução
     if text.startswith("```"):
@@ -171,6 +237,7 @@ def _parse_analysis(raw_response: str, n_shots: int) -> dict:
         "type": analysis["type"],
         "shots": parsed_shots[:n_shots],
         "chart": analysis.get("chart") if analysis["type"] == "estatistico" else None,
+        "highlights": _parse_highlights(analysis.get("highlights"), beat_text),
         "n_shots": n_shots,
     }
 
@@ -180,22 +247,26 @@ def _fallback_analysis(n_shots: int) -> dict:
         "type": "concreto",
         "shots": [{"terms": list(FALLBACK_TERMS)} for _ in range(n_shots)],
         "chart": None,
+        "highlights": [],
         "n_shots": n_shots,
     }
 
 
-def analyze_beat(beat: Beat, slug: str, n_shots: int = 1, language: str = "pt") -> dict:
+def analyze_beat(
+    beat: Beat, slug: str, n_shots: int = 1, language: str = "pt", n_highlights: int = 0
+) -> dict:
     """Analisa um beat: `n_shots` ideias visuais distintas (cada uma com seus
     termos de busca) + classificação concreto/estatístico + dados de gráfico
     quando aplicável. Cache em disco por beat.
 
-    `n_shots` vem da duração do beat (ver composition_builder) — beats longos
-    precisam de mais material visual pra não ficar um clipe só na tela. O
-    cache guarda o n_shots usado e é refeito se ele mudar (ex: a narração foi
+    `n_shots` e `n_highlights` vêm da duração do beat (ver composition_builder)
+    — beats longos precisam de mais material visual pra não ficar um clipe só
+    na tela, e de mais selos de informação pra não ficarem "secos". O cache
+    guarda os dois valores e é refeito se algum mudar (ex: a narração foi
     regerada numa velocidade diferente e o beat encolheu/cresceu).
 
     Retorna {"type": "concreto"|"estatistico", "shots": [{"terms": [...]}, ...],
-    "chart": None | {...}, "n_shots": int}.
+    "chart": None | {...}, "highlights": [...], "n_shots": int}.
     """
     cfg = load_config()
     beat_dir = cache_dir("keywords", slug)
@@ -203,7 +274,8 @@ def analyze_beat(beat: Beat, slug: str, n_shots: int = 1, language: str = "pt") 
 
     if cache_path.exists():
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        if cached.get("n_shots") == n_shots and cached.get("shots"):
+        fresh = cached.get("n_shots") == n_shots and cached.get("n_highlights") == n_highlights
+        if fresh and cached.get("shots"):
             return cached
 
     kw_cfg = cfg["keywords"]
@@ -213,6 +285,7 @@ def analyze_beat(beat: Beat, slug: str, n_shots: int = 1, language: str = "pt") 
 
     prompt = _PROMPT_TEMPLATE.format(
         n_shots=n_shots,
+        n_highlights=n_highlights,
         text=beat.text,
         language_name=_LANGUAGE_NAMES.get(language, "português"),
     )
@@ -220,7 +293,7 @@ def analyze_beat(beat: Beat, slug: str, n_shots: int = 1, language: str = "pt") 
     analysis = None
     for attempt, attempt_prompt in enumerate((prompt, prompt + _RETRY_SUFFIX)):
         try:
-            analysis = _parse_analysis(call(attempt_prompt, kw_cfg["model"]), n_shots)
+            analysis = _parse_analysis(call(attempt_prompt, kw_cfg["model"]), n_shots, beat.text)
             break
         except Exception:
             logger.warning(
@@ -230,6 +303,7 @@ def analyze_beat(beat: Beat, slug: str, n_shots: int = 1, language: str = "pt") 
         logger.error("Beat %d: as duas tentativas falharam, usando fallback genérico.", beat.id)
         analysis = _fallback_analysis(n_shots)
 
+    analysis["n_highlights"] = n_highlights
     cache_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
     return analysis
 
@@ -248,9 +322,11 @@ if __name__ == "__main__":
     script_beats = parse_script(sys.argv[1])
     script_slug = Path(sys.argv[1]).stem
     for b in script_beats:
-        result = analyze_beat(b, script_slug, n_shots=3)
+        result = analyze_beat(b, script_slug, n_shots=3, n_highlights=3)
         print(f"\nbeat {b.id} [{result['type']}]: {b.text[:70]}")
         for i, shot in enumerate(result["shots"]):
             print(f"  shot {i}: {shot['terms']}")
         if result["chart"]:
             print(f"  chart: {result['chart']}")
+        for h in result["highlights"]:
+            print(f"  destaque [{h['kind']}] em {h['trigger']!r}")
