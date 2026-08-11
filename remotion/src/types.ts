@@ -24,6 +24,9 @@ export interface ChartData {
   valor_inicial: number | null;
   valor_final: number;
   unidade: string;
+  // Só usado na montagem (Python), pra ancorar a cena de gráfico no instante
+  // em que o dado é falado. Não é lido por nenhum componente.
+  trigger?: string;
 }
 
 // Um corte visual dentro do beat. Um bloco de narração longo vira vários —

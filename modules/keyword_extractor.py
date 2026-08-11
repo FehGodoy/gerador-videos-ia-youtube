@@ -63,7 +63,8 @@ markdown e sem lista no nível de cima:
     "label": "string curta explicando o dado, escrita em {language_name}",
     "valor_inicial": number ou null,
     "valor_final": number,
-    "unidade": "string curta, ex: %, anos, mil, x"
+    "unidade": "string curta, ex: %, anos, mil, x",
+    "trigger": "recorte literal do trecho onde esse dado é dito"
   }},
   "highlights": [
     {{"kind": "numero", "trigger": "trecho literal", "valor": "5.000", "unidade": "milhas",
@@ -91,6 +92,9 @@ comparação clara (antes → depois) — preencha valor_inicial E valor_final.
 - Quando "estatistico" com "chart.tipo" "destaque": só um valor marcante isolado (ano, índice, \
 quantidade), sem comparação — valor_inicial fica null, só valor_final.
 - Quando "concreto", "chart" é null.
+- "chart.trigger" segue a MESMA regra do "trigger" dos highlights descrita abaixo: recorte literal \
+de 3 a 8 palavras copiado do trecho, marcando onde o dado do gráfico é falado. É por ele que o \
+gráfico entra na hora certa; sem um trigger válido ele cai no começo do bloco.
 
 Sobre "highlights" — são selos que aparecem sobrepostos ao vídeo NO SEGUNDO EXATO em que a \
 informação é falada, para o trecho ficar mais informativo:

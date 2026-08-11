@@ -23,14 +23,20 @@ keywords:
 
 footage:
   sources: [pexels, pixabay]
-  min_duration_seconds: 3
+  # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
+  # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
+  min_duration_seconds: 8
   candidates_per_beat: 5 # quantos candidatos avaliar antes de escolher
   orientation: "landscape"
   # Um bloco de narração vira várias cenas na tela. Sem isso, um bloco de 3min
   # ficava com um clipe só, que acabava aos 30s e congelava no último frame.
   scene_seconds: 7 # duração alvo de cada corte
-  seconds_per_shot: 25 # a cada ~25s de narração, mais uma ideia visual distinta
-  max_shots_per_beat: 8 # teto de clipes distintos baixados por bloco
+  # Estes dois controlam a REPETIÇÃO. Quanto mais shots, menos vezes cada clipe
+  # reaparece — em troca de mais buscas, mais chamadas de ranking por visão e
+  # um pacote maior pra subir no render remoto (que já é a etapa mais lenta).
+  # Com 15/14: ~50 clipes distintos num vídeo de 12min, cada um ~2,4x.
+  seconds_per_shot: 15 # a cada ~15s de narração, mais uma ideia visual distinta
+  max_shots_per_beat: 14 # teto de clipes distintos baixados por bloco
   chart_scene_seconds: 6 # quanto tempo o gráfico ocupa a tela num bloco estatístico
 
 highlights:

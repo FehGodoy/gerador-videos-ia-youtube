@@ -116,7 +116,11 @@
               "description": "Null quando tipo='destaque' (valor isolado, sem comparação antes/depois)."
             },
             "valor_final": { "type": "number" },
-            "unidade": { "type": "string" }
+            "unidade": { "type": "string" },
+            "trigger": {
+              "type": "string",
+              "description": "Recorte literal da narração onde o dado é dito. Usado só na montagem, pra posicionar a cena de gráfico no instante da fala — o Remotion não lê este campo."
+            }
           }
         },
         "captions": {
