@@ -476,6 +476,8 @@ def _result_from_candidate(candidate: dict, clip_path: str, search_terms: list[s
         "media_type": candidate.get("media_type", "video"),
         "duration": candidate.get("duration"),
         "search_terms": search_terms,
+        "relevance_score": candidate.get("relevance_score"),
+        "ai_reasoning": candidate.get("ai_reasoning", ""),
     }
     # Wikimedia é CC BY / CC BY-SA na maioria: creditar não é opcional. Carrega
     # a atribuição até o composition.json pra dar pra montar os créditos.
@@ -490,6 +492,8 @@ def search_and_download_footage(
     search_terms: list[str],
     slug: str | None = None,
     slot: int = 0,
+    strategy: str = "FOOTAGE",
+    entities: list[str] | None = None,
 ) -> dict:
     """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
     candidato pra um shot do beat. Se `slug` for passado, reaproveita uma
@@ -537,8 +541,14 @@ def search_and_download_footage(
     # centenas de palavras cobrindo vários assuntos, e mandar tudo faria a IA
     # de ranking julgar a miniatura contra o assunto errado (além de custar
     # tokens à toa).
-    context = f'Trecho: "{beat_text[:300]}" | Esta cena deve mostrar: {", ".join(search_terms)}'
-    ranked = rank_candidates(context, candidates)
+    partes = [f'Trecho: "{beat_text[:300]}"']
+    if entities:
+        # entidades explícitas no contexto: é o que faz a IA cobrar o assunto
+        # exato em vez de aceitar um parecido
+        partes.append(f"Entidades citadas (o visual precisa bater com elas): {', '.join(entities)}")
+    partes.append(f"Tipo de visual pedido: {strategy}")
+    partes.append(f"Esta cena deve mostrar: {', '.join(search_terms)}")
+    ranked = rank_candidates(" | ".join(partes), candidates)
     chosen = ranked[0]
 
     try:

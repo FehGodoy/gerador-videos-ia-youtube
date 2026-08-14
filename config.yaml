@@ -42,6 +42,15 @@ footage:
   max_shots_per_beat: 14 # teto de clipes distintos baixados por bloco
   chart_scene_seconds: 6 # quanto tempo o gráfico ocupa a tela num bloco estatístico
 
+ranking:
+  # Nota 0-100 que a IA de visão dá a cada candidato (ver modules/footage_ranker).
+  # O princípio: material que só lembra o assunto é pior que assumir que não
+  # achamos nada — abaixo do mínimo o shot vira card conceitual em vez de
+  # footage genérico.
+  recommend_threshold: 80 # >= isso: recomendado
+  alternative_threshold: 60 # entre os dois: aceito, mas marcado como alternativa
+  # < alternative_threshold: descarta a mídia e cai no card conceitual
+
 highlights:
   # Selos de informação sobrepostos ao footage, posicionados no segundo exato
   # em que o dado é falado (via timestamps por palavra da Cartesia).

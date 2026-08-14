@@ -217,9 +217,11 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
 
     composition_path = output_dir(job.slug) / "composition.json"
     scenes_by_beat: dict[int, list[dict]] = {}
+    entities_by_beat: dict[int, list[str]] = {}
     if composition_path.exists():
         composition = json.loads(composition_path.read_text(encoding="utf-8"))
         scenes_by_beat = {b["id"]: b.get("scenes", []) for b in composition["beats"]}
+        entities_by_beat = {b["id"]: b.get("entities", []) for b in composition["beats"]}
 
     result = []
     for beat in job.beats:
@@ -232,16 +234,41 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
                 break
             chosen = review["candidates"][review["chosen_index"]] if review["candidates"] else None
             chosen_path = _relative_clip_path(chosen) if chosen else None
+            cena = next(
+                (
+                    s
+                    for s in beat_scenes
+                    if (s.get("footage") or {}).get("clip_path") == chosen_path
+                ),
+                None,
+            )
             shots.append(
                 {
                     "slot": slot,
                     "candidates": review["candidates"],
                     "chosen_index": review["chosen_index"],
                     "usage": _scene_summary(beat_scenes, chosen_path) if chosen_path else None,
+                    "visual_strategy": (cena or {}).get("visual_strategy"),
                 }
             )
             slot += 1
-        result.append({"beat_id": beat["id"], "text": beat["text"], "shots": shots})
+
+        # cenas que viraram card conceitual não têm candidato pra revisar, mas
+        # precisam aparecer: é o "não achamos nada bom" ficando visível
+        cards = [
+            {"text": s.get("concept_text", ""), "seconds": round(s["end_seconds"] - s["start_seconds"], 1)}
+            for s in beat_scenes
+            if s["kind"] == "concept"
+        ]
+        result.append(
+            {
+                "beat_id": beat["id"],
+                "text": beat["text"],
+                "entities": entities_by_beat.get(beat["id"], []),
+                "shots": shots,
+                "concept_cards": cards,
+            }
+        )
     return result
 
 

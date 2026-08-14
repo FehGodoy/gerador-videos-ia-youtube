@@ -24,7 +24,7 @@ import jsonschema
 from modules.captions import ensure_captions
 from modules.config import PROJECT_ROOT, load_config, output_dir
 from modules.footage_search import search_and_download_footage
-from modules.keyword_extractor import analyze_beat
+from modules.keyword_extractor import STRATEGIES_THAT_SEARCH, analyze_beat
 from modules.narration import build_narration
 from modules.script_parser import Beat, parse_script
 
@@ -85,6 +85,8 @@ def _scene_footage(footage: dict) -> dict | None:
         "source": footage["source"],
         "media_type": footage["media_type"],
         "search_terms": footage["search_terms"],
+        "relevance_score": footage.get("relevance_score"),
+        "ai_reasoning": footage.get("ai_reasoning", ""),
     }
     if footage.get("attribution"):
         scene_footage["attribution"] = footage["attribution"]
@@ -115,11 +117,30 @@ def _tile_scenes(
     scenes: list[dict] = []
     cursor = start_seconds
 
-    # Um shot pode ter vindo sem clipe (busca vazia, download falhou e não há
-    # nem fallback local). Antes isso virava tela preta pelo tempo daquele
-    # shot; melhor reaproveitar os clipes que os outros shots do mesmo beat
-    # conseguiram — só fica preto se o beat inteiro ficou sem nada.
-    shots = [s for s in shots if s.get("clip_path")]
+    # Threshold: mídia que só lembra o assunto é pior que assumir que não
+    # achamos nada. Abaixo do mínimo, o shot perde o clipe e vira card
+    # conceitual — é o "não forçar footage" do plano.
+    minimo = cfg["ranking"]["alternative_threshold"]
+    usaveis, descartados = [], []
+    for shot in shots:
+        score = shot.get("relevance_score")
+        if shot.get("clip_path") and (score is None or score >= minimo):
+            usaveis.append(shot)
+        elif shot.get("concept_text"):
+            # tira o clip_path: sem isso o tiling ainda enxerga mídia e emite
+            # a cena como "footage", deixando o threshold puramente decorativo
+            descartados.append({**shot, "clip_path": None})
+            logger.info(
+                "Shot vira card conceitual (nota %s, estratégia %s): %r",
+                score,
+                shot.get("strategy"),
+                shot["concept_text"],
+            )
+
+    # Cards entram no rodízio junto com os clipes, na ordem original — assim um
+    # bloco sem mídia boa não vira uma sequência de cards seguidos.
+    shots = usaveis + descartados if usaveis else descartados
+    shots = shots or []
 
     if not shots:
         if end_seconds - cursor > 0.01:
@@ -148,15 +169,19 @@ def _tile_scenes(
     reuse_count: dict[str, int] = {}
     index = 0
 
+    # o gráfico precisa de um clipe pra desfocar atrás; card conceitual não serve
+    com_midia = [s for s in shots if s.get("clip_path")]
+
     def emit_chart() -> None:
         nonlocal cursor, index
+        fundo = com_midia[index % len(com_midia)] if com_midia else None
         scenes.append(
             {
                 "start_seconds": round(cursor, 3),
                 "end_seconds": round(cursor + chart_seconds, 3),
                 "kind": "chart",
                 "clip_start_seconds": 0.0,
-                "footage": _scene_footage(shots[index % len(shots)]),
+                "footage": _scene_footage(fundo) if fundo else None,
             }
         )
         cursor += chart_seconds
@@ -201,15 +226,19 @@ def _tile_scenes(
         )
         reuse_count[clip_path] = used + 1
 
-        scenes.append(
-            {
-                "start_seconds": round(cursor, 3),
-                "end_seconds": round(cursor + duration, 3),
-                "kind": "footage",
-                "clip_start_seconds": clip_start,
-                "footage": _scene_footage(footage),
-            }
-        )
+        cena = {
+            "start_seconds": round(cursor, 3),
+            "end_seconds": round(cursor + duration, 3),
+            "kind": "footage" if clip_path else "concept",
+            "clip_start_seconds": clip_start,
+            "visual_strategy": footage.get("strategy", "FOOTAGE"),
+            "footage": _scene_footage(footage),
+        }
+        if not clip_path:
+            # sem mídia usável: card com a frase-chave, em vez de tela preta
+            # ou de um clipe genérico que não representa o trecho
+            cena["concept_text"] = footage.get("concept_text", "")
+        scenes.append(cena)
         cursor += duration
         index += 1
 
@@ -395,17 +424,32 @@ def _assemble_composition(
             n_shots=n_shots,
             language=language or cfg["narration"]["language"],
             n_highlights=n_highlights,
+            # o diretor visual decide melhor sabendo o que vem antes e depois
+            prev_text=beats[position - 1].text if position > 0 else None,
+            next_text=next_beat.text if next_beat else None,
         )
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "keywords", "done")
             on_beat_progress(beat.id, "footage", "running")
 
         # footage é buscado pra todo beat, mesmo "estatistico" — o primeiro
-        # shot também vira o fundo desfocado atrás do gráfico (AnimatedChart)
-        shots = [
-            search_and_download_footage(beat.id, beat.text, shot["terms"], slug=slug, slot=slot)
-            for slot, shot in enumerate(analysis["shots"])
-        ]
+        # shot também vira o fundo desfocado atrás do gráfico (AnimatedChart).
+        # Shots com estratégia MOTION_GRAPHIC/TEXT não buscam nada: viram card.
+        shots = []
+        for slot, shot in enumerate(analysis["shots"]):
+            if shot["strategy"] in STRATEGIES_THAT_SEARCH:
+                found = search_and_download_footage(
+                    beat.id,
+                    beat.text,
+                    shot["terms"],
+                    slug=slug,
+                    slot=slot,
+                    strategy=shot["strategy"],
+                    entities=analysis.get("entities") or [],
+                )
+            else:
+                found = {"clip_path": None, "relevance_score": None}
+            shots.append({**found, "strategy": shot["strategy"], "concept_text": shot["concept_text"]})
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "footage", "done")
             on_beat_progress(beat.id, "captions", "running")
@@ -430,6 +474,7 @@ def _assemble_composition(
                 "start_seconds": beat_timing["start_seconds"],
                 "end_seconds": beat_timing["end_seconds"],
                 "type": analysis["type"],
+                "entities": analysis.get("entities", []),
                 "chart": analysis["chart"],
                 "scenes": scenes,
                 "highlights": _anchor_highlights(

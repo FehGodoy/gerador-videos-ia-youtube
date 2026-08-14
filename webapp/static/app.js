@@ -471,6 +471,17 @@ function buildCandidateThumb(candidate, index, isChosen) {
   typeBadge.textContent = `${tipo} · ${candidate.source}`;
   thumb.appendChild(typeBadge);
 
+  // nota de relevância com cor por faixa: verde recomendado, âmbar alternativa,
+  // vermelho abaixo do mínimo (esses nem chegam a ser usados)
+  if (typeof candidate.relevance_score === "number") {
+    const faixa =
+      candidate.relevance_score >= 80 ? "alta" : candidate.relevance_score >= 60 ? "media" : "baixa";
+    const scoreBadge = document.createElement("span");
+    scoreBadge.className = `candidate-score-badge ${faixa}`;
+    scoreBadge.textContent = candidate.relevance_score;
+    thumb.appendChild(scoreBadge);
+  }
+
   if (candidate.attribution) {
     const creditBadge = document.createElement("span");
     creditBadge.className = "candidate-credit-badge";
@@ -502,6 +513,22 @@ function renderReviewBeats(jobId, beatsData) {
     text.textContent = `${beat.beat_id + 1}. ${beat.text}`;
     wrap.appendChild(text);
 
+    if (beat.entities && beat.entities.length) {
+      const ents = document.createElement("div");
+      ents.className = "review-entities";
+      ents.textContent = `Entidades: ${beat.entities.join(" · ")}`;
+      wrap.appendChild(ents);
+    }
+
+    // cenas onde nada atingiu o mínimo de relevância viraram card de texto —
+    // mostrar deixa explícito que a ferramenta preferiu não forçar footage
+    (beat.concept_cards || []).forEach((card) => {
+      const el = document.createElement("div");
+      el.className = "review-concept";
+      el.textContent = `Card de texto (${card.seconds}s): "${card.text}"`;
+      wrap.appendChild(el);
+    });
+
     if (!beat.shots.length) {
       const empty = document.createElement("div");
       empty.className = "review-beat-empty";
@@ -522,9 +549,10 @@ function renderReviewBeats(jobId, beatsData) {
       const label = document.createElement("span");
       label.className = "review-shot-label";
       const usage = shot.usage;
+      const estrategia = shot.visual_strategy ? ` · ${shot.visual_strategy}` : "";
       label.textContent = usage
-        ? `Cena ${shot.slot + 1} · ${usage.scene_count}× na tela · ${usage.screen_seconds}s no total`
-        : `Cena ${shot.slot + 1}`;
+        ? `Cena ${shot.slot + 1}${estrategia} · ${usage.scene_count}× na tela · ${usage.screen_seconds}s no total`
+        : `Cena ${shot.slot + 1}${estrategia}`;
       const note = document.createElement("span");
       note.className = "review-shot-note";
       head.append(label, note);

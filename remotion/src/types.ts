@@ -14,6 +14,10 @@ export interface Footage {
   source: "pexels" | "pixabay" | "wikimedia" | "fallback" | "cache";
   media_type: "video" | "image";
   search_terms: string[];
+  // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
+  // Não é renderizada — serve pra revisão e pro threshold de fallback.
+  relevance_score?: number | null;
+  ai_reasoning?: string;
   // Só em fontes que exigem crédito (Wikimedia). Não é renderizado na tela —
   // serve pra montar os créditos na descrição do vídeo.
   attribution?: { author: string; license: string; page: string; title: string };
@@ -38,10 +42,14 @@ export interface ChartData {
 export interface Scene {
   start_seconds: number;
   end_seconds: number;
-  kind: "footage" | "chart";
+  // "concept" = nenhuma mídia passou do threshold de relevância, ou o diretor
+  // classificou o trecho como abstrato; vira card com a frase-chave.
+  kind: "footage" | "chart" | "concept";
+  visual_strategy?: "FOOTAGE" | "NEWS" | "IMAGE" | "MOTION_GRAPHIC" | "TEXT";
   // offset dentro do clipe (trimBefore), pra reuso do mesmo clipe não parecer loop
   clip_start_seconds: number;
   footage: Footage | null;
+  concept_text?: string;
 }
 
 // Selo de informação sobreposto ao footage, no segundo em que o dado é falado.
@@ -66,6 +74,9 @@ export interface Beat {
   start_seconds: number;
   end_seconds: number;
   type: "concreto" | "estatistico";
+  // nomes próprios citados no trecho; usados na busca e no ranking (Python),
+  // não renderizados
+  entities?: string[];
   scenes: Scene[];
   chart: ChartData | null;
   highlights: Highlight[];

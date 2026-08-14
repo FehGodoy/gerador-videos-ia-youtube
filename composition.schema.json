@@ -57,8 +57,17 @@
         "end_seconds": { "type": "number" },
         "kind": {
           "type": "string",
-          "enum": ["footage", "chart"],
-          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia."
+          "enum": ["footage", "chart", "concept"],
+          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia; 'concept' é o card com a frase-chave, usado quando o diretor visual classificou o trecho como abstrato (estratégia TEXT) ou quando nenhuma mídia passou do threshold de relevância."
+        },
+        "concept_text": {
+          "type": "string",
+          "description": "Frase-chave exibida quando kind='concept'."
+        },
+        "visual_strategy": {
+          "type": "string",
+          "enum": ["FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC", "TEXT"],
+          "description": "Como o diretor visual decidiu representar este shot. FOOTAGE/NEWS/IMAGE viram busca de mídia; MOTION_GRAPHIC e TEXT não buscam nada."
         },
         "clip_start_seconds": {
           "type": "number",
@@ -80,6 +89,11 @@
               "description": "'image' usa <Img> com Ken Burns sutil no Remotion em vez de <OffthreadVideo>."
             },
             "search_terms": { "type": "array", "items": { "type": "string" } },
+            "relevance_score": {
+              "type": ["integer", "null"],
+              "description": "Nota 0-100 da IA de visão pra esta mídia nesta cena. Abaixo de ranking.alternative_threshold (config.yaml) a mídia é descartada e a cena vira 'concept'."
+            },
+            "ai_reasoning": { "type": "string" },
             "attribution": {
               "type": "object",
               "description": "Presente em fontes que exigem crédito (Wikimedia Commons é CC BY / CC BY-SA na maioria). Creditar não é opcional — use na descrição do vídeo.",
@@ -106,6 +120,11 @@
           "type": "string",
           "enum": ["concreto", "estatistico"],
           "description": "'estatistico' faz a primeira cena do beat ser um <AnimatedChart> com o dado em destaque."
+        },
+        "entities": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Nomes próprios citados no trecho (pessoas, empresas, produtos, lugares, eventos). Entram nas buscas e no contexto do ranking pra cobrar o assunto exato em vez de aceitar um parecido."
         },
         "scenes": {
           "type": "array",

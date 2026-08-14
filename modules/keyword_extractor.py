@@ -36,6 +36,17 @@ MAX_TOKENS = 1500
 # ser a opção mais segura.
 FALLBACK_TERMS = ["cinematic b-roll", "documentary background", "abstract texture"]
 
+# Como cada shot deve ser resolvido visualmente. FOOTAGE/NEWS/IMAGE viram busca
+# de mídia (com viés diferente); MOTION_GRAPHIC e TEXT não buscam nada — viram
+# gráfico e card na tela.
+VISUAL_STRATEGIES = ("FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC", "TEXT")
+# MOTION_GRAPHIC busca mídia junto: a biblioteca de componentes ainda não
+# existe (Fase 4), e sem busca esses shots caíam todos em card de texto — num
+# teste real isso levou 1/3 do vídeo a virar texto. Enquanto o componente não
+# chega, eles renderizam como footage; a estratégia fica gravada na cena pra
+# Fase 4 saber onde entrar. Só TEXT dispensa mídia de propósito.
+STRATEGIES_THAT_SEARCH = ("FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC")
+
 # Nome do idioma no prompt, pro label do gráfico sair na língua do roteiro.
 # Sem isso, um roteiro em inglês ganhava legenda de gráfico em português
 # (o prompt inteiro é escrito em pt e o modelo seguia a língua do prompt).
@@ -49,14 +60,18 @@ _LANGUAGE_NAMES = {
     "ja": "japonês",
 }
 
-_PROMPT_TEMPLATE = """Você é um assistente de pré-produção para um vídeo documentário estilo \
-"faceless YouTube". Analise o trecho de narração abaixo e responda com UM ÚNICO objeto JSON, sem \
+_PROMPT_TEMPLATE = """Você é DIRETOR DE VÍDEO de um documentário estilo "faceless YouTube". Seu \
+trabalho não é achar um vídeo pra cada frase — é decidir a MELHOR FORMA DE COMUNICAR VISUALMENTE \
+cada parte da história, como um editor humano faria. Responda com UM ÚNICO objeto JSON, sem \
 markdown e sem lista no nível de cima:
 
 {{
   "type": "concreto" ou "estatistico",
+  "entities": ["nome próprio citado no trecho", "..."],
   "shots": [
-    {{"terms": ["termo em inglês", "alternativa", "alternativa"]}}
+    {{"strategy": "FOOTAGE",
+      "terms": ["busca em inglês", "alternativa", "alternativa"],
+      "concept_text": "frase curta em {language_name} pra virar card se nada servir"}}
   ],
   "chart": null ou {{
     "tipo": "crescimento" | "queda" | "comparacao" | "destaque",
@@ -76,14 +91,32 @@ markdown e sem lista no nível de cima:
   ]
 }}
 
+CONTEXTO (só pra você entender onde este trecho se encaixa — NÃO analise estes):
+- Antes: "{prev_text}"
+- Depois: "{next_text}"
+
 Regras:
+- "entities": nomes próprios citados no trecho — pessoas, empresas, marcas, produtos, lugares, \
+eventos, times, filmes, fatos históricos. Só o que é NOMEADO; não invente. Lista vazia se não \
+houver nenhum. Elas são o que faz a busca achar o assunto exato em vez de um genérico parecido.
 - "shots": EXATAMENTE {n_shots} itens, na ordem em que os assuntos aparecem no trecho. Cada item \
 é uma imagem/vídeo diferente que vai ocupar um pedaço do trecho na tela. Os shots precisam ser \
 VISUALMENTE DIFERENTES entre si (assuntos, objetos ou ângulos distintos que o trecho menciona) — \
 não repita a mesma ideia com outras palavras.
-- "terms": 2 a 3 buscas em INGLÊS pra bancos de vídeo de stock (Pexels/Pixabay), da mais \
-específica pra mais genérica (a primeira que trouxer resultado é usada). Concretas e filmáveis \
-(lugar, objeto, ação, pessoa) — evite abstrações.
+- "strategy": decida como um editor, POR SHOT. Não assuma que tudo é footage.
+    FOOTAGE  — existe cena filmável genérica que ilustra bem (ação, ambiente, profissão).
+    NEWS     — o trecho fala de fato/pessoa/evento REAL e específico, que só material de arquivo \
+ou foto documental mostra de verdade.
+    IMAGE    — uma foto boa comunica melhor que vídeo (objeto específico, retrato, mapa, \
+documento). Também quando o assunto é nomeado e vídeo genérico erraria.
+    MOTION_GRAPHIC — a informação é um número, série ou comparação; footage não acrescenta nada.
+    TEXT     — a ideia é abstrata e nenhuma imagem literal serve; melhor uma frase na tela.
+- "terms": 2 a 4 buscas em INGLÊS, da mais específica pra mais genérica (a primeira que trouxer \
+resultado é usada). Quando o shot tiver entidade envolvida, INCLUA O NOME dela na primeira busca \
+(ex: "Honda HR-V front view", não "small SUV"). Concretas e filmáveis — evite abstrações.
+- "concept_text": frase de 3 a 8 palavras em {language_name} resumindo a IDEIA do shot. Vira um \
+card na tela quando a estratégia for TEXT, ou quando nenhuma mídia encontrada for boa o bastante. \
+Escreva sempre, em todo shot.
 - "estatistico": o trecho tem um número, percentual, ano marcante ou índice que vale destacar na \
 tela — ex: "caiu 20%", "dobrou em 3 anos", "em 1969", "1º lugar no ranking".
 - "concreto": o trecho descreve algo filmável sem um dado numérico central pra destacar.
@@ -227,7 +260,24 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
         clean = [t.strip() for t in terms if isinstance(t, str) and t.strip()]
         if not clean:
             raise ValueError("shot com terms vazio")
-        parsed_shots.append({"terms": clean})
+        strategy = shot.get("strategy")
+        if strategy not in VISUAL_STRATEGIES:
+            strategy = "FOOTAGE"  # estratégia desconhecida cai no comportamento antigo
+        concept = shot.get("concept_text")
+        parsed_shots.append(
+            {
+                "terms": clean,
+                "strategy": strategy,
+                "concept_text": concept.strip() if isinstance(concept, str) else "",
+            }
+        )
+
+    entities = analysis.get("entities")
+    entities = (
+        [e.strip() for e in entities if isinstance(e, str) and e.strip()]
+        if isinstance(entities, list)
+        else []
+    )
 
     if analysis["type"] == "estatistico" and not isinstance(analysis.get("chart"), dict):
         raise ValueError("type='estatistico' mas chart não veio como objeto")
@@ -239,6 +289,7 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
 
     return {
         "type": analysis["type"],
+        "entities": entities,
         "shots": parsed_shots[:n_shots],
         "chart": analysis.get("chart") if analysis["type"] == "estatistico" else None,
         "highlights": _parse_highlights(analysis.get("highlights"), beat_text),
@@ -249,15 +300,37 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
 def _fallback_analysis(n_shots: int) -> dict:
     return {
         "type": "concreto",
-        "shots": [{"terms": list(FALLBACK_TERMS)} for _ in range(n_shots)],
+        "entities": [],
+        "shots": [
+            {"terms": list(FALLBACK_TERMS), "strategy": "FOOTAGE", "concept_text": ""}
+            for _ in range(n_shots)
+        ],
         "chart": None,
         "highlights": [],
         "n_shots": n_shots,
     }
 
 
+def _context_snippet(text: str | None, limit: int = 240) -> str:
+    """Resumo curto do beat vizinho pro diretor entender onde a cena se encaixa.
+
+    Curto de propósito: é contexto, não conteúdo a analisar — mandar o vizinho
+    inteiro dobraria o custo da chamada e faria o modelo confundir os trechos.
+    """
+    if not text:
+        return "(início do vídeo)"
+    flat = " ".join(text.split())
+    return flat[:limit] + ("..." if len(flat) > limit else "")
+
+
 def analyze_beat(
-    beat: Beat, slug: str, n_shots: int = 1, language: str = "pt", n_highlights: int = 0
+    beat: Beat,
+    slug: str,
+    n_shots: int = 1,
+    language: str = "pt",
+    n_highlights: int = 0,
+    prev_text: str | None = None,
+    next_text: str | None = None,
 ) -> dict:
     """Analisa um beat: `n_shots` ideias visuais distintas (cada uma com seus
     termos de busca) + classificação concreto/estatístico + dados de gráfico
@@ -292,6 +365,8 @@ def analyze_beat(
         n_highlights=n_highlights,
         text=beat.text,
         language_name=_LANGUAGE_NAMES.get(language, "português"),
+        prev_text=_context_snippet(prev_text),
+        next_text=_context_snippet(next_text, 240) if next_text else "(fim do vídeo)",
     )
 
     analysis = None
@@ -328,8 +403,10 @@ if __name__ == "__main__":
     for b in script_beats:
         result = analyze_beat(b, script_slug, n_shots=3, n_highlights=3)
         print(f"\nbeat {b.id} [{result['type']}]: {b.text[:70]}")
+        if result["entities"]:
+            print(f"  entidades: {result['entities']}")
         for i, shot in enumerate(result["shots"]):
-            print(f"  shot {i}: {shot['terms']}")
+            print(f"  shot {i} [{shot['strategy']}]: {shot['terms']}")
         if result["chart"]:
             print(f"  chart: {result['chart']}")
         for h in result["highlights"]:

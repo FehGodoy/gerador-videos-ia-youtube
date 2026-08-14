@@ -6,6 +6,7 @@ import type { CompositionData } from "./types";
 import { FootageClip } from "./FootageClip";
 import { AnimatedChart } from "./AnimatedChart";
 import { HighlightOverlay } from "./HighlightOverlay";
+import { ConceptCard } from "./ConceptCard";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
@@ -57,6 +58,11 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                     chart={chart}
                     backgroundClipPath={scene.footage?.clip_path ?? null}
                     backgroundMediaType={scene.footage?.media_type ?? "video"}
+                  />
+                ) : scene.kind === "concept" && scene.concept_text ? (
+                  <ConceptCard
+                    text={scene.concept_text}
+                    durationInFrames={durationInFrames}
                   />
                 ) : scene.footage?.clip_path ? (
                   <FootageClip

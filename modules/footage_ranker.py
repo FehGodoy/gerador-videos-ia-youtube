@@ -89,9 +89,19 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
                 "aproximado no seu motivo.\n"
                 "2) Se a cena pede algo GENÉRICO (uma profissão, uma ação comum, um ambiente), "
                 "aí sim PREFIRA VÍDEO: foto parada quebra o ritmo do documentário. Só pegue "
-                "foto se nenhum vídeo representar bem a cena. "
+                "foto se nenhum vídeo representar bem a cena.\n"
+                "Dê uma NOTA DE 0 A 100 pra cada candidato, considerando: bate com o assunto e "
+                "com as entidades citadas, serve pro tipo de visual pedido, e tem qualidade de "
+                "imagem aceitável.\n"
+                "Calibre a nota assim, e seja RIGOROSO — nota alta em material que só lembra o "
+                "assunto é pior que admitir que não achamos nada:\n"
+                "  85-100 = mostra exatamente o que a cena pede\n"
+                "  70-84  = serve bem, mesmo não sendo o assunto exato\n"
+                "  50-69  = só tematicamente relacionado, passaria como tapa-buraco\n"
+                "  0-49   = não representa a cena\n"
                 "Responda APENAS com um JSON, sem markdown: "
-                '{"best_index": N, "reasoning": "motivo em uma frase curta"}'
+                '{"scores": [{"index": 0, "score": 0-100, "reason": "frase curta"}], '
+                '"best_index": N}'
             ),
         }
     ]
@@ -110,7 +120,8 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
 
     response = client.messages.create(
         model=cfg["keywords"]["model"],
-        max_tokens=200,
+        # uma nota + motivo curto por candidato; com 8 candidatos, ~400 tokens
+        max_tokens=900,
         messages=[{"role": "user", "content": content}],
     )
     raw = response.content[0].text.strip()
@@ -119,7 +130,25 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
         raw = raw.split("\n", 1)[1] if "\n" in raw else raw
         raw = raw.rsplit("```", 1)[0]
     parsed = json.loads(raw)
-    return parsed.get("best_index"), parsed.get("reasoning", "")
+
+    scores: dict[int, dict] = {}
+    for item in parsed.get("scores") or []:
+        if not isinstance(item, dict):
+            continue
+        index = item.get("index")
+        score = item.get("score")
+        if not isinstance(index, int) or not isinstance(score, (int, float)):
+            continue
+        scores[index] = {
+            "score": max(0, min(100, int(score))),
+            "reason": str(item.get("reason", "")).strip(),
+        }
+
+    best_index = parsed.get("best_index")
+    # se o modelo esqueceu o best_index mas pontuou, usa a maior nota
+    if not isinstance(best_index, int) and scores:
+        best_index = max(scores, key=lambda i: scores[i]["score"])
+    return best_index, scores
 
 
 def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
@@ -152,7 +181,7 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
         return candidates
 
     try:
-        best_index, reasoning = _ask_claude(
+        best_index, scores = _ask_claude(
             context, images, [c.get("media_type", "video") for c in valid_candidates]
         )
     except Exception:
@@ -162,12 +191,29 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
     if best_index is None or not (0 <= best_index < len(valid_candidates)):
         return candidates
 
-    ranked = [valid_candidates[best_index]] + [
-        c for i, c in enumerate(valid_candidates) if i != best_index
+    # nota e motivo em TODO candidato avaliado, não só no vencedor: é o que
+    # alimenta o threshold/fallback e o que a revisão mostra pra você decidir
+    scored = []
+    for i, candidate in enumerate(valid_candidates):
+        info = scores.get(i, {})
+        scored.append(
+            {
+                **candidate,
+                "relevance_score": info.get("score"),
+                "ai_reasoning": info.get("reason", ""),
+            }
+        )
+
+    # ordena pela nota, mas o best_index do modelo tem a palavra final na 1ª
+    # posição (ele pode preferir vídeo a foto num empate de nota)
+    ranked = sorted(scored, key=lambda c: c.get("relevance_score") or 0, reverse=True)
+    winner = scored[best_index]
+    ranked = [winner] + [c for c in ranked if c is not winner]
+
+    # candidatos sem thumbnail (não avaliados) vão pro fim, sem nota
+    skipped = [
+        {**c, "relevance_score": None} for c in candidates if c not in valid_candidates
     ]
-    ranked[0] = {**ranked[0], "ai_reasoning": reasoning}
-    # candidatos sem thumbnail (não avaliados) vão pro fim, sem prioridade
-    skipped = [c for c in candidates if c not in valid_candidates]
     return ranked + skipped
 
 
