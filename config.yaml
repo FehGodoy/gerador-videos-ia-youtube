@@ -25,7 +25,16 @@ footage:
   # wikimedia é foto e cobre o que stock genérico não tem: modelo de carro,
   # evento histórico, pessoa pública, lugar nomeado. Exige crédito (CC BY/BY-SA)
   # — a atribuição vai junto no composition.json.
-  sources: [pexels, pixabay, wikimedia]
+  sources: [pexels, pixabay, wikimedia, nasa]
+  # Qual acervo faz sentido pra cada decisão do diretor visual. Sem rotear,
+  # todas as fontes disputam as mesmas 8 vagas de candidato e cada uma entra
+  # com uma sobra — a cena sobre um fato específico ficava com 1 vaga de
+  # acervo documental. Fonte fora de `sources` é ignorada aqui.
+  strategy_sources:
+    FOOTAGE: [pexels, pixabay] # cena filmável genérica: vídeo de stock
+    NEWS: [wikimedia, nasa] # fato/pessoa/objeto real: acervo documental
+    IMAGE: [wikimedia, nasa, pexels] # foto comunica melhor
+    MOTION_GRAPHIC: [pexels, pixabay] # só o fundo do gráfico
   # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
   # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
   min_duration_seconds: 8

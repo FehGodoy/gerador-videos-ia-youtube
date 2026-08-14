@@ -36,6 +36,8 @@ WIKIMEDIA_MIN_WIDTH = 1280
 # mesmo arquivo em que 1280 e 1920 funcionam). Por isso a segunda chamada.
 WIKIMEDIA_THUMB_WIDTH = 480
 
+NASA_SEARCH_URL = "https://images-api.nasa.gov/search"
+
 PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
 PIXABAY_VIDEO_SEARCH_URL = "https://pixabay.com/api/videos/"
@@ -304,23 +306,90 @@ def _search_wikimedia(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
+def _search_nasa(term: str, cfg: dict) -> list[dict]:
+    """Acervo de imagens da NASA. Sem chave, domínio público.
+
+    Estreito mas insuperável no que cobre: espaço, aeronáutica, satélite,
+    ciência, Terra vista de cima. As URLs vêm com a largura declarada no JSON
+    — nada de derivar tamanho na mão (testei: trocar o sufixo do arquivo
+    devolve sempre o mesmo bytes, então adivinhar não funcionaria).
+    """
+    try:
+        resp = requests.get(
+            NASA_SEARCH_URL,
+            params={"q": term, "media_type": "image"},
+            headers={"User-Agent": WIKIMEDIA_USER_AGENT},
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        logger.exception("Busca na NASA falhou para o termo '%s'", term)
+        return []
+
+    limite = max(cfg["footage"]["candidates_per_beat"], 3)
+    candidates = []
+    for item in resp.json().get("collection", {}).get("items", [])[:limite]:
+        links = [l for l in (item.get("links") or []) if l.get("href")]
+        if not links:
+            continue
+        maior = max(links, key=lambda l: l.get("width") or 0)
+        if (maior.get("width") or 0) < WIKIMEDIA_MIN_WIDTH:
+            continue
+        dados = (item.get("data") or [{}])[0]
+        candidates.append(
+            {
+                "source": "nasa",
+                "media_type": "image",
+                "url": maior["href"],
+                "thumbnail_url": min(links, key=lambda l: l.get("width") or 10**9)["href"],
+                "duration": None,
+                "attribution": {
+                    "author": dados.get("center") or "NASA",
+                    "license": "Domínio público (NASA)",
+                    "page": f"https://images.nasa.gov/details/{dados.get('nasa_id', '')}",
+                    "title": dados.get("title") or "",
+                },
+            }
+        )
+    return candidates
+
+
 _SEARCH_FUNCS = {
     "pexels": [_search_pexels_videos, _search_pexels_photos],
     "pixabay": [_search_pixabay_videos, _search_pixabay_photos],
     "wikimedia": [_search_wikimedia],
+    "nasa": [_search_nasa],
 }
 
 
-def search_candidates(search_terms: list[str]) -> list[dict]:
+def _sources_for(strategy: str, cfg: dict) -> list[str]:
+    """Quais fontes consultar pra esta estratégia do diretor visual.
+
+    Sem isso, todas as fontes disputam as mesmas 8 vagas de candidato e cada
+    uma entra com uma sobra — o acervo documental fica com 1 vaga numa cena
+    que é justamente sobre um fato específico. Roteando, a cena NEWS vê
+    arquivo de verdade e a cena FOOTAGE vê vídeo de stock.
+    """
+    todas = cfg["footage"]["sources"]
+    roteadas = (cfg["footage"].get("strategy_sources") or {}).get(strategy)
+    if not roteadas:
+        return todas
+    # respeita o que está desligado em sources
+    escolhidas = [s for s in roteadas if s in todas]
+    return escolhidas or todas
+
+
+def search_candidates(search_terms: list[str], strategy: str = "FOOTAGE") -> list[dict]:
     """Busca candidatos (sem baixar) pro primeiro termo que trouxer algum
     resultado, combinando vídeo + foto de Pexels e Pixabay. Cada candidato tem
     {source, media_type, url, thumbnail_url, duration} — `duration` é None
     para fotos. A revisão manual no painel decide qual usar; a IA de ranking
     (footage_ranker.py) já compara os dois tipos pela miniatura."""
     cfg = load_config()
+    fontes = _sources_for(strategy, cfg)
     for term in search_terms:
         per_source: list[list[dict]] = []
-        for source_name in cfg["footage"]["sources"]:
+        for source_name in fontes:
             for search_func in _SEARCH_FUNCS[source_name]:
                 try:
                     found = search_func(term, cfg)
@@ -526,7 +595,7 @@ def search_and_download_footage(
                     slot,
                 )
 
-    candidates = search_candidates(search_terms)
+    candidates = search_candidates(search_terms, strategy)
 
     if not candidates:
         logger.warning(
