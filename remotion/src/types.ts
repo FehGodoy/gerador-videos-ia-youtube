@@ -11,7 +11,7 @@ export interface Caption {
 
 export interface Footage {
   clip_path: string;
-  source: "pexels" | "pixabay" | "wikimedia" | "fallback" | "cache";
+  source: "pexels" | "pixabay" | "wikimedia" | "nasa" | "youtube" | "google_images" | "fallback" | "cache";
   media_type: "video" | "image";
   search_terms: string[];
   // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
@@ -36,6 +36,30 @@ export interface ChartData {
   trigger?: string;
 }
 
+// Fase 4: componentes de motion graphics pra dado estruturado que não é
+// número/comparação (isso já é o <AnimatedChart>) — cronologia, citação,
+// lista ordenada. Cada "kind" tem seu componente próprio em remotion/src/.
+export interface TimelineData {
+  label?: string;
+  events: { year: string; text: string }[];
+}
+
+export interface QuoteData {
+  text: string;
+  author: string;
+  context?: string;
+}
+
+export interface RankingData {
+  label?: string;
+  items: { label: string; value: string }[];
+}
+
+export type MotionGraphicData =
+  | { kind: "timeline"; data: TimelineData }
+  | { kind: "quote"; data: QuoteData }
+  | { kind: "ranking"; data: RankingData };
+
 // Um corte visual dentro do beat. Um bloco de narração longo vira vários —
 // nenhum passa da duração do clipe que o preenche, senão o último frame
 // congela na tela pelo resto do bloco.
@@ -44,12 +68,14 @@ export interface Scene {
   end_seconds: number;
   // "concept" = nenhuma mídia passou do threshold de relevância, ou o diretor
   // classificou o trecho como abstrato; vira card com a frase-chave.
-  kind: "footage" | "chart" | "concept";
+  // "motion_graphic" (Fase 4) = Timeline/QuoteCard/RankingList.
+  kind: "footage" | "chart" | "concept" | "motion_graphic";
   visual_strategy?: "FOOTAGE" | "NEWS" | "IMAGE" | "MOTION_GRAPHIC" | "TEXT";
   // offset dentro do clipe (trimBefore), pra reuso do mesmo clipe não parecer loop
   clip_start_seconds: number;
   footage: Footage | null;
   concept_text?: string;
+  motion_graphic?: MotionGraphicData | null;
 }
 
 // Selo de informação sobreposto ao footage, no segundo em que o dado é falado.

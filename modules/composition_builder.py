@@ -61,14 +61,27 @@ _UNKNOWN_CLIP_SECONDS = 4.0
 # Em quantos pontos distintos do clipe os reusos podem começar. Só ajuda quando
 # o clipe é bem mais longo que a cena — daí min_duration_seconds em config.yaml.
 _OFFSET_STEPS = 4
+# Repetir o mesmo shot (vídeo, imagem ou card) mais de 2 vezes no mesmo beat
+# fica cansativo de assistir — pedido explícito do usuário. Só ultrapassa
+# quando TODOS os shots do beat já bateram o teto (beat longo demais pro
+# roteiro visual cobrir sem repetir de novo); melhor um 3º reuso do que um
+# buraco na timeline.
+_MAX_SHOT_REUSES = 2
 
 
-def _max_scene_seconds(footage: dict, scene_seconds: float) -> float:
-    """Quanto tempo esse footage aguenta na tela sem congelar no último frame.
+def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds: float) -> float:
+    """Quanto tempo esse footage/gráfico aguenta na tela sem congelar no
+    último frame.
 
-    Imagem nunca congela (tem Ken Burns em FootageClip.tsx), então usa o alvo
-    cheio. Vídeo é limitado pela própria duração, com margem pro crossfade.
+    Motion graphic (Fase 4) é conteúdo renderizado, não mídia — usa o mesmo
+    tempo de leitura do <AnimatedChart> (chart_scene_seconds), maior que o
+    corte padrão, porque tem texto pra ler (data, citação, lista), não só
+    imagem pra olhar. Imagem de footage nunca congela (tem Ken Burns em
+    FootageClip.tsx), então usa o alvo cheio. Vídeo é limitado pela própria
+    duração, com margem pro crossfade.
     """
+    if footage.get("motion_graphic"):
+        return chart_scene_seconds
     if footage.get("clip_path") is None or footage.get("media_type") == "image":
         return scene_seconds
     duration = footage.get("duration")
@@ -114,15 +127,21 @@ def _tile_scenes(
     estar minutos longe de quando o número é dito. Sem âncora, cai no começo.
     """
     scene_seconds = cfg["footage"]["scene_seconds"]
+    chart_scene_seconds = cfg["footage"]["chart_scene_seconds"]
     scenes: list[dict] = []
     cursor = start_seconds
 
     # Threshold: mídia que só lembra o assunto é pior que assumir que não
     # achamos nada. Abaixo do mínimo, o shot perde o clipe e vira card
-    # conceitual — é o "não forçar footage" do plano.
+    # conceitual — é o "não forçar footage" do plano. Motion graphic (Fase 4)
+    # nunca passa por aqui: não tem clip_path pra avaliar (nunca buscou mídia),
+    # é conteúdo estruturado já validado no keyword_extractor.
     minimo = cfg["ranking"]["alternative_threshold"]
-    usaveis, descartados = [], []
+    usaveis, motion_graphics, descartados = [], [], []
     for shot in shots:
+        if shot.get("motion_graphic"):
+            motion_graphics.append(shot)
+            continue
         score = shot.get("relevance_score")
         if shot.get("clip_path") and (score is None or score >= minimo):
             usaveis.append(shot)
@@ -137,9 +156,10 @@ def _tile_scenes(
                 shot["concept_text"],
             )
 
-    # Cards entram no rodízio junto com os clipes, na ordem original — assim um
-    # bloco sem mídia boa não vira uma sequência de cards seguidos.
-    shots = usaveis + descartados if usaveis else descartados
+    # Cards e motion graphics entram no rodízio junto com os clipes, na ordem
+    # original — assim um bloco sem mídia boa não vira uma sequência de cards
+    # seguidos.
+    shots = usaveis + motion_graphics + descartados if (usaveis or motion_graphics) else descartados
     shots = shots or []
 
     if not shots:
@@ -167,6 +187,11 @@ def _tile_scenes(
             chart_start = min(max(chart_at_seconds, start_seconds), max(start_seconds, latest))
 
     reuse_count: dict[str, int] = {}
+    # Quantas vezes cada SHOT (não clipe — vale igual pra vídeo, imagem e card
+    # conceitual/motion graphic) já apareceu neste beat. Separado do
+    # `reuse_count` acima: aquele decide DE ONDE no clipe reaproveitado
+    # começar (Fase 3); este decide SE aquele shot pode aparecer de novo.
+    shot_reuse_count: dict[int, int] = {}
     index = 0
 
     # o gráfico precisa de um clipe pra desfocar atrás; card conceitual não serve
@@ -201,11 +226,20 @@ def _tile_scenes(
             chart_start = None
             continue
 
-        footage = shots[index % len(shots)]
+        # Prefere um shot que ainda não bateu o teto de repetições. `pool` só
+        # cai pra lista inteira (permitindo 3ª+ repetição) se TODOS já
+        # bateram — ver comentário de _MAX_SHOT_REUSES.
+        under_cap = [i for i in range(len(shots)) if shot_reuse_count.get(i, 0) < _MAX_SHOT_REUSES]
+        pool = under_cap or list(range(len(shots)))
+        shot_i = pool[index % len(pool)]
+        footage = shots[shot_i]
+        shot_reuse_count[shot_i] = shot_reuse_count.get(shot_i, 0) + 1
+        index += 1
+
         # com gráfico pendente, esta cena termina exatamente onde ele começa
         limit = chart_start if chart_start is not None else end_seconds
         remaining = limit - cursor
-        duration = min(_max_scene_seconds(footage, scene_seconds), remaining)
+        duration = min(_max_scene_seconds(footage, scene_seconds, chart_scene_seconds), remaining)
 
         # sobra curta demais pro próximo corte: encolhe esta cena pra sobra
         # virar uma cena decente; se não der, absorve a sobra aqui mesmo.
@@ -214,16 +248,49 @@ def _tile_scenes(
             shrunk = duration - (_MIN_SCENE_SECONDS - tail)
             duration = shrunk if shrunk >= _MIN_SCENE_SECONDS else remaining
 
+        if footage.get("motion_graphic"):
+            # Fase 4: conteúdo renderizado, não mídia — sem clip_path, sem
+            # reuso a espalhar (repetir o mesmo card duas vezes não ganha nada
+            # como o footage ganha ao mudar o clip_start; num beat muito longo
+            # com poucos shots ele pode aparecer de novo, limitação aceita
+            # por ora).
+            scenes.append(
+                {
+                    "start_seconds": round(cursor, 3),
+                    "end_seconds": round(cursor + duration, 3),
+                    "kind": "motion_graphic",
+                    "clip_start_seconds": 0.0,
+                    "visual_strategy": "MOTION_GRAPHIC",
+                    "footage": None,
+                    "motion_graphic": footage["motion_graphic"],
+                }
+            )
+            cursor += duration
+            continue
+
         clip_path = footage.get("clip_path") or ""
         used = reuse_count.get(clip_path, 0)
-        # Espalha os reusos em pontos distintos do clipe. Multiplicar pela
-        # duração da cena e tirar o módulo da folga não funcionava: com um
-        # clipe de 8s e cena de 7s a folga é 1s, e 7 % 1 dá sempre 0 — todos
-        # os reusos começavam do mesmo lugar.
-        slack = (footage.get("duration") or 0) - duration
-        clip_start = (
-            round(slack * ((used % _OFFSET_STEPS) / _OFFSET_STEPS), 3) if slack > 0.5 else 0.0
-        )
+        clip_duration = footage.get("duration") or 0
+        good_ranges = footage.get("good_ranges")
+
+        if good_ranges:
+            # Fase 3: a IA já viu frames reais do clipe e recomendou onde tem
+            # conteúdo útil (evita cair numa transição/tela preta). Revezo
+            # entre os intervalos recomendados a cada reuso, do melhor pro
+            # pior; se a cena não cabe inteira dentro do intervalo, encosto
+            # no início dele mas nunca deixo passar do fim do clipe.
+            inicio_sugerido, _ = good_ranges[used % len(good_ranges)]
+            clip_start = round(min(max(inicio_sugerido, 0.0), max(0.0, clip_duration - duration)), 3)
+        else:
+            # Sem recomendação (clipe curto, sem chave de API, análise
+            # falhou): espalha os reusos em pontos distintos do clipe.
+            # Multiplicar pela duração da cena e tirar o módulo da folga não
+            # funcionava: com um clipe de 8s e cena de 7s a folga é 1s, e
+            # 7 % 1 dá sempre 0 — todos os reusos começavam do mesmo lugar.
+            slack = clip_duration - duration
+            clip_start = (
+                round(slack * ((used % _OFFSET_STEPS) / _OFFSET_STEPS), 3) if slack > 0.5 else 0.0
+            )
         reuse_count[clip_path] = used + 1
 
         cena = {
@@ -240,7 +307,6 @@ def _tile_scenes(
             cena["concept_text"] = footage.get("concept_text", "")
         scenes.append(cena)
         cursor += duration
-        index += 1
 
     return scenes
 
@@ -449,7 +515,14 @@ def _assemble_composition(
                 )
             else:
                 found = {"clip_path": None, "relevance_score": None}
-            shots.append({**found, "strategy": shot["strategy"], "concept_text": shot["concept_text"]})
+            shots.append(
+                {
+                    **found,
+                    "strategy": shot["strategy"],
+                    "concept_text": shot["concept_text"],
+                    "motion_graphic": shot.get("motion_graphic"),
+                }
+            )
         if on_beat_progress is not None:
             on_beat_progress(beat.id, "footage", "done")
             on_beat_progress(beat.id, "captions", "running")

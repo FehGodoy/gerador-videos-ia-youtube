@@ -38,14 +38,18 @@ FALLBACK_TERMS = ["cinematic b-roll", "documentary background", "abstract textur
 
 # Como cada shot deve ser resolvido visualmente. FOOTAGE/NEWS/IMAGE viram busca
 # de mídia (com viés diferente); MOTION_GRAPHIC e TEXT não buscam nada — viram
-# gráfico e card na tela.
+# gráfico/card na tela.
 VISUAL_STRATEGIES = ("FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC", "TEXT")
-# MOTION_GRAPHIC busca mídia junto: a biblioteca de componentes ainda não
-# existe (Fase 4), e sem busca esses shots caíam todos em card de texto — num
-# teste real isso levou 1/3 do vídeo a virar texto. Enquanto o componente não
-# chega, eles renderizam como footage; a estratégia fica gravada na cena pra
-# Fase 4 saber onde entrar. Só TEXT dispensa mídia de propósito.
-STRATEGIES_THAT_SEARCH = ("FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC")
+# MOTION_GRAPHIC não busca mídia: a Fase 4 já tem componentes de verdade pra
+# ele (ver MOTION_GRAPHIC_KINDS) — footage nunca foi o visual certo pra dado
+# estruturado, só era usado antes porque não tinha renderer nenhum.
+STRATEGIES_THAT_SEARCH = ("FOOTAGE", "NEWS", "IMAGE")
+
+# Fase 4: só estes 3 têm componente Remotion de verdade por enquanto (ver
+# remotion/src/{Timeline,QuoteCard,RankingList}.tsx). Shot MOTION_GRAPHIC cujo
+# "kind" não é um destes, ou cujos dados vieram incompletos, vira TEXT — nunca
+# um card sem conteúdo nem uma estratégia que ninguém sabe renderizar.
+MOTION_GRAPHIC_KINDS = ("timeline", "quote", "ranking")
 
 # Nome do idioma no prompt, pro label do gráfico sair na língua do roteiro.
 # Sem isso, um roteiro em inglês ganhava legenda de gráfico em português
@@ -71,7 +75,11 @@ markdown e sem lista no nível de cima:
   "shots": [
     {{"strategy": "FOOTAGE",
       "terms": ["busca em inglês", "alternativa", "alternativa"],
-      "concept_text": "frase curta em {language_name} pra virar card se nada servir"}}
+      "concept_text": "frase curta em {language_name} pra virar card se nada servir",
+      "motion_graphic": null ou {{
+        "kind": "timeline" | "quote" | "ranking",
+        "data": {{}} (formato exato de cada kind explicado abaixo)
+      }}}}
   ],
   "chart": null ou {{
     "tipo": "crescimento" | "queda" | "comparacao" | "destaque",
@@ -109,14 +117,29 @@ não repita a mesma ideia com outras palavras.
 ou foto documental mostra de verdade.
     IMAGE    — uma foto boa comunica melhor que vídeo (objeto específico, retrato, mapa, \
 documento). Também quando o assunto é nomeado e vídeo genérico erraria.
-    MOTION_GRAPHIC — a informação é um número, série ou comparação; footage não acrescenta nada.
+    MOTION_GRAPHIC — a informação se encaixa EXATAMENTE num destes 3 formatos (veja "motion_graphic" \
+abaixo): sequência cronológica de datas/eventos (timeline), uma citação textual atribuída a alguém \
+(quote), ou uma lista ordenada com valores (ranking). Se não encaixar bem num dos 3, NÃO use \
+MOTION_GRAPHIC — escolha outra estratégia.
     TEXT     — a ideia é abstrata e nenhuma imagem literal serve; melhor uma frase na tela.
 - "terms": 2 a 4 buscas em INGLÊS, da mais específica pra mais genérica (a primeira que trouxer \
 resultado é usada). Quando o shot tiver entidade envolvida, INCLUA O NOME dela na primeira busca \
-(ex: "Honda HR-V front view", não "small SUV"). Concretas e filmáveis — evite abstrações.
+(ex: "Honda HR-V front view", não "small SUV"). Concretas e filmáveis — evite abstrações. Quando \
+strategy for MOTION_GRAPHIC ou TEXT, preencha com o assunto do trecho mesmo assim (não é usado \
+pra busca, mas o campo não pode vir vazio).
 - "concept_text": frase de 3 a 8 palavras em {language_name} resumindo a IDEIA do shot. Vira um \
-card na tela quando a estratégia for TEXT, ou quando nenhuma mídia encontrada for boa o bastante. \
-Escreva sempre, em todo shot.
+card na tela quando a estratégia for TEXT, quando nenhuma mídia encontrada for boa o bastante, ou \
+quando MOTION_GRAPHIC foi escolhido mas os dados não deram pra preencher direito. Escreva sempre, \
+em todo shot, mesmo os MOTION_GRAPHIC.
+- "motion_graphic": só quando strategy é MOTION_GRAPHIC (senão null). "kind" é UM dos 3:
+    "timeline" → "data": {{"label": "título curto opcional em {language_name}", \
+"events": [{{"year": "ano ou data curta, ex: 1969", "text": "3 a 6 palavras em {language_name}"}}, \
+...]}} — 2 a 5 eventos, na ordem cronológica em que o trecho os cita.
+    "quote"    → "data": {{"text": "a citação, o mais literal possível ao trecho", \
+"author": "quem disse", "context": "cargo/situação em poucas palavras, opcional"}}
+    "ranking"  → "data": {{"label": "título curto opcional em {language_name}", \
+"items": [{{"label": "nome do item", "value": "valor/posição, ex: 1º, 40%, R$500"}}, ...]}} — \
+3 a 6 itens, na ordem certa (1º lugar primeiro).
 - "estatistico": o trecho tem um número, percentual, ano marcante ou índice que vale destacar na \
 tela — ex: "caiu 20%", "dobrou em 3 anos", "em 1969", "1º lugar no ranking".
 - "concreto": o trecho descreve algo filmável sem um dado numérico central pra destacar.
@@ -235,6 +258,67 @@ def _parse_highlights(raw: object, beat_text: str) -> list[dict]:
     return clean
 
 
+def _clean_str(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _parse_motion_graphic(raw: object) -> dict | None:
+    """Valida o payload de um shot MOTION_GRAPHIC pro `kind` declarado.
+
+    None (dado incompleto/kind não implementado) sinaliza pra quem chama
+    rebaixar o shot pra TEXT — mesma filosofia do resto do arquivo: melhor
+    admitir que não deu pra estruturar do que gravar um card sem conteúdo ou
+    uma estratégia que nenhum componente do Remotion sabe renderizar.
+    """
+    if not isinstance(raw, dict):
+        return None
+    kind = raw.get("kind")
+    data = raw.get("data")
+    if kind not in MOTION_GRAPHIC_KINDS or not isinstance(data, dict):
+        return None
+
+    if kind == "timeline":
+        events_raw = data.get("events")
+        if not isinstance(events_raw, list):
+            return None
+        events = []
+        for item in events_raw:
+            if not isinstance(item, dict):
+                continue
+            year, text = _clean_str(item.get("year")), _clean_str(item.get("text"))
+            if year and text:
+                events.append({"year": year, "text": text})
+        if len(events) < 2:
+            return None
+        return {"kind": kind, "data": {"label": _clean_str(data.get("label")), "events": events}}
+
+    if kind == "quote":
+        text, author = _clean_str(data.get("text")), _clean_str(data.get("author"))
+        if not text or not author:
+            return None
+        return {
+            "kind": kind,
+            "data": {"text": text, "author": author, "context": _clean_str(data.get("context"))},
+        }
+
+    if kind == "ranking":
+        items_raw = data.get("items")
+        if not isinstance(items_raw, list):
+            return None
+        items = []
+        for item in items_raw:
+            if not isinstance(item, dict):
+                continue
+            label, value = _clean_str(item.get("label")), _clean_str(item.get("value"))
+            if label and value:
+                items.append({"label": label, "value": value})
+        if len(items) < 2:
+            return None
+        return {"kind": kind, "data": {"label": _clean_str(data.get("label")), "items": items}}
+
+    return None  # pragma: no cover — kind já filtrado por MOTION_GRAPHIC_KINDS
+
+
 def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dict:
     text = raw_response.strip()
     # o modelo às vezes envolve o JSON em ```json ... ``` apesar da instrução
@@ -264,11 +348,22 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
         if strategy not in VISUAL_STRATEGIES:
             strategy = "FOOTAGE"  # estratégia desconhecida cai no comportamento antigo
         concept = shot.get("concept_text")
+
+        motion_graphic = None
+        if strategy == "MOTION_GRAPHIC":
+            motion_graphic = _parse_motion_graphic(shot.get("motion_graphic"))
+            if motion_graphic is None:
+                # kind não implementado ou dados incompletos: rebaixa pra TEXT
+                # em vez de gravar uma estratégia que nenhum componente sabe
+                # renderizar — mesmo texto que a IA já escreveu em concept_text.
+                strategy = "TEXT"
+
         parsed_shots.append(
             {
                 "terms": clean,
                 "strategy": strategy,
                 "concept_text": concept.strip() if isinstance(concept, str) else "",
+                "motion_graphic": motion_graphic,
             }
         )
 
@@ -302,7 +397,12 @@ def _fallback_analysis(n_shots: int) -> dict:
         "type": "concreto",
         "entities": [],
         "shots": [
-            {"terms": list(FALLBACK_TERMS), "strategy": "FOOTAGE", "concept_text": ""}
+            {
+                "terms": list(FALLBACK_TERMS),
+                "strategy": "FOOTAGE",
+                "concept_text": "",
+                "motion_graphic": None,
+            }
             for _ in range(n_shots)
         ],
         "chart": None,

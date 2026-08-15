@@ -7,6 +7,9 @@ import { FootageClip } from "./FootageClip";
 import { AnimatedChart } from "./AnimatedChart";
 import { HighlightOverlay } from "./HighlightOverlay";
 import { ConceptCard } from "./ConceptCard";
+import { Timeline } from "./Timeline";
+import { QuoteCard } from "./QuoteCard";
+import { RankingList } from "./RankingList";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
@@ -58,6 +61,24 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                     chart={chart}
                     backgroundClipPath={scene.footage?.clip_path ?? null}
                     backgroundMediaType={scene.footage?.media_type ?? "video"}
+                  />
+                ) : scene.kind === "motion_graphic" &&
+                  scene.motion_graphic?.kind === "timeline" ? (
+                  <Timeline
+                    data={scene.motion_graphic.data}
+                    durationInFrames={durationInFrames}
+                  />
+                ) : scene.kind === "motion_graphic" &&
+                  scene.motion_graphic?.kind === "quote" ? (
+                  <QuoteCard
+                    data={scene.motion_graphic.data}
+                    durationInFrames={durationInFrames}
+                  />
+                ) : scene.kind === "motion_graphic" &&
+                  scene.motion_graphic?.kind === "ranking" ? (
+                  <RankingList
+                    data={scene.motion_graphic.data}
+                    durationInFrames={durationInFrames}
                   />
                 ) : scene.kind === "concept" && scene.concept_text ? (
                   <ConceptCard

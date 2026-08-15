@@ -49,6 +49,18 @@
         "definicao": { "type": "string", "description": "kind='termo': explicação curta." }
       }
     },
+    "motion_graphic": {
+      "type": "object",
+      "description": "Fase 4: componente de motion graphics escolhido pelo diretor visual pra representar um dado estruturado (cronologia, citação, ranking) — não é mídia, é conteúdo renderizado direto no Remotion.",
+      "required": ["kind", "data"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["timeline", "quote", "ranking"] },
+        "data": {
+          "type": "object",
+          "description": "Formato varia por 'kind': timeline={label?, events:[{year,text}]}; quote={text, author, context?}; ranking={label?, items:[{label,value}]}."
+        }
+      }
+    },
     "scene": {
       "type": "object",
       "required": ["start_seconds", "end_seconds", "kind", "clip_start_seconds", "footage"],
@@ -57,8 +69,8 @@
         "end_seconds": { "type": "number" },
         "kind": {
           "type": "string",
-          "enum": ["footage", "chart", "concept"],
-          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia; 'concept' é o card com a frase-chave, usado quando o diretor visual classificou o trecho como abstrato (estratégia TEXT) ou quando nenhuma mídia passou do threshold de relevância."
+          "enum": ["footage", "chart", "concept", "motion_graphic"],
+          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia; 'concept' é o card com a frase-chave, usado quando o diretor visual classificou o trecho como abstrato (estratégia TEXT) ou quando nenhuma mídia passou do threshold de relevância; 'motion_graphic' (Fase 4) renderiza Timeline/QuoteCard/RankingList a partir do campo 'motion_graphic' da cena."
         },
         "concept_text": {
           "type": "string",
@@ -68,6 +80,10 @@
           "type": "string",
           "enum": ["FOOTAGE", "NEWS", "IMAGE", "MOTION_GRAPHIC", "TEXT"],
           "description": "Como o diretor visual decidiu representar este shot. FOOTAGE/NEWS/IMAGE viram busca de mídia; MOTION_GRAPHIC e TEXT não buscam nada."
+        },
+        "motion_graphic": {
+          "oneOf": [{ "$ref": "#/definitions/motion_graphic" }, { "type": "null" }],
+          "description": "Presente quando kind='motion_graphic'."
         },
         "clip_start_seconds": {
           "type": "number",
@@ -81,7 +97,7 @@
             "clip_path": { "type": "string" },
             "source": {
               "type": "string",
-              "enum": ["pexels", "pixabay", "wikimedia", "fallback", "cache"]
+              "enum": ["pexels", "pixabay", "wikimedia", "nasa", "youtube", "google_images", "fallback", "cache"]
             },
             "media_type": {
               "type": "string",
