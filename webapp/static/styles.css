@@ -344,6 +344,83 @@ button:focus-visible {
   gap: var(--space-3);
 }
 
+/* --- Fontes de mídia --- */
+
+.sources-picker {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--border);
+}
+
+.sources-picker-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.sources-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.source-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.source-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.source-chip input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.source-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.source-chip-label {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.source-chip:has(input:checked) {
+  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+  border-color: var(--orange-dim);
+}
+
+.source-chip:has(input:checked) .source-chip-dot {
+  background: var(--orange);
+}
+
+.source-chip:has(input:checked) .source-chip-label {
+  color: var(--text-primary);
+}
+
+.source-chip:has(input:focus-visible) {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
 /* --- Switch (toggle) --- */
 
 .switch-row {

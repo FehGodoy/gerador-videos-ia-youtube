@@ -20,6 +20,7 @@ const generateBlockBtn = document.getElementById("generate-block-btn");
 const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
+const sourcesList = document.getElementById("sources-list");
 const newDraftBtn = document.getElementById("new-draft-btn");
 const stepReview = document.getElementById("step-review");
 const reviewBeats = document.getElementById("review-beats");
@@ -54,6 +55,8 @@ let draftLocked = false;
 let blocks = [];
 let nextBlockId = 0;
 let currentJobId = null;
+let selectedSources = new Set();
+let allSources = [];
 
 function icon(templateId) {
   const tpl = document.getElementById(templateId);
@@ -133,6 +136,53 @@ serperKeySave.addEventListener("click", async () => {
     serperKeySave.disabled = false;
   }
 });
+
+// --- Fontes de mídia ---
+
+function updateGenerateVideoButton() {
+  generateVideoBtn.disabled = blocks.length === 0 || selectedSources.size === 0;
+}
+
+function renderSourcesGrid() {
+  sourcesList.innerHTML = "";
+  for (const source of allSources) {
+    const label = document.createElement("label");
+    label.className = "source-chip";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = selectedSources.has(source.id);
+    input.addEventListener("change", () => {
+      if (input.checked) selectedSources.add(source.id);
+      else selectedSources.delete(source.id);
+      updateGenerateVideoButton();
+    });
+
+    const dot = document.createElement("span");
+    dot.className = "source-chip-dot";
+
+    const text = document.createElement("span");
+    text.className = "source-chip-label";
+    text.textContent = source.label;
+    if (source.hint) text.title = source.hint;
+
+    label.append(input, dot, text);
+    sourcesList.appendChild(label);
+  }
+}
+
+async function loadFootageSources() {
+  try {
+    const resp = await fetch("/api/footage-sources");
+    const data = await resp.json();
+    allSources = data.sources;
+    selectedSources = new Set(data.default);
+    renderSourcesGrid();
+    updateGenerateVideoButton();
+  } catch {
+    sourcesList.innerHTML = '<p class="hint">Não consegui carregar as fontes disponíveis.</p>';
+  }
+}
 
 // --- Canais ---
 
@@ -399,7 +449,7 @@ function renderBlocksList() {
     li.append(head, text, audio);
     blocksList.appendChild(li);
   });
-  generateVideoBtn.disabled = blocks.length === 0;
+  updateGenerateVideoButton();
 }
 
 async function regenerateBlock(block) {
@@ -770,6 +820,10 @@ function startJobEvents(jobId) {
 
 async function handleGenerateVideo() {
   clearError();
+  if (selectedSources.size === 0) {
+    showError("Selecione ao menos uma fonte de mídia.");
+    return;
+  }
   generateVideoBtn.disabled = true;
   stepReview.classList.add("hidden");
   reviewBeats.innerHTML = "";
@@ -789,6 +843,7 @@ async function handleGenerateVideo() {
         language: selectedVoiceLanguage,
         speed: Number(speedSlider.value),
         remote_render: remoteRenderToggle.checked,
+        sources: Array.from(selectedSources),
       }),
     });
     if (!resp.ok) {
@@ -801,7 +856,7 @@ async function handleGenerateVideo() {
   } catch (err) {
     showError(err.message);
   } finally {
-    generateVideoBtn.disabled = blocks.length === 0;
+    updateGenerateVideoButton();
   }
 }
 
@@ -846,5 +901,6 @@ confirmRenderBtn.addEventListener("click", handleConfirmRender);
 newDraftBtn.addEventListener("click", resetDraft);
 
 loadSerperStatus();
+loadFootageSources();
 
 loadChannels();

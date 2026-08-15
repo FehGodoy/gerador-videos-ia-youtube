@@ -55,6 +55,7 @@ class JobManager:
         language: str,
         speed: float,
         remote: bool = True,
+        allowed_sources: list[str] | None = None,
     ) -> Job:
         # o slug do rascunho já vem do painel web (gerado quando a voz foi
         # escolhida) — os blocos já foram narrados individualmente sob esse
@@ -65,7 +66,9 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex[:12], slug=slug, beats=[b.to_dict() for b in beats])
         self._jobs[job.id] = job
 
-        asyncio.create_task(self._run(job, beats, voice_id, language, speed, remote))
+        asyncio.create_task(
+            self._run(job, beats, voice_id, language, speed, remote, allowed_sources)
+        )
         return job
 
     async def _run(
@@ -76,6 +79,7 @@ class JobManager:
         language: str,
         speed: float,
         remote: bool,
+        allowed_sources: list[str] | None = None,
     ) -> None:
         loop = asyncio.get_running_loop()
 
@@ -100,6 +104,7 @@ class JobManager:
                 voice_id=voice_id,
                 language=language,
                 speed=speed,
+                allowed_sources=allowed_sources,
             )
             composition_path = output_dir(job.slug) / "composition.json"
 

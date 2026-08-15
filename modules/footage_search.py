@@ -645,15 +645,22 @@ _SEARCH_FUNCS = {
 SOURCE_PRIORITY = ("google_images", "youtube", "wikimedia", "pexels", "pixabay", "nasa")
 
 
-def _sources_for(strategy: str, cfg: dict) -> list[str]:
+def _sources_for(strategy: str, cfg: dict, allowed_sources: list[str] | None = None) -> list[str]:
     """Quais fontes consultar pra esta estratégia do diretor visual, na ordem
     da hierarquia global (SOURCE_PRIORITY).
 
     O roteamento por estratégia continua existindo — vídeo de stock genérico
     (FOOTAGE) não busca em fonte de foto, cena documental (NEWS) não busca em
     Pexels — só a ORDEM dentro de cada grupo é que segue a prioridade.
+
+    `allowed_sources`, quando passado (o painel deixa escolher por vídeo),
+    estreita ainda mais a lista do config.yaml — nunca a amplia, então uma
+    fonte desligada em `footage.sources` continua desligada mesmo que o
+    usuário a marque.
     """
     todas = cfg["footage"]["sources"]
+    if allowed_sources is not None:
+        todas = [s for s in todas if s in allowed_sources]
     roteadas = (cfg["footage"].get("strategy_sources") or {}).get(strategy)
     if not roteadas:
         base = todas
@@ -665,9 +672,12 @@ def _sources_for(strategy: str, cfg: dict) -> list[str]:
     )
 
 
-def search_candidates(search_terms: list[str], strategy: str = "FOOTAGE") -> list[dict]:
+def search_candidates(
+    search_terms: list[str], strategy: str = "FOOTAGE", allowed_sources: list[str] | None = None
+) -> list[dict]:
     """Busca candidatos (sem baixar), um termo de cada vez, na ordem da
-    hierarquia de fontes (SOURCE_PRIORITY, filtrada pela estratégia).
+    hierarquia de fontes (SOURCE_PRIORITY, filtrada pela estratégia e por
+    `allowed_sources`, se passado — ver _sources_for).
 
     Para (waterfall) na primeira fonte que trouxer QUALQUER resultado — não
     consulta as fontes seguintes daquele termo. Decisão explícita do usuário:
@@ -678,7 +688,7 @@ def search_candidates(search_terms: list[str], strategy: str = "FOOTAGE") -> lis
     {source, media_type, url, thumbnail_url, duration} — `duration` é None
     para foto."""
     cfg = load_config()
-    fontes = _sources_for(strategy, cfg)
+    fontes = _sources_for(strategy, cfg, allowed_sources)
     for term in search_terms:
         for source_name in fontes:
             found: list[dict] = []
@@ -1040,6 +1050,7 @@ def search_and_download_footage(
     slot: int = 0,
     strategy: str = "FOOTAGE",
     entities: list[str] | None = None,
+    allowed_sources: list[str] | None = None,
 ) -> dict:
     """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
     candidato pra um shot do beat. Se `slug` for passado, reaproveita uma
@@ -1047,6 +1058,8 @@ def search_and_download_footage(
     e grava a lista ranqueada completa pra revisão manual no painel web.
 
     `slot` identifica o shot dentro do beat (um beat longo tem vários).
+    `allowed_sources` restringe a busca às fontes escolhidas no painel pra
+    este vídeo (None = usa todas as habilitadas no config.yaml).
 
     Retorna {"clip_path", "source", "media_type", "duration", "search_terms"}.
     `duration` é a duração do clipe em segundos (None pra imagem ou fallback)
@@ -1091,7 +1104,7 @@ def search_and_download_footage(
                     slot,
                 )
 
-    candidates = search_candidates(search_terms, strategy)
+    candidates = search_candidates(search_terms, strategy, allowed_sources)
 
     if not candidates:
         logger.warning(

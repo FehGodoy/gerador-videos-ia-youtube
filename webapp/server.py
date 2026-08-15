@@ -77,6 +77,10 @@ class CreateJobRequest(BaseModel):
     language: str = "pt"
     speed: float = 1.0
     remote_render: bool = True
+    # Fontes de footage escolhidas no painel pra este vídeo. None = usa
+    # footage.sources do config.yaml sem restrição extra (compatibilidade
+    # com quem ainda não manda o campo).
+    sources: list[str] | None = None
 
 
 class ChannelRequest(BaseModel):
@@ -94,6 +98,39 @@ class SerperKeyRequest(BaseModel):
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+SOURCE_LABELS = {
+    "pexels": "Pexels",
+    "pixabay": "Pixabay",
+    "wikimedia": "Wikimedia Commons",
+    "nasa": "NASA",
+    "youtube": "YouTube",
+    "google_images": "Google Imagens",
+}
+
+SOURCE_HINTS = {
+    "pexels": "Vídeo/foto de stock genérico",
+    "pixabay": "Vídeo/foto de stock genérico",
+    "wikimedia": "Foto histórica/documental, exige crédito",
+    "nasa": "Foto/vídeo espacial",
+    "youtube": "Trecho de vídeo real (Creative Commons)",
+    "google_images": "Foto específica via busca (Serper), sem filtro de licença",
+}
+
+
+@app.get("/api/footage-sources")
+async def get_footage_sources() -> dict:
+    cfg = load_config()
+    habilitadas = cfg["footage"]["sources"]
+    return {
+        "sources": [
+            {"id": s, "label": SOURCE_LABELS.get(s, s), "hint": SOURCE_HINTS.get(s, "")}
+            for s in footage_search.SOURCE_PRIORITY
+            if s in habilitadas
+        ],
+        "default": habilitadas,
+    }
 
 
 @app.get("/api/voices")
@@ -137,6 +174,8 @@ async def create_job(req: CreateJobRequest) -> dict:
         raise HTTPException(status_code=400, detail="Nenhum bloco de narração adicionado.")
     if not req.voice_id:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
+    if req.sources is not None and not req.sources:
+        raise HTTPException(status_code=400, detail="Selecione ao menos uma fonte de mídia.")
 
     # Falha cedo: sem isso, um gh sem login só estourava lá na frente, depois
     # da revisão manual de footage inteira — e jogava esse trabalho fora.
@@ -147,7 +186,13 @@ async def create_job(req: CreateJobRequest) -> dict:
 
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
     job = job_manager.create_job(
-        req.slug, beats, req.voice_id, req.language, req.speed, remote=req.remote_render
+        req.slug,
+        beats,
+        req.voice_id,
+        req.language,
+        req.speed,
+        remote=req.remote_render,
+        allowed_sources=req.sources,
     )
     return {"job_id": job.id, "beats": job.beats}
 

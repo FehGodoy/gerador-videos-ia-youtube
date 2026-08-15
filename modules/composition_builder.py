@@ -430,10 +430,14 @@ def _assemble_composition(
     voice_id: str | None = None,
     language: str | None = None,
     speed: float | None = None,
+    allowed_sources: list[str] | None = None,
 ) -> dict:
     """Monta o composition.json a partir de uma lista de beats já pronta —
     tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
     chegaram prontos (painel web, onde o usuário monta os blocos um a um).
+
+    `allowed_sources`: fontes de footage escolhidas pra este vídeo específico
+    (None = usa footage.sources do config.yaml sem restrição extra).
     """
     cfg = load_config()
 
@@ -512,6 +516,7 @@ def _assemble_composition(
                     slot=slot,
                     strategy=shot["strategy"],
                     entities=analysis.get("entities") or [],
+                    allowed_sources=allowed_sources,
                 )
             else:
                 found = {"clip_path": None, "relevance_score": None}
@@ -587,12 +592,15 @@ def build_composition(
     voice_id: str | None = None,
     language: str | None = None,
     speed: float | None = None,
+    allowed_sources: list[str] | None = None,
 ) -> dict:
     """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
     script_path = Path(script_path)
     slug = slug or script_path.stem
     beats = parse_script(script_path)
-    return _assemble_composition(beats, slug, on_beat_progress, voice_id, language, speed)
+    return _assemble_composition(
+        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources
+    )
 
 
 def build_composition_from_beats(
@@ -602,10 +610,13 @@ def build_composition_from_beats(
     voice_id: str | None = None,
     language: str | None = None,
     speed: float | None = None,
+    allowed_sources: list[str] | None = None,
 ) -> dict:
     """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
     roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
-    return _assemble_composition(beats, slug, on_beat_progress, voice_id, language, speed)
+    return _assemble_composition(
+        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources
+    )
 
 
 if __name__ == "__main__":
