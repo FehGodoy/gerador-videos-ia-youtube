@@ -1060,6 +1060,15 @@ progress::-webkit-progress-value {
   display: block;
 }
 
+.candidate-preview-frame {
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  display: block;
+}
+
 .candidate-play {
   position: absolute;
   top: 4px;

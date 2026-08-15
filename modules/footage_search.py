@@ -672,22 +672,21 @@ def _sources_for(strategy: str, cfg: dict, allowed_sources: list[str] | None = N
     )
 
 
-def search_candidates(
-    search_terms: list[str], strategy: str = "FOOTAGE", allowed_sources: list[str] | None = None
-) -> list[dict]:
-    """Busca candidatos (sem baixar), um termo de cada vez, na ordem da
+def _search_source_batches(
+    search_terms: list[str],
+    strategy: str,
+    cfg: dict,
+    allowed_sources: list[str] | None = None,
+):
+    """Gera um lote de candidatos por (termo, fonte) tentada, na ordem da
     hierarquia de fontes (SOURCE_PRIORITY, filtrada pela estratégia e por
-    `allowed_sources`, se passado — ver _sources_for).
-
-    Para (waterfall) na primeira fonte que trouxer QUALQUER resultado — não
-    consulta as fontes seguintes daquele termo. Decisão explícita do usuário:
-    economiza crédito do Serper (google_images é a primeira da hierarquia) em
-    troca de não comparar mais candidatos de fontes diferentes — a IA de
-    ranking (footage_ranker.py) ainda escolhe a melhor ENTRE os candidatos que
-    essa única fonte trouxe. Cada candidato tem
+    `allowed_sources`, se passado — ver _sources_for). Só gera lotes
+    não-vazios; quem consome decide se aceita esse lote ou pede o próximo
+    (é o waterfall — mas quem decide parar agora é o chamador, não esta
+    função, porque a decisão depende da nota do ranking, que só existe do
+    lado de fora). Cada candidato tem
     {source, media_type, url, thumbnail_url, duration} — `duration` é None
     para foto."""
-    cfg = load_config()
     fontes = _sources_for(strategy, cfg, allowed_sources)
     for term in search_terms:
         for source_name in fontes:
@@ -702,8 +701,20 @@ def search_candidates(
                     continue
                 found.extend(resultado)
             if found:
-                return found[:MAX_CANDIDATES_TO_RANK]
-    return []
+                yield found[:MAX_CANDIDATES_TO_RANK]
+
+
+def search_candidates(
+    search_terms: list[str], strategy: str = "FOOTAGE", allowed_sources: list[str] | None = None
+) -> list[dict]:
+    """Busca candidatos (sem baixar): devolve só o PRIMEIRO lote não-vazio
+    encontrado (mesma fonte/termo), sem considerar nota de ranking nenhuma —
+    usado por quem só quer "algo", não o melhor entre várias fontes (CLI de
+    debug do footage_ranker). search_and_download_footage (uso real do
+    pipeline) usa _search_source_batches direto, pra poder continuar tentando
+    fontes quando a primeira vem fraca."""
+    cfg = load_config()
+    return next(_search_source_batches(search_terms, strategy, cfg, allowed_sources), [])
 
 
 def _candidate_cache_key(candidate: dict) -> str:
@@ -1104,9 +1115,30 @@ def search_and_download_footage(
                     slot,
                 )
 
-    candidates = search_candidates(search_terms, strategy, allowed_sources)
+    # Tenta as fontes uma a uma (ordem da hierarquia) e RANQUEIA cada lote —
+    # só para de tentar a próxima fonte quando a nota do melhor candidato já
+    # bate o mínimo aceitável. Sem isso, youtube/google_images (que quase
+    # sempre acham "alguma coisa" pra qualquer termo, mesmo ruim) paravam o
+    # waterfall antes de pexels/pixabay serem sequer tentados — o shot virava
+    # card conceitual com nota 0-30 sem nenhuma fonte melhor ter sido checada.
+    threshold = cfg["ranking"]["alternative_threshold"]
+    ranked: list[dict] | None = None
+    best_score = -1
+    for batch in _search_source_batches(search_terms, strategy, cfg, allowed_sources):
+        ranked_batch = rank_candidates(context, batch)
+        top_score = ranked_batch[0].get("relevance_score")
+        if top_score is None:
+            # ranking indisponível (sem chave, IA fora do ar, lote com 1 só
+            # candidato) — aceita esse lote sem tentar mais fontes, como antes
+            ranked = ranked_batch
+            break
+        if top_score > best_score:
+            best_score = top_score
+            ranked = ranked_batch
+        if top_score >= threshold:
+            break
 
-    if not candidates:
+    if not ranked:
         logger.warning(
             "Nenhum footage encontrado (beat %d, shot %d, termos: %s). Usando fallback genérico.",
             beat_id,
@@ -1115,7 +1147,6 @@ def search_and_download_footage(
         )
         return _fallback_result(cfg, search_terms)
 
-    ranked = rank_candidates(context, candidates)
     chosen = ranked[0]
 
     try:

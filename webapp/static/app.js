@@ -685,7 +685,14 @@ function renderReviewBeats(jobId, beatsData) {
       const previewVideo = document.createElement("video");
       previewVideo.controls = true;
       previewVideo.preload = "none";
-      preview.appendChild(previewVideo);
+      // Candidato do YouTube não tem arquivo de vídeo direto pra preview —
+      // "url" é a página de watch, que o <video> não consegue tocar. Usa o
+      // player embed do YouTube recortado no mesmo trecho que seria baixado.
+      const previewFrame = document.createElement("iframe");
+      previewFrame.className = "candidate-preview-frame hidden";
+      previewFrame.allow = "autoplay; encrypted-media";
+      previewFrame.allowFullscreen = true;
+      preview.append(previewVideo, previewFrame);
 
       const grid = document.createElement("div");
       grid.className = "review-candidates";
@@ -702,9 +709,23 @@ function renderReviewBeats(jobId, beatsData) {
           playBtn.title = "Pré-visualizar o clipe";
           playBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            previewVideo.src = candidate.url;
             preview.classList.remove("hidden");
-            previewVideo.play().catch(() => {});
+            if (candidate.source === "youtube" && candidate.youtube_video_id) {
+              previewVideo.pause();
+              previewVideo.removeAttribute("src");
+              previewVideo.classList.add("hidden");
+              const [start, end] = candidate.youtube_segment || [0, 0];
+              previewFrame.classList.remove("hidden");
+              previewFrame.src =
+                `https://www.youtube.com/embed/${candidate.youtube_video_id}` +
+                `?start=${Math.floor(start)}&end=${Math.ceil(end)}&autoplay=1`;
+            } else {
+              previewFrame.classList.add("hidden");
+              previewFrame.src = "";
+              previewVideo.classList.remove("hidden");
+              previewVideo.src = candidate.url;
+              previewVideo.play().catch(() => {});
+            }
           });
           thumb.appendChild(playBtn);
         }
