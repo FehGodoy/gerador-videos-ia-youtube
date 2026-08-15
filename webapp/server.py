@@ -12,12 +12,13 @@ import json
 import logging
 from pathlib import Path
 
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from modules import footage_search, github_render
+from modules import footage_search, github_render, settings as settings_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.narration import synthesize_beat
@@ -84,6 +85,10 @@ class ChannelRequest(BaseModel):
 
 class FootageChoiceRequest(BaseModel):
     candidate_index: int
+
+
+class SerperKeyRequest(BaseModel):
+    api_key: str
 
 
 @app.get("/")
@@ -371,3 +376,30 @@ async def post_favorite(name: str, voice: dict) -> list[dict]:
 @app.delete("/api/channels/{name}/favorites/{voice_id}")
 async def delete_favorite(name: str, voice_id: str) -> list[dict]:
     return channels_module.remove_favorite(name, voice_id)
+
+
+@app.get("/api/serper-status")
+async def get_serper_status_route() -> dict:
+    return footage_search.get_serper_status()
+
+
+@app.post("/api/serper-status")
+async def post_serper_key(req: SerperKeyRequest) -> dict:
+    chave = req.api_key.strip()
+    if not chave:
+        raise HTTPException(status_code=400, detail="Chave vazia.")
+
+    # valida ANTES de salvar: sem isso, um typo trocaria a chave boa por uma
+    # inválida e a fonte só voltaria a falhar silenciosamente no próximo vídeo
+    try:
+        resp = requests.get(
+            footage_search.SERPER_ACCOUNT_URL, headers={"X-API-KEY": chave}, timeout=10
+        )
+    except requests.RequestException:
+        raise HTTPException(status_code=502, detail="Não consegui checar a chave (rede).")
+    if resp.status_code == 403:
+        raise HTTPException(status_code=400, detail="Chave inválida (a Serper recusou).")
+    resp.raise_for_status()
+
+    settings_module.set_serper_api_key(chave)
+    return footage_search.get_serper_status()

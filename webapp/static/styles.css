@@ -149,6 +149,87 @@ h2 {
   flex-shrink: 0;
 }
 
+/* --- Barra de status de API (créditos do Serper / Google Imagens) --- */
+
+.api-status-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 8px 14px;
+  margin-bottom: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.api-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.api-status-dot.ok {
+  background: var(--teal);
+}
+
+.api-status-dot.low {
+  background: var(--orange);
+}
+
+.api-status-dot.off {
+  background: var(--error);
+}
+
+.api-status-text {
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.api-status-bar button.small {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.api-key-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 14px var(--space-3);
+  margin-top: -8px;
+  margin-bottom: var(--space-3);
+}
+
+.api-key-form input[type="text"] {
+  max-width: 340px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.api-key-form button.small {
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+.api-key-feedback {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.api-key-feedback.ok {
+  color: var(--teal);
+}
+
+.api-key-feedback.error {
+  color: var(--error);
+}
+
 /* --- Panels --- */
 
 .panel {

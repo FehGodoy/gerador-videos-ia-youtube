@@ -192,6 +192,38 @@ def _run_status(repo: str, run_id: str) -> dict:
     return json.loads(result.stdout)
 
 
+def _delete_artifact(repo: str, run_id: str) -> None:
+    """Apaga o artifact 'video' do run assim que ele já foi baixado.
+
+    Sem isso, o vídeo renderizado fica público (se o repo for público) até a
+    retenção mínima do GitHub expirar sozinha — 1 dia, o menor valor que
+    `retention-days` aceita (não dá pra configurar horas). Apagando na hora,
+    a janela de exposição fica só o tempo entre o render terminar e o
+    download local completar, em vez de até 24h.
+
+    Best-effort: se falhar, não derruba o job — o vídeo já está na máquina do
+    usuário, e o artifact ainda expira sozinho em 1 dia no pior caso.
+    """
+    try:
+        lookup = subprocess.run(
+            [
+                _gh_executable(), "api",
+                f"repos/{repo}/actions/runs/{run_id}/artifacts",
+                "--jq", '.artifacts[] | select(.name=="video") | .id',
+            ],
+            capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=30,
+        )
+        artifact_id = lookup.stdout.strip()
+        if not artifact_id:
+            return
+        subprocess.run(
+            [_gh_executable(), "api", "-X", "DELETE", f"repos/{repo}/actions/artifacts/{artifact_id}"],
+            capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=30,
+        )
+    except Exception:
+        pass
+
+
 def _download_artifact(repo: str, run_id: str, slug: str) -> Path:
     download_dir = PROJECT_ROOT / "cache" / "github_render" / slug / "artifact"
     if download_dir.exists():
@@ -289,6 +321,7 @@ def render_via_github_actions(
     video_path = _download_artifact(repo, run_id, slug)
 
     status("Limpando arquivos temporários no GitHub...")
+    _delete_artifact(repo, run_id)
     _delete_release_if_exists(repo, release_tag)
 
     return video_path

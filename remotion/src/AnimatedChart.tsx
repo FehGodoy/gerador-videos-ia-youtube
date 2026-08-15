@@ -79,6 +79,7 @@ export const AnimatedChart: React.FC<{
         ) : (
           <OffthreadVideo
             src={staticFile(backgroundClipPath)}
+            muted
             style={{
               width: "100%",
               height: "100%",

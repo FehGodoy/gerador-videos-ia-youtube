@@ -51,6 +51,10 @@ export const FootageClip: React.FC<{
       <OffthreadVideo
         src={staticFile(clipPath)}
         trimBefore={Math.max(0, Math.round(clipStartSeconds * fps))}
+        // A única trilha do vídeo é a narração. Clipe de stock costuma vir sem
+        // áudio, então isso nunca fez falta — mas material de arquivo vem com
+        // som embutido e falaria por cima da narração.
+        muted
         style={{ width: "100%", height: "100%", objectFit: "cover" }}
       />
     </AbsoluteFill>

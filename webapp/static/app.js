@@ -35,6 +35,13 @@ const stepResult = document.getElementById("step-result");
 const resultVideo = document.getElementById("result-video");
 const downloadLink = document.getElementById("download-link");
 const errorMessage = document.getElementById("error-message");
+const serperStatusDot = document.getElementById("serper-status-dot");
+const serperStatusText = document.getElementById("serper-status-text");
+const serperChangeBtn = document.getElementById("serper-change-btn");
+const serperKeyForm = document.getElementById("serper-key-form");
+const serperKeyInput = document.getElementById("serper-key-input");
+const serperKeySave = document.getElementById("serper-key-save");
+const serperKeyFeedback = document.getElementById("serper-key-feedback");
 
 let currentChannel = localStorage.getItem("lastChannel") || null;
 let favoriteIds = new Set();
@@ -61,6 +68,71 @@ function showError(message) {
 function clearError() {
   errorMessage.classList.add("hidden");
 }
+
+// --- Status do Serper (Google Imagens) ---
+
+async function loadSerperStatus() {
+  let status;
+  try {
+    const resp = await fetch("/api/serper-status");
+    status = await resp.json();
+  } catch {
+    serperStatusDot.className = "api-status-dot off";
+    serperStatusText.textContent = "Google Imagens: não consegui checar (rede).";
+    return;
+  }
+
+  if (!status.configured) {
+    serperStatusDot.className = "api-status-dot off";
+    serperStatusText.textContent = "Google Imagens: sem chave configurada.";
+  } else if (status.balance === null) {
+    serperStatusDot.className = "api-status-dot off";
+    serperStatusText.textContent = "Google Imagens: não consegui checar o saldo.";
+  } else if (status.low) {
+    serperStatusDot.className = "api-status-dot low";
+    serperStatusText.textContent = `Google Imagens: só ${status.balance} créditos restantes — considere trocar a chave.`;
+  } else {
+    serperStatusDot.className = "api-status-dot ok";
+    serperStatusText.textContent = `Google Imagens: ${status.balance} créditos restantes.`;
+  }
+}
+
+serperChangeBtn.addEventListener("click", () => {
+  serperKeyForm.classList.toggle("hidden");
+  if (!serperKeyForm.classList.contains("hidden")) {
+    serperKeyInput.focus();
+  }
+});
+
+serperKeySave.addEventListener("click", async () => {
+  const apiKey = serperKeyInput.value.trim();
+  if (!apiKey) return;
+  serperKeyFeedback.textContent = "Verificando...";
+  serperKeyFeedback.className = "api-key-feedback";
+  serperKeySave.disabled = true;
+  try {
+    const resp = await fetch("/api/serper-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      serperKeyFeedback.textContent = data.detail || "Não deu certo.";
+      serperKeyFeedback.className = "api-key-feedback error";
+      return;
+    }
+    serperKeyFeedback.textContent = `Chave salva. ${data.balance} créditos.`;
+    serperKeyFeedback.className = "api-key-feedback ok";
+    serperKeyInput.value = "";
+    await loadSerperStatus();
+  } catch {
+    serperKeyFeedback.textContent = "Falha de rede ao salvar.";
+    serperKeyFeedback.className = "api-key-feedback error";
+  } finally {
+    serperKeySave.disabled = false;
+  }
+});
 
 // --- Canais ---
 
@@ -772,5 +844,7 @@ generateBlockBtn.addEventListener("click", generateBlock);
 generateVideoBtn.addEventListener("click", handleGenerateVideo);
 confirmRenderBtn.addEventListener("click", handleConfirmRender);
 newDraftBtn.addEventListener("click", resetDraft);
+
+loadSerperStatus();
 
 loadChannels();

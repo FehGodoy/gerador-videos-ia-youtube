@@ -21,6 +21,17 @@
     <p class="subtitle">Monte a narração bloco a bloco, confira cada voz, depois gere o corte final.</p>
   </header>
 
+  <div id="serper-status" class="api-status-bar">
+    <span class="api-status-dot" id="serper-status-dot"></span>
+    <span class="api-status-text" id="serper-status-text">Google Imagens: verificando...</span>
+    <button id="serper-change-btn" class="ghost small" type="button">Trocar chave</button>
+  </div>
+  <div id="serper-key-form" class="api-key-form hidden">
+    <input type="text" id="serper-key-input" placeholder="Nova chave da API (serper.dev)" autocomplete="off">
+    <button id="serper-key-save" class="ghost small" type="button">Salvar</button>
+    <span id="serper-key-feedback" class="api-key-feedback"></span>
+  </div>
+
   <section id="step-channel" class="panel">
     <h2><span class="slate">01</span>Canal</h2>
     <div class="row">
