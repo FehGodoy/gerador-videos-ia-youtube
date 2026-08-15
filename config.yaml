@@ -25,16 +25,39 @@ footage:
   # wikimedia é foto e cobre o que stock genérico não tem: modelo de carro,
   # evento histórico, pessoa pública, lugar nomeado. Exige crédito (CC BY/BY-SA)
   # — a atribuição vai junto no composition.json.
-  sources: [pexels, pixabay, wikimedia, nasa]
-  # Qual acervo faz sentido pra cada decisão do diretor visual. Sem rotear,
-  # todas as fontes disputam as mesmas 8 vagas de candidato e cada uma entra
-  # com uma sobra — a cena sobre um fato específico ficava com 1 vaga de
-  # acervo documental. Fonte fora de `sources` é ignorada aqui.
+  sources: [pexels, pixabay, wikimedia, nasa, youtube, google_images]
+  # Qual acervo faz sentido pra cada decisão do diretor visual (vídeo de stock
+  # genérico não busca em fonte de foto, cena documental não busca em Pexels).
+  # A ORDEM aqui não importa pro código — dentro de cada grupo, a busca segue
+  # a hierarquia global SOURCE_PRIORITY (footage_search.py): google_images,
+  # youtube, wikimedia, pexels, pixabay, nasa. É "waterfall": para na primeira
+  # fonte que achar QUALQUER resultado, não consulta as seguintes daquele
+  # termo — decisão do usuário pra economizar crédito do Serper (google_images
+  # é sempre a primeira tentada). Fonte fora de `sources` é ignorada aqui.
   strategy_sources:
-    FOOTAGE: [pexels, pixabay] # cena filmável genérica: vídeo de stock
-    NEWS: [wikimedia, nasa] # fato/pessoa/objeto real: acervo documental
-    IMAGE: [wikimedia, nasa, pexels] # foto comunica melhor
+    FOOTAGE: [pexels, pixabay, youtube] # cena filmável genérica: vídeo de stock
+    NEWS: [wikimedia, nasa, youtube, google_images] # fato/pessoa/objeto real: acervo documental + foto de imprensa
+    # google_images cobre o que nem Wikimedia nem Pexels têm (imagem editorial
+    # de site de notícia, produto específico, pessoa específica), mas sem
+    # filtro de licença nenhum — ver aviso em _search_google_images. Por ser
+    # 1º na hierarquia, é chamado sempre que a estratégia é IMAGE.
+    IMAGE: [wikimedia, nasa, pexels, google_images] # foto comunica melhor
     MOTION_GRAPHIC: [pexels, pixabay] # só o fundo do gráfico
+  youtube:
+    # A cota do Data API v3 é de 10.000 unidades/dia por projeto e cada busca
+    # custa 100. As chaves GOOGLE_API_KEY_1/2/3 são de contas diferentes e o
+    # código gira pra próxima quando uma estoura.
+    creative_commons_only: true # filtra videoLicense=creativeCommon na busca
+    prefer_hd: true # filtro da BUSCA (videoDefinition=high); não muda o download
+    # Teto de altura do DOWNLOAD. Exige cookies de uma sessão logada num dos
+    # navegadores da máquina (chrome/edge/firefox/brave/opera/vivaldi) — sem
+    # login o YouTube trava em 360p mesmo listando formatos maiores. Se nenhum
+    # navegador tiver cookies utilizáveis (banco travado com o app aberto),
+    # cai para 360p e segue sem travar o pipeline.
+    max_height: 1080
+    clip_seconds: 20 # quanto de cada vídeo baixar
+    start_offset_seconds: 10 # pula a vinheta de abertura
+    max_source_duration_seconds: 1800 # ignora vídeo muito longo (live, palestra inteira)
   # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
   # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
   min_duration_seconds: 8

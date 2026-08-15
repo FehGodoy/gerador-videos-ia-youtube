@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
-from itertools import zip_longest
+import subprocess
 from pathlib import Path
 
 import requests
@@ -37,6 +38,24 @@ WIKIMEDIA_MIN_WIDTH = 1280
 WIKIMEDIA_THUMB_WIDTH = 480
 
 NASA_SEARCH_URL = "https://images-api.nasa.gov/search"
+
+SERPER_IMAGES_URL = "https://google.serper.dev/images"
+SERPER_ACCOUNT_URL = "https://google.serper.dev/account"
+# Abaixo disso a imagem costuma ser thumbnail de baixa qualidade demais pra
+# tela cheia; medido nos primeiros resultados reais (3072x2304, 1152x1152).
+SERPER_MIN_WIDTH = 640
+# Aviso no painel abaixo disso — não é um corte automático, só um alerta pra
+# trocar de chave antes de ficar sem crédito no meio de um vídeo.
+SERPER_LOW_BALANCE_THRESHOLD = 100
+
+YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+# Cota do YouTube Data API é diária e por projeto, não por chave: 10.000
+# unidades, e cada search.list custa 100. Com as três chaves em contas
+# separadas o teto do dia triplica. Guardamos aqui quais já estouraram pra não
+# gastar uma chamada só pra tomar 403 de novo no mesmo processo.
+_GOOGLE_QUOTA_EXHAUSTED: set[str] = set()
+_QUOTA_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
 
 PEXELS_VIDEO_SEARCH_URL = "https://api.pexels.com/videos/search"
 PEXELS_PHOTO_SEARCH_URL = "https://api.pexels.com/v1/search"
@@ -354,64 +373,326 @@ def _search_nasa(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
+def _search_google_images(term: str, cfg: dict) -> list[dict]:
+    """Google Imagens via Serper.dev (SERPER_API_KEY no .env).
+
+    A Custom Search JSON API oficial do Google fica bloqueada nas contas
+    disponíveis (403 a nível de projeto, testado inclusive via curl puro).
+    Serper contorna isso rodando a busca por trás e devolvendo o resultado já
+    estruturado — mas a imagem em si continua vindo de qualquer site indexado
+    pelo Google, sem filtro de licença nenhum (diferente de Wikimedia/NASA).
+    Por decisão explícita do usuário, essa fonte fica na lista mesmo assim; o
+    campo `license` no crédito reflete que o direito de uso NÃO foi checado.
+    """
+    from modules.settings import get_serper_api_key
+
+    api_key = get_serper_api_key()
+    if not api_key:
+        return []
+
+    try:
+        resp = requests.post(
+            SERPER_IMAGES_URL,
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={"q": term, "num": max(cfg["footage"]["candidates_per_beat"], 3)},
+            timeout=20,
+        )
+        resp.raise_for_status()
+    except requests.RequestException:
+        logger.exception("Busca no Google Imagens (Serper) falhou para o termo '%s'", term)
+        return []
+
+    candidates = []
+    for item in resp.json().get("images", []):
+        url = item.get("imageUrl")
+        if not url or (item.get("imageWidth") or 0) < SERPER_MIN_WIDTH:
+            continue
+        candidates.append(
+            {
+                "source": "google_images",
+                "media_type": "image",
+                "url": url,
+                "thumbnail_url": item.get("thumbnailUrl") or url,
+                "duration": None,
+                "attribution": {
+                    "author": item.get("source") or item.get("domain") or "",
+                    "license": "Direitos não verificados (Google Imagens)",
+                    "page": item.get("link") or "",
+                    "title": item.get("title") or "",
+                },
+            }
+        )
+    return candidates
+
+
+def get_serper_status() -> dict:
+    """Saldo de créditos do Serper.dev pra mostrar no painel.
+
+    `/account` é o endpoint de saldo real da conta — não confundir com o
+    header `x-ratelimit-remaining` que a busca devolve, que é limite por
+    minuto (25/min ali), não o saldo total. Devolve
+    {"configured": bool, "balance": int|None, "low": bool}; `balance` fica
+    None quando a chave não está configurada ou a checagem falhou.
+    """
+    from modules.settings import get_serper_api_key
+
+    api_key = get_serper_api_key()
+    if not api_key:
+        return {"configured": False, "balance": None, "low": False}
+
+    try:
+        resp = requests.get(
+            SERPER_ACCOUNT_URL, headers={"X-API-KEY": api_key}, timeout=10
+        )
+        resp.raise_for_status()
+        saldo = resp.json().get("balance")
+    except requests.RequestException:
+        logger.exception("Não consegui checar o saldo do Serper")
+        return {"configured": True, "balance": None, "low": False}
+
+    return {
+        "configured": True,
+        "balance": saldo,
+        "low": saldo is not None and saldo < SERPER_LOW_BALANCE_THRESHOLD,
+    }
+
+
+def _google_api_keys() -> list[str]:
+    """Chaves do Google ainda utilizáveis, na ordem de preferência.
+
+    GOOGLE_API_KEY_1/2/3 são de contas diferentes justamente pra somar cota;
+    GOOGLE_API_KEY (sem sufixo) é aceita como forma de configuração única.
+    """
+    chaves = [os.environ.get(f"GOOGLE_API_KEY_{i}") for i in (1, 2, 3)]
+    chaves.append(os.environ.get("GOOGLE_API_KEY"))
+    vistas: list[str] = []
+    for chave in chaves:
+        if chave and chave not in vistas and chave not in _GOOGLE_QUOTA_EXHAUSTED:
+            vistas.append(chave)
+    return vistas
+
+
+def _google_get(url: str, params: dict) -> dict | None:
+    """GET numa API do Google trocando de chave quando a cota do dia acaba.
+
+    Devolve None (em vez de levantar) quando nenhuma chave conseguiu responder
+    — pra busca de footage, ficar sem cota é o mesmo que "esta fonte não achou
+    nada": as outras fontes continuam e o shot cai no fallback se ninguém
+    achar.
+    """
+    chaves = _google_api_keys()
+    if not chaves:
+        logger.warning("Nenhuma chave do Google disponível (cota esgotada ou não configurada)")
+        return None
+
+    for chave in chaves:
+        try:
+            resp = requests.get(url, params={**params, "key": chave}, timeout=20)
+        except requests.RequestException:
+            logger.exception("Chamada ao Google falhou (%s)", url)
+            return None
+
+        if resp.status_code == 200:
+            return resp.json()
+
+        erro = (resp.json().get("error") or {}) if resp.headers.get(
+            "Content-Type", ""
+        ).startswith("application/json") else {}
+        motivos = {e.get("reason") for e in (erro.get("errors") or [])}
+        if motivos & _QUOTA_REASONS:
+            # cota diária: essa chave está queimada até virar o dia, não
+            # adianta tentar de novo neste processo
+            _GOOGLE_QUOTA_EXHAUSTED.add(chave)
+            logger.warning("Cota diária do Google esgotada numa chave; tentando a próxima")
+            continue
+        if resp.status_code in (429, 500, 503) or "rateLimitExceeded" in motivos:
+            # limite por segundo ou instabilidade: outra chave provavelmente
+            # passa, mas esta continua válida amanhã e no resto da execução
+            logger.warning("Google respondeu %s; tentando a próxima chave", resp.status_code)
+            continue
+
+        logger.error(
+            "Google respondeu %s: %s", resp.status_code, erro.get("message") or resp.text[:200]
+        )
+        return None
+
+    return None
+
+
+def _parse_iso8601_duration(value: str) -> int | None:
+    """PT1H2M3S -> segundos. Formato que o YouTube usa em contentDetails."""
+    m = re.fullmatch(r"P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", value or "")
+    if not m:
+        return None
+    horas, minutos, segundos = (int(g) if g else 0 for g in m.groups())
+    return horas * 3600 + minutos * 60 + segundos
+
+
+def _search_youtube(term: str, cfg: dict) -> list[dict]:
+    """Vídeos do YouTube via Data API v3.
+
+    Cobre o que acervo de stock não tem e foto não resolve: cena em movimento
+    de um fato, um lugar ou um objeto específico. Em troca, exige um download
+    por yt-dlp (nenhuma URL de arquivo direto vem da API) e traz uma questão de
+    direitos que nem Pexels nem Wikimedia trazem — por isso o filtro de
+    licença Creative Commons vem ligado por padrão em `youtube.creative_commons_only`.
+
+    A duração NÃO vem no search.list; é preciso um segundo GET no videos.list.
+    Esse segundo GET custa 1 unidade de cota contra as 100 do search, então
+    vale pelos dois filtros que ele habilita (curto demais / longo demais).
+    """
+    yt = cfg["footage"].get("youtube") or {}
+    params = {
+        "q": term,
+        "part": "snippet",
+        "type": "video",
+        "maxResults": max(cfg["footage"]["candidates_per_beat"], 3),
+        "videoEmbeddable": "true",
+        "safeSearch": "moderate",
+    }
+    if yt.get("creative_commons_only", True):
+        params["videoLicense"] = "creativeCommon"
+    if yt.get("prefer_hd", True):
+        params["videoDefinition"] = "high"
+
+    busca = _google_get(YOUTUBE_SEARCH_URL, params)
+    if not busca:
+        return []
+
+    ids = [
+        item["id"]["videoId"]
+        for item in busca.get("items", [])
+        if (item.get("id") or {}).get("videoId")
+    ]
+    if not ids:
+        return []
+
+    detalhes = _google_get(
+        YOUTUBE_VIDEOS_URL, {"id": ",".join(ids), "part": "contentDetails,snippet"}
+    )
+    if not detalhes:
+        return []
+
+    trecho = float(yt.get("clip_seconds", 20))
+    inicio = float(yt.get("start_offset_seconds", 10))
+    max_origem = float(yt.get("max_source_duration_seconds", 1800))
+    minimo = cfg["footage"]["min_duration_seconds"]
+
+    candidates = []
+    for item in detalhes.get("items", []):
+        total = _parse_iso8601_duration((item.get("contentDetails") or {}).get("duration", ""))
+        # sem duração é live/stream: o corte por tempo não tem como funcionar
+        if not total or total > max_origem:
+            continue
+        # Pula a abertura, que costuma ser vinheta/logo em vez de imagem útil —
+        # mas só quando sobra vídeo suficiente depois dela.
+        comeco = inicio if total > inicio + trecho else 0.0
+        disponivel = min(trecho, total - comeco)
+        if disponivel < minimo:
+            continue
+
+        snippet = item.get("snippet") or {}
+        thumbs = snippet.get("thumbnails") or {}
+        melhor_thumb = max(
+            thumbs.values(), key=lambda t: t.get("width") or 0, default={}
+        ).get("url")
+        if not melhor_thumb:
+            continue
+
+        vid = item["id"]
+        candidates.append(
+            {
+                "source": "youtube",
+                "media_type": "video",
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "thumbnail_url": melhor_thumb,
+                "youtube_video_id": vid,
+                # duração do trecho que vamos baixar, não a do vídeo original:
+                # o tiling de cenas usa isso pra nunca pedir um pedaço que não
+                # existe no arquivo em disco.
+                "duration": round(disponivel, 2),
+                "youtube_segment": [round(comeco, 2), round(comeco + disponivel, 2)],
+                "attribution": {
+                    "author": snippet.get("channelTitle") or "",
+                    "license": "Creative Commons (YouTube)"
+                    if yt.get("creative_commons_only", True)
+                    else "YouTube",
+                    "page": f"https://www.youtube.com/watch?v={vid}",
+                    "title": snippet.get("title") or "",
+                },
+            }
+        )
+    return candidates
+
+
 _SEARCH_FUNCS = {
     "pexels": [_search_pexels_videos, _search_pexels_photos],
     "pixabay": [_search_pixabay_videos, _search_pixabay_photos],
     "wikimedia": [_search_wikimedia],
     "nasa": [_search_nasa],
+    "youtube": [_search_youtube],
+    "google_images": [_search_google_images],
 }
 
 
-def _sources_for(strategy: str, cfg: dict) -> list[str]:
-    """Quais fontes consultar pra esta estratégia do diretor visual.
+# Prioridade GLOBAL escolhida pelo usuário: quando uma estratégia do diretor
+# visual roteia pra mais de uma fonte, é nesta ordem que elas são tentadas.
+# google_images vem primeiro mesmo custando crédito (Serper), YouTube exige
+# baixar o vídeo inteiro na primeira vez então também não é grátis em tempo —
+# a hierarquia prioriza achado específico sobre economia; quem fica de fora
+# nem chega a ser chamado quando uma fonte anterior já resolveu (ver
+# search_candidates).
+SOURCE_PRIORITY = ("google_images", "youtube", "wikimedia", "pexels", "pixabay", "nasa")
 
-    Sem isso, todas as fontes disputam as mesmas 8 vagas de candidato e cada
-    uma entra com uma sobra — o acervo documental fica com 1 vaga numa cena
-    que é justamente sobre um fato específico. Roteando, a cena NEWS vê
-    arquivo de verdade e a cena FOOTAGE vê vídeo de stock.
+
+def _sources_for(strategy: str, cfg: dict) -> list[str]:
+    """Quais fontes consultar pra esta estratégia do diretor visual, na ordem
+    da hierarquia global (SOURCE_PRIORITY).
+
+    O roteamento por estratégia continua existindo — vídeo de stock genérico
+    (FOOTAGE) não busca em fonte de foto, cena documental (NEWS) não busca em
+    Pexels — só a ORDEM dentro de cada grupo é que segue a prioridade.
     """
     todas = cfg["footage"]["sources"]
     roteadas = (cfg["footage"].get("strategy_sources") or {}).get(strategy)
     if not roteadas:
-        return todas
-    # respeita o que está desligado em sources
-    escolhidas = [s for s in roteadas if s in todas]
-    return escolhidas or todas
+        base = todas
+    else:
+        # respeita o que está desligado em sources
+        base = [s for s in roteadas if s in todas] or todas
+    return sorted(
+        base, key=lambda s: SOURCE_PRIORITY.index(s) if s in SOURCE_PRIORITY else len(SOURCE_PRIORITY)
+    )
 
 
 def search_candidates(search_terms: list[str], strategy: str = "FOOTAGE") -> list[dict]:
-    """Busca candidatos (sem baixar) pro primeiro termo que trouxer algum
-    resultado, combinando vídeo + foto de Pexels e Pixabay. Cada candidato tem
+    """Busca candidatos (sem baixar), um termo de cada vez, na ordem da
+    hierarquia de fontes (SOURCE_PRIORITY, filtrada pela estratégia).
+
+    Para (waterfall) na primeira fonte que trouxer QUALQUER resultado — não
+    consulta as fontes seguintes daquele termo. Decisão explícita do usuário:
+    economiza crédito do Serper (google_images é a primeira da hierarquia) em
+    troca de não comparar mais candidatos de fontes diferentes — a IA de
+    ranking (footage_ranker.py) ainda escolhe a melhor ENTRE os candidatos que
+    essa única fonte trouxe. Cada candidato tem
     {source, media_type, url, thumbnail_url, duration} — `duration` é None
-    para fotos. A revisão manual no painel decide qual usar; a IA de ranking
-    (footage_ranker.py) já compara os dois tipos pela miniatura."""
+    para foto."""
     cfg = load_config()
     fontes = _sources_for(strategy, cfg)
     for term in search_terms:
-        per_source: list[list[dict]] = []
         for source_name in fontes:
+            found: list[dict] = []
             for search_func in _SEARCH_FUNCS[source_name]:
                 try:
-                    found = search_func(term, cfg)
+                    resultado = search_func(term, cfg)
                 except requests.RequestException:
                     logger.exception(
                         "Busca de footage falhou em %s para o termo '%s'", source_name, term
                     )
                     continue
-                if found:
-                    per_source.append(found)
-
-        # Reveza entre as fontes em vez de concatenar e cortar. Concatenando, o
-        # Pexels sozinho já enchia as 8 vagas e nenhuma fonte listada depois
-        # dele chegava a ser avaliada — o Wikimedia entrou no config e não
-        # aparecia em candidato nenhum.
-        combined: list[dict] = []
-        for row in zip_longest(*per_source):
-            for candidate in row:
-                if candidate is not None:
-                    combined.append(candidate)
-        if combined:
-            return combined[:MAX_CANDIDATES_TO_RANK]
+                found.extend(resultado)
+            if found:
+                return found[:MAX_CANDIDATES_TO_RANK]
     return []
 
 
@@ -419,7 +700,14 @@ def _candidate_cache_key(candidate: dict) -> str:
     # hash da URL do próprio candidato, não do termo de busca — trocar de
     # candidato num beat não invalida o cache de nenhum dos dois, e o mesmo
     # clipe usado em beats diferentes é baixado uma vez só.
-    return hashlib.sha1(candidate["url"].encode("utf-8")).hexdigest()[:16]
+    chave = candidate["url"]
+    # No YouTube a URL identifica o vídeo inteiro, não o pedaço que baixamos:
+    # sem o trecho na chave, mudar o corte no config reaproveitaria em silêncio
+    # o arquivo antigo.
+    segmento = candidate.get("youtube_segment")
+    if segmento:
+        chave = f"{chave}#{segmento[0]}-{segmento[1]}"
+    return hashlib.sha1(chave.encode("utf-8")).hexdigest()[:16]
 
 
 def candidate_clip_path(candidate: dict) -> str | None:
@@ -433,6 +721,156 @@ def candidate_clip_path(candidate: dict) -> str | None:
 
 
 DOWNLOAD_ATTEMPTS = 3
+
+
+def _looks_like_real_media(head: bytes, media_type: str) -> bool:
+    """Detecta o caso visto na prática: a URL do candidato aponta pra um site
+    de terceiro sem ser uma CDN confiável (o caso claro é Google Imagens —
+    hotlink pra qualquer site indexado, ao contrário de Wikimedia/Pexels/
+    Pixabay/NASA, que são APIs com link direto pro arquivo), e esse site
+    devolve uma página de bloqueio/anti-hotlink em HTML com HTTP 200 no lugar
+    do arquivo. O download "funciona" (Content-Length bate), mas o cache fica
+    com uma imagem que nunca decodifica no Remotion — travava o render sem
+    nenhum aviso antes disso.
+    """
+    inicio = head[:16].lstrip().lower()
+    if inicio.startswith((b"<html", b"<!doc", b"<script", b"<body", b"<?xml")):
+        return False
+    if media_type != "image":
+        return True  # vídeo: sem sniff barato de formato, só descarta o HTML acima
+    return (
+        head.startswith(b"\xff\xd8\xff")  # jpeg
+        or head.startswith(b"\x89PNG\r\n\x1a\n")  # png
+        or head.startswith(b"GIF8")  # gif
+        or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")
+    )
+
+# Sem login, o YouTube limita o download anônimo a 360p (medido: os formatos
+# acima disso respondem 403 no arquivo, mesmo aparecendo na listagem). Com
+# cookies de uma sessão logada, libera tudo — é a mesma técnica do projeto
+# D:\Projetos\download-video-youtube (cookiesfrombrowser do yt-dlp). Tenta
+# nesta ordem e usa o primeiro navegador cujo banco de cookies não esteja
+# travado (Chrome/Edge recusam se o navegador estiver aberto).
+YOUTUBE_COOKIE_BROWSERS = ("chrome", "edge", "firefox", "brave", "opera", "vivaldi")
+YOUTUBE_SOURCE_CACHE_SUBDIR = "footage_youtube_src"
+
+# Descoberto uma vez por processo (evita retestar navegador travado a cada um
+# dos ~50 shots do vídeo). None = ainda não tentou; {} = nenhum funcionou.
+_youtube_cookie_option: dict | None = None
+
+
+def _resolve_youtube_cookies() -> dict:
+    global _youtube_cookie_option
+    if _youtube_cookie_option is not None:
+        return _youtube_cookie_option
+
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    class _LoggerSilencioso:
+        def debug(self, msg):
+            pass
+
+        def info(self, msg):
+            pass
+
+        def warning(self, msg):
+            pass
+
+        def error(self, msg):
+            pass
+
+    logger_mudo = _LoggerSilencioso()
+    for browser in YOUTUBE_COOKIE_BROWSERS:
+        try:
+            # Não exige cookie do domínio youtube.com: medido que mesmo um
+            # perfil sem sessão logada no YouTube já é suficiente pra sair do
+            # regime anônimo travado em 360p (o próprio ato de mandar QUALQUER
+            # jar de cookies do navegador muda o comportamento). O que importa
+            # aqui é só se o banco de cookies do navegador está acessível.
+            extract_cookies_from_browser(browser, None, logger_mudo)
+        except Exception:
+            continue
+        logger.info("YouTube: usando cookies do %s", browser)
+        _youtube_cookie_option = {"cookiesfrombrowser": (browser,)}
+        return _youtube_cookie_option
+
+    logger.warning(
+        "YouTube: nenhum navegador com cookies disponível (feche o Chrome/Edge "
+        "se estiverem abertos); baixando sem login, limitado a 360p"
+    )
+    _youtube_cookie_option = {}
+    return _youtube_cookie_option
+
+
+def _download_youtube(candidate: dict, dest: Path) -> None:
+    """Baixa o trecho escolhido do vídeo em `dest`.
+
+    Baixa o vídeo fonte inteiro (autenticado, então em qualidade real) uma
+    única vez por video-id em `cache/footage_youtube_src/`, e recorta o trecho
+    localmente com ffmpeg (-c copy, sem recodificar — é cópia de bytes, não
+    processamento, então é quase instantâneo). Tentei recortar direto na
+    origem via `download_ranges` do yt-dlp; travava indefinidamente nos
+    formatos acima de 360p porque eles vêm fragmentados (DASH) e o corte por
+    seção precisa passar pelo ffmpeg como downloader externo, que não segue
+    bem esse tipo de stream. Baixando completo e cortando depois, o problema
+    some — e ainda dá pra reaproveitar a mesma fonte se dois shots diferentes
+    pegarem o mesmo vídeo.
+
+    Erros viram requests.RequestException porque é isso que os chamadores
+    (search_and_download_footage) capturam pra cair no fallback; sem a
+    conversão, uma falha de download derrubaria o pipeline inteiro.
+    """
+    try:
+        import yt_dlp
+    except ImportError as e:  # pragma: no cover
+        raise requests.RequestException(f"yt-dlp não instalado: {e}") from e
+
+    cfg = load_config()
+    altura = (cfg["footage"].get("youtube") or {}).get("max_height", 1080)
+    video_id = candidate.get("youtube_video_id") or hashlib.sha1(
+        candidate["url"].encode("utf-8")
+    ).hexdigest()[:16]
+
+    fonte = cache_dir(YOUTUBE_SOURCE_CACHE_SUBDIR) / f"{video_id}.mp4"
+    if not fonte.exists():
+        parcial = fonte.with_suffix(".mp4.part")
+        opts = {
+            "format": f"bestvideo[height<={altura}][ext=mp4]/bestvideo[height<={altura}]/best[height<={altura}]",
+            "merge_output_format": "mp4",
+            "outtmpl": str(parcial),
+            "quiet": True,
+            "no_warnings": True,
+            "noprogress": True,
+            "overwrites": True,
+            **_resolve_youtube_cookies(),
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([candidate["url"]])
+        except Exception as e:  # yt_dlp levanta a própria hierarquia de erros
+            parcial.unlink(missing_ok=True)
+            raise requests.RequestException(f"yt-dlp falhou: {e}") from e
+        if not parcial.exists() or parcial.stat().st_size == 0:
+            raise requests.RequestException("yt-dlp terminou sem escrever o arquivo-fonte")
+        parcial.replace(fonte)
+
+    inicio, fim = candidate.get("youtube_segment") or [0, 20]
+    resultado = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-ss", str(inicio), "-to", str(fim),
+            "-i", str(fonte),
+            "-c", "copy", "-avoid_negative_ts", "make_zero",
+            # dest chega como "<hash>.mp4.part" — a dupla extensão engana a
+            # detecção automática de muxer do ffmpeg, que erra na segunda
+            "-f", "mp4",
+            str(dest),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if resultado.returncode != 0 or not dest.exists() or dest.stat().st_size == 0:
+        raise requests.RequestException(f"corte local com ffmpeg falhou: {resultado.stderr[-300:]}")
 
 
 def download_candidate(candidate: dict) -> str:
@@ -453,6 +891,17 @@ def download_candidate(candidate: dict) -> str:
     ext = "jpg" if candidate.get("media_type") == "image" else "mp4"
     dest = footage_cache / f"{cache_key}.{ext}"
     partial = footage_cache / f"{cache_key}.{ext}.part"
+
+    if candidate.get("source") == "youtube":
+        # mesma disciplina do caminho por requests: escreve no .part e só
+        # renomeia inteiro, pra um download interrompido não virar cache
+        try:
+            _download_youtube(candidate, partial)
+        except requests.RequestException:
+            partial.unlink(missing_ok=True)
+            raise
+        partial.replace(dest)
+        return str(dest)
 
     last_error: Exception | None = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
@@ -476,6 +925,19 @@ def download_candidate(candidate: dict) -> str:
             if expected and written < expected:
                 raise requests.RequestException(
                     f"download incompleto: {written} de {expected} bytes"
+                )
+            with open(partial, "rb") as f:
+                head = f.read(512)
+            if not _looks_like_real_media(head, candidate.get("media_type", "video")):
+                # Visto na prática com Google Imagens: a URL aponta pra um site
+                # de terceiro (não uma CDN confiável como Wikimedia/Pexels), e
+                # esse site devolve uma página de bloqueio/anti-hotlink em HTML
+                # com HTTP 200 no lugar do arquivo. O download "funciona" (bate
+                # o Content-Length), mas o cache fica com uma imagem que nunca
+                # decodifica — travava o render sem nenhum aviso até agora.
+                raise requests.RequestException(
+                    "conteúdo baixado não parece o formato esperado "
+                    "(provável bloqueio do site de origem, não da nossa API)"
                 )
             partial.replace(dest)
             return str(dest)
@@ -538,7 +1000,9 @@ def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:
     }
 
 
-def _result_from_candidate(candidate: dict, clip_path: str, search_terms: list[str]) -> dict:
+def _result_from_candidate(
+    candidate: dict, clip_path: str, search_terms: list[str], context: str = ""
+) -> dict:
     result = {
         "clip_path": clip_path,
         "source": candidate["source"],
@@ -552,6 +1016,19 @@ def _result_from_candidate(candidate: dict, clip_path: str, search_terms: list[s
     # a atribuição até o composition.json pra dar pra montar os créditos.
     if candidate.get("attribution"):
         result["attribution"] = candidate["attribution"]
+
+    # Fase 3: em vídeo bem mais longo que uma cena, pergunta pra IA quais
+    # trechos mostram algo útil (frame_analyzer só analisa de fato acima de
+    # MIN_DURATION_FOR_ANALYSIS — abaixo disso devolve [] sem custo nenhum).
+    # composition_builder usa isso pra escolher onde cada reuso do clipe
+    # começa, em vez do rodízio matemático cego de antes.
+    if result["media_type"] == "video" and clip_path:
+        from modules.frame_analyzer import find_good_segments
+
+        good_ranges = find_good_segments(clip_path, result["duration"], context)
+        if good_ranges:
+            result["good_ranges"] = good_ranges
+
     return result
 
 
@@ -576,18 +1053,37 @@ def search_and_download_footage(
     — usada pelo composition_builder pra nunca criar uma cena mais longa que
     o clipe, o que congelava o último frame por minutos. Se a busca não achar
     nada, usa um clipe genérico de assets/fallback/ em vez de quebrar o
-    pipeline; se nem isso existir, "clip_path" vem None.
+    pipeline; se nem isso existir, "clip_path" vem None. Em vídeo bem mais
+    longo que uma cena, vem também "good_ranges" (Fase 3, ver
+    modules/frame_analyzer): trechos recomendados por IA, usados pelo
+    composition_builder ao decidir onde cada reuso do clipe começa.
     """
     from modules.footage_ranker import rank_candidates
 
     cfg = load_config()
+
+    # contexto curto e focado no shot em vez do beat inteiro: um beat pode ter
+    # centenas de palavras cobrindo vários assuntos, e mandar tudo faria a IA
+    # julgar a miniatura (ranking) ou os frames (Fase 3) contra o assunto
+    # errado, além de custar tokens à toa. Usado tanto no ranking de
+    # candidatos quanto na análise de trecho do candidato escolhido.
+    partes = [f'Trecho: "{beat_text[:300]}"']
+    if entities:
+        # entidades explícitas no contexto: é o que faz a IA cobrar o assunto
+        # exato em vez de aceitar um parecido
+        partes.append(f"Entidades citadas (o visual precisa bater com elas): {', '.join(entities)}")
+    partes.append(f"Tipo de visual pedido: {strategy}")
+    partes.append(f"Esta cena deve mostrar: {', '.join(search_terms)}")
+    context = " | ".join(partes)
 
     if slug:
         cached_review = load_candidates_for_review(slug, beat_id, slot)
         if cached_review is not None and cached_review["candidates"]:
             chosen = cached_review["candidates"][cached_review["chosen_index"]]
             try:
-                return _result_from_candidate(chosen, download_candidate(chosen), search_terms)
+                return _result_from_candidate(
+                    chosen, download_candidate(chosen), search_terms, context
+                )
             except requests.RequestException:
                 logger.exception(
                     "Falha ao reaproveitar candidato salvo (beat %d, shot %d), buscando de novo",
@@ -606,18 +1102,7 @@ def search_and_download_footage(
         )
         return _fallback_result(cfg, search_terms)
 
-    # contexto curto e focado no shot em vez do beat inteiro: um beat pode ter
-    # centenas de palavras cobrindo vários assuntos, e mandar tudo faria a IA
-    # de ranking julgar a miniatura contra o assunto errado (além de custar
-    # tokens à toa).
-    partes = [f'Trecho: "{beat_text[:300]}"']
-    if entities:
-        # entidades explícitas no contexto: é o que faz a IA cobrar o assunto
-        # exato em vez de aceitar um parecido
-        partes.append(f"Entidades citadas (o visual precisa bater com elas): {', '.join(entities)}")
-    partes.append(f"Tipo de visual pedido: {strategy}")
-    partes.append(f"Esta cena deve mostrar: {', '.join(search_terms)}")
-    ranked = rank_candidates(" | ".join(partes), candidates)
+    ranked = rank_candidates(context, candidates)
     chosen = ranked[0]
 
     try:
@@ -631,7 +1116,7 @@ def search_and_download_footage(
     if slug:
         save_candidates_for_review(slug, beat_id, ranked, chosen_index=0, slot=slot)
 
-    return _result_from_candidate(chosen, clip_path, search_terms)
+    return _result_from_candidate(chosen, clip_path, search_terms, context)
 
 
 if __name__ == "__main__":
