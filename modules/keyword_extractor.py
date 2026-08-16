@@ -319,6 +319,51 @@ def _parse_motion_graphic(raw: object) -> dict | None:
     return None  # pragma: no cover — kind já filtrado por MOTION_GRAPHIC_KINDS
 
 
+_CHART_TIPOS = ("crescimento", "queda", "comparacao", "destaque")
+
+
+def _parse_chart(raw: object) -> dict | None:
+    """Valida o payload de chart pro type='estatistico'.
+
+    None (dado incompleto/tipo inválido) sinaliza pra quem chama rebaixar o
+    beat pra 'concreto' — mesma filosofia do resto do arquivo, e a mesma raiz
+    do bug real que motivou isso: o modelo às vezes classifica um trecho como
+    'estatistico' mas a comparação é qualitativa ("alegação pública vs
+    registro na SEC"), sem número nenhum pra por no gráfico — devolvia
+    valor_final: null, que o schema exige como number e derrubava a
+    montagem do vídeo inteiro (beat 0 pra frente nem chegava a ser
+    processado). Rebaixar pra card de texto é sempre melhor que travar.
+    """
+    if not isinstance(raw, dict):
+        return None
+    tipo = raw.get("tipo")
+    if tipo not in _CHART_TIPOS:
+        return None
+
+    valor_final = raw.get("valor_final")
+    if not isinstance(valor_final, (int, float)) or isinstance(valor_final, bool):
+        return None
+
+    valor_inicial = raw.get("valor_inicial")
+    if isinstance(valor_inicial, bool) or not isinstance(valor_inicial, (int, float, type(None))):
+        return None
+    # só 'destaque' é valor isolado; os outros tipos prometem antes/depois —
+    # sem valor_inicial eles ficam tão sem sentido quanto valor_final null
+    if tipo != "destaque" and valor_inicial is None:
+        return None
+
+    label, unidade = _clean_str(raw.get("label")), _clean_str(raw.get("unidade"))
+    trigger = raw.get("trigger")
+    return {
+        "tipo": tipo,
+        "label": label,
+        "valor_inicial": valor_inicial,
+        "valor_final": valor_final,
+        "unidade": unidade,
+        "trigger": trigger if isinstance(trigger, str) else "",
+    }
+
+
 def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dict:
     text = raw_response.strip()
     # o modelo às vezes envolve o JSON em ```json ... ``` apesar da instrução
@@ -374,8 +419,13 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
         else []
     )
 
-    if analysis["type"] == "estatistico" and not isinstance(analysis.get("chart"), dict):
-        raise ValueError("type='estatistico' mas chart não veio como objeto")
+    beat_type = analysis["type"]
+    chart = _parse_chart(analysis.get("chart")) if beat_type == "estatistico" else None
+    if beat_type == "estatistico" and chart is None:
+        # gráfico incompleto/sem número real pra mostrar (ex: comparação
+        # qualitativa que o modelo tentou forçar num formato numérico) — vira
+        # card de texto como qualquer TEXT, em vez de derrubar o beat inteiro
+        beat_type = "concreto"
 
     # o modelo às vezes devolve mais/menos shots que o pedido; corta o excesso
     # e completa repetindo os últimos, em vez de descartar uma resposta boa.
@@ -383,10 +433,10 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
         parsed_shots.append(dict(parsed_shots[len(parsed_shots) % len(shots)]))
 
     return {
-        "type": analysis["type"],
+        "type": beat_type,
         "entities": entities,
         "shots": parsed_shots[:n_shots],
-        "chart": analysis.get("chart") if analysis["type"] == "estatistico" else None,
+        "chart": chart,
         "highlights": _parse_highlights(analysis.get("highlights"), beat_text),
         "n_shots": n_shots,
     }
