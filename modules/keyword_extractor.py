@@ -26,9 +26,13 @@ logger = logging.getLogger(__name__)
 
 # Com 400 (o valor da versão de um shot só) a resposta vinha truncada no meio
 # do JSON em beats longos — o modelo tentava descrever cada assunto do trecho
-# e estourava o limite, caindo no fallback genérico. 1500 cobre com folga o
-# teto de shots por beat.
-MAX_TOKENS = 1500
+# e estourava o limite, caindo no fallback genérico. 1500 parecia cobrir o
+# teto de shots por beat, mas um beat realmente denso (14 shots + 12
+# highlights + bastante entidade pra listar) confirmou precisar de mais:
+# a resposta real usou 1894 tokens de saída pra esse caso. 4000 dá folga de
+# verdade sem custar nada a mais nos casos normais (é só um teto, não é
+# cobrado pelo tamanho não usado).
+MAX_TOKENS = 4000
 
 # Último recurso, quando nem a chamada normal nem o retry devolveram algo
 # parseável — genérico o bastante pra retornar *algum* footage em vez de
