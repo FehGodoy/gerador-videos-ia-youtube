@@ -263,6 +263,7 @@ def _tile_scenes(
                     "visual_strategy": "MOTION_GRAPHIC",
                     "footage": None,
                     "motion_graphic": footage["motion_graphic"],
+                    "shot_slot": footage.get("slot"),
                 }
             )
             cursor += duration
@@ -300,6 +301,7 @@ def _tile_scenes(
             "clip_start_seconds": clip_start,
             "visual_strategy": footage.get("strategy", "FOOTAGE"),
             "footage": _scene_footage(footage),
+            "shot_slot": footage.get("slot"),
         }
         if not clip_path:
             # sem mídia usável: card com a frase-chave, em vez de tela preta
@@ -523,6 +525,7 @@ def _assemble_composition(
             shots.append(
                 {
                     **found,
+                    "slot": slot,
                     "strategy": shot["strategy"],
                     "concept_text": shot["concept_text"],
                     "motion_graphic": shot.get("motion_graphic"),

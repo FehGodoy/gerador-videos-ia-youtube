@@ -623,6 +623,94 @@ function buildCandidateThumb(candidate, index, isChosen) {
   return thumb;
 }
 
+async function uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone) {
+  clearError();
+  flashNote(noteEl, "Enviando arquivo...");
+  const body = new FormData();
+  body.append("file", file);
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/footage-candidates/${beatId}/${slot}/upload`, {
+      method: "POST",
+      body,
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || `Erro ao enviar arquivo (${resp.status})`);
+    }
+    onDone();
+  } catch (err) {
+    showError(err.message);
+    flashNote(noteEl, "Falhou — veja o erro acima.");
+  }
+}
+
+// Tile extra no fim da grade de candidatos, no mesmo tamanho dos outros —
+// clicar abre o seletor de arquivo do sistema. <input> fica fora do <button>
+// (só escondido) porque botão não pode conter elemento interativo aninhado.
+function buildUploadTile(jobId, beatId, slot, noteEl, onDone) {
+  const wrap = document.createElement("span");
+  wrap.className = "upload-wrap";
+
+  const tile = document.createElement("button");
+  tile.className = "candidate-thumb candidate-upload-tile";
+  tile.type = "button";
+  tile.title = "Enviar um vídeo ou foto próprio pra esta cena";
+
+  const icon = document.createElement("span");
+  icon.className = "candidate-upload-icon";
+  icon.textContent = "+";
+  const label = document.createElement("span");
+  label.className = "candidate-upload-label";
+  label.textContent = "Enviar mídia";
+  tile.append(icon, label);
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "video/*,image/*";
+  input.className = "hidden";
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    if (!file) return;
+    tile.classList.add("loading");
+    uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone).finally(() => {
+      tile.classList.remove("loading");
+      input.value = "";
+    });
+  });
+  tile.addEventListener("click", () => input.click());
+  wrap.append(tile, input);
+  return wrap;
+}
+
+// Mesma ideia, só que como botão de texto solto — usado nos cards de texto,
+// que não têm uma grade de candidatos pra encaixar um tile.
+function buildUploadButton(jobId, beatId, slot, noteEl, onDone) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost review-concept-upload";
+  btn.textContent = "Enviar mídia própria";
+
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "video/*,image/*";
+  input.className = "hidden";
+  input.addEventListener("change", () => {
+    const file = input.files[0];
+    if (!file) return;
+    btn.disabled = true;
+    uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone).finally(() => {
+      btn.disabled = false;
+      input.value = "";
+    });
+  });
+  btn.addEventListener("click", () => input.click());
+
+  const wrap = document.createElement("span");
+  wrap.className = "upload-wrap";
+  wrap.append(btn, input);
+  return wrap;
+}
+
 function renderReviewBeats(jobId, beatsData) {
   reviewBeats.innerHTML = "";
   for (const beat of beatsData) {
@@ -643,11 +731,26 @@ function renderReviewBeats(jobId, beatsData) {
     }
 
     // cenas onde nada atingiu o mínimo de relevância viraram card de texto —
-    // mostrar deixa explícito que a ferramenta preferiu não forçar footage
+    // mostrar deixa explícito que a ferramenta preferiu não forçar footage.
+    // Cada card ainda tem o slot do shot que o gerou (mesmo quando a busca
+    // não achou candidato nenhum), então dá pra enviar mídia própria pra ele.
     (beat.concept_cards || []).forEach((card) => {
       const el = document.createElement("div");
       el.className = "review-concept";
-      el.textContent = `Card de texto (${card.seconds}s): "${card.text}"`;
+
+      const text = document.createElement("span");
+      text.textContent = `Card de texto (${card.seconds}s): "${card.text}"`;
+      el.appendChild(text);
+
+      if (card.slot !== null && card.slot !== undefined) {
+        const note = document.createElement("span");
+        note.className = "review-shot-note";
+        const uploadBtn = buildUploadButton(jobId, beat.beat_id, card.slot, note, () =>
+          loadFootageReview(jobId)
+        );
+        el.append(uploadBtn, note);
+      }
+
       wrap.appendChild(el);
     });
 
@@ -731,6 +834,9 @@ function renderReviewBeats(jobId, beatsData) {
         }
         grid.appendChild(thumb);
       });
+      grid.appendChild(
+        buildUploadTile(jobId, beat.beat_id, shot.slot, note, () => loadFootageReview(jobId))
+      );
 
       shotWrap.append(grid, preview);
       wrap.appendChild(shotWrap);

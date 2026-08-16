@@ -11,7 +11,16 @@ export interface Caption {
 
 export interface Footage {
   clip_path: string;
-  source: "pexels" | "pixabay" | "wikimedia" | "nasa" | "youtube" | "google_images" | "fallback" | "cache";
+  source:
+    | "pexels"
+    | "pixabay"
+    | "wikimedia"
+    | "nasa"
+    | "youtube"
+    | "google_images"
+    | "manual"
+    | "fallback"
+    | "cache";
   media_type: "video" | "image";
   search_terms: string[];
   // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
@@ -73,6 +82,9 @@ export interface Scene {
   visual_strategy?: "FOOTAGE" | "NEWS" | "IMAGE" | "MOTION_GRAPHIC" | "TEXT";
   // offset dentro do clipe (trimBefore), pra reuso do mesmo clipe não parecer loop
   clip_start_seconds: number;
+  // índice do shot que gerou esta cena — usado só pelo painel (revisão/troca
+  // manual de mídia), não é lido por nenhum componente de render
+  shot_slot?: number | null;
   footage: Footage | null;
   concept_text?: string;
   motion_graphic?: MotionGraphicData | null;

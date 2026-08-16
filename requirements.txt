@@ -8,6 +8,7 @@ anthropic>=0.40
 jsonschema>=4.23
 fastapi>=0.115
 uvicorn[standard]>=0.32
+python-multipart>=0.0.12 # upload de arquivo (UploadFile) no painel web — sem isso o FastAPI recusa multipart/form-data
 
 # Fallback de transcrição, usado apenas se a Cartesia não retornar timestamps
 # para algum beat (ver modules/captions.py). Não é chamado no fluxo padrão.

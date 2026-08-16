@@ -952,8 +952,8 @@ progress::-webkit-progress-value {
 
 .review-candidates {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: var(--space-3);
 }
 
 .candidate-thumb {
@@ -1010,6 +1010,40 @@ progress::-webkit-progress-value {
 .candidate-thumb.loading {
   opacity: 0.5;
   cursor: wait;
+}
+
+/* o <span> que embrulha tile/botão de upload + <input type=file> escondido
+   não deve virar uma caixa própria no grid/inline-flow — só o conteúdo real */
+.upload-wrap {
+  display: contents;
+}
+
+.candidate-upload-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 2px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.candidate-upload-tile:hover:not(:disabled) {
+  border-color: var(--orange);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--orange) 6%, transparent);
+}
+
+.candidate-upload-icon {
+  font-size: 22px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.candidate-upload-label {
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
 .review-shot {
@@ -1105,6 +1139,22 @@ progress::-webkit-progress-value {
   border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 13px;
   color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.review-concept > span:first-child {
+  flex: 1;
+  min-width: 200px;
+}
+
+button.review-concept-upload {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
 .candidate-score-badge {

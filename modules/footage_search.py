@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+import uuid
 from pathlib import Path
 
 import requests
@@ -1028,6 +1029,81 @@ def save_candidates_for_review(
         ),
         encoding="utf-8",
     )
+
+
+_MANUAL_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+
+def _probe_video_duration(path: Path) -> float | None:
+    """Duração em segundos de um arquivo de vídeo local, via ffprobe. None se
+    não der pra medir (ffprobe ausente, arquivo corrompido) — o tiling de
+    cenas já trata duração desconhecida como corte curto por segurança."""
+    try:
+        resultado = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return round(float(resultado.stdout.strip()), 2)
+    except Exception:
+        return None
+
+
+def _generate_video_thumbnail(video_path: Path, thumb_path: Path) -> bool:
+    """Miniatura pra mostrar na revisão — sem isso o card do upload manual
+    fica sem imagem nenhuma pra reconhecer."""
+    try:
+        resultado = subprocess.run(
+            ["ffmpeg", "-y", "-ss", "0.5", "-i", str(video_path), "-vframes", "1", str(thumb_path)],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        return resultado.returncode == 0 and thumb_path.exists()
+    except Exception:
+        return False
+
+
+def save_manual_upload(data: bytes, filename: str) -> dict:
+    """Salva um arquivo enviado manualmente na revisão do painel como um
+    candidato pronto pra uso — ao contrário dos candidatos de busca, este já
+    está "baixado" (é o próprio arquivo enviado), sem precisar passar por
+    download_candidate. Devolve um dict no mesmo formato de um candidato de
+    busca ({source, media_type, url, thumbnail_url, duration, clip_path}),
+    pronto pra entrar na lista salva por save_candidates_for_review.
+
+    Existe pra cobrir os casos em que nenhuma fonte automática achou algo bom
+    o bastante (shot virou card de texto) e o usuário prefere subir a própria
+    mídia em vez de aceitar o card."""
+    ext = Path(filename).suffix.lower() or ".mp4"
+    media_type = "image" if ext in _MANUAL_IMAGE_EXTENSIONS else "video"
+
+    dest_name = f"manual_{uuid.uuid4().hex[:16]}{ext}"
+    dest = cache_dir("footage") / dest_name
+    dest.write_bytes(data)
+
+    duration = None
+    thumb_name = dest_name
+    if media_type == "video":
+        duration = _probe_video_duration(dest)
+        candidate_thumb = cache_dir("footage") / f"{dest.stem}_thumb.jpg"
+        if _generate_video_thumbnail(dest, candidate_thumb):
+            thumb_name = candidate_thumb.name
+
+    return {
+        "source": "manual",
+        "media_type": media_type,
+        "url": f"/footage_cache/{dest_name}",
+        "thumbnail_url": f"/footage_cache/{thumb_name}",
+        "duration": duration,
+        "clip_path": str(dest),
+    }
 
 
 def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:

@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -37,6 +37,7 @@ cfg = load_config()
 VOICE_PREVIEWS_DIR = PROJECT_ROOT / cfg["paths"]["cache_dir"] / "voice_previews"
 VOICE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 NARRATION_CACHE_DIR = cache_dir("narration")
+FOOTAGE_CACHE_DIR = cache_dir("footage")
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -53,6 +54,10 @@ class NoCacheStaticFiles(StaticFiles):
 app.mount("/static", NoCacheStaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/voice_previews", StaticFiles(directory=str(VOICE_PREVIEWS_DIR)), name="voice_previews")
 app.mount("/narration_cache", StaticFiles(directory=str(NARRATION_CACHE_DIR)), name="narration_cache")
+# Serve os clipes já baixados (preview de candidato já escolhido) e os
+# arquivos de upload manual — os dois só existem localmente, sem URL externa
+# pra usar como thumbnail_url/url do jeito que os outros candidatos têm.
+app.mount("/footage_cache", StaticFiles(directory=str(FOOTAGE_CACHE_DIR)), name="footage_cache")
 
 
 class BlockIn(BaseModel):
@@ -236,25 +241,65 @@ async def job_video(job_id: str) -> FileResponse:
     return FileResponse(job.video_path, media_type="video/mp4")
 
 
-def _relative_clip_path(candidate: dict) -> str | None:
-    """Caminho do candidato como aparece no composition.json (relativo à raiz),
-    ou None se ele ainda não foi baixado."""
-    absolute = footage_search.candidate_clip_path(candidate)
-    if absolute is None:
-        return None
-    return Path(absolute).resolve().relative_to(PROJECT_ROOT).as_posix()
-
-
-def _scene_summary(scenes: list[dict], clip_path: str) -> dict:
-    """Quantas cenas do beat usam esse clipe e quanto tempo de tela ele ocupa
-    — é o que deixa claro na revisão o peso real de cada escolha."""
-    matching = [s for s in scenes if (s.get("footage") or {}).get("clip_path") == clip_path]
+def _scene_summary(scenes: list[dict], slot: int) -> dict:
+    """Quantas cenas do beat vieram deste shot e quanto tempo de tela ele
+    ocupa — é o que deixa claro na revisão o peso real de cada escolha.
+    Casa por shot_slot (não por clip_path): funciona igual pra shot que virou
+    footage e pra shot que virou card de texto, e não se confunde quando dois
+    shots diferentes acabam usando o mesmo clipe (ex: fallback genérico
+    compartilhado)."""
+    matching = [s for s in scenes if s.get("shot_slot") == slot]
     return {
         "scene_count": len(matching),
         "screen_seconds": round(
             sum(s["end_seconds"] - s["start_seconds"] for s in matching), 1
         ),
     }
+
+
+def _apply_chosen_candidate(
+    job: Job, beat_id: int, slot: int, candidates: list[dict], chosen_index: int, clip_path: str
+) -> int:
+    """Grava a escolha (troca manual ou upload) pra revisão e atualiza toda
+    cena do composition.json que veio deste shot — é o composition.json em
+    disco que o render (local ou GitHub) de fato lê depois da confirmação.
+
+    Casa cena por (beat_id, shot_slot) em vez de por clip_path: um shot que
+    virou card de texto não tem clip_path nenhum pra casar, então o
+    casamento antigo (por clip_path) nunca alcançava esses casos — exatamente
+    os que mais precisam da edição manual.
+    """
+    chosen = candidates[chosen_index]
+    footage_search.save_candidates_for_review(job.slug, beat_id, candidates, chosen_index, slot=slot)
+
+    composition_path = output_dir(job.slug) / "composition.json"
+    composition = json.loads(composition_path.read_text(encoding="utf-8"))
+    relative_path = Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix()
+    updated_scenes = 0
+    for beat_entry in composition["beats"]:
+        if beat_entry["id"] != beat_id:
+            continue
+        for scene in beat_entry.get("scenes", []):
+            if scene.get("shot_slot") != slot:
+                continue
+            scene["kind"] = "footage"
+            scene["footage"] = {
+                "clip_path": relative_path,
+                "source": chosen["source"],
+                "media_type": chosen.get("media_type", "video"),
+                "search_terms": (scene.get("footage") or {}).get("search_terms", []),
+            }
+            # o offset era calculado pra duração do clipe antigo (ou nem
+            # existia, se a cena era um card); zera pra não começar depois do
+            # fim de um clipe mais curto (tela preta)
+            scene["clip_start_seconds"] = 0.0
+            scene.pop("concept_text", None)
+            updated_scenes += 1
+        break
+    validate_composition(composition)
+    composition_path.write_text(json.dumps(composition, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return updated_scenes
 
 
 @app.get("/api/jobs/{job_id}/footage-candidates")
@@ -281,30 +326,29 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
             review = footage_search.load_candidates_for_review(job.slug, beat["id"], slot)
             if review is None:
                 continue
-            chosen = review["candidates"][review["chosen_index"]] if review["candidates"] else None
-            chosen_path = _relative_clip_path(chosen) if chosen else None
-            cena = next(
-                (
-                    s
-                    for s in beat_scenes
-                    if (s.get("footage") or {}).get("clip_path") == chosen_path
-                ),
-                None,
-            )
+            cena = next((s for s in beat_scenes if s.get("shot_slot") == slot), None)
             shots.append(
                 {
                     "slot": slot,
                     "candidates": review["candidates"],
                     "chosen_index": review["chosen_index"],
-                    "usage": _scene_summary(beat_scenes, chosen_path) if chosen_path else None,
+                    "usage": _scene_summary(beat_scenes, slot),
                     "visual_strategy": (cena or {}).get("visual_strategy"),
                 }
             )
 
         # cenas que viraram card conceitual não têm candidato pra revisar, mas
-        # precisam aparecer: é o "não achamos nada bom" ficando visível
+        # precisam aparecer: é o "não achamos nada bom" ficando visível. slot
+        # deixa o painel oferecer "enviar mídia manualmente" mesmo aqui —
+        # inclusive pra shot que nunca achou candidato nenhum pra buscar (só
+        # esses têm shot_slot; um card sem slot é o card genérico de beat
+        # totalmente sem shots, caso raríssimo, sem o que editar).
         cards = [
-            {"text": s.get("concept_text", ""), "seconds": round(s["end_seconds"] - s["start_seconds"], 1)}
+            {
+                "text": s.get("concept_text", ""),
+                "seconds": round(s["end_seconds"] - s["start_seconds"], 1),
+                "slot": s.get("shot_slot"),
+            }
             for s in beat_scenes
             if s["kind"] == "concept"
         ]
@@ -332,50 +376,65 @@ async def choose_footage_candidate(
     if review is None or not (0 <= req.candidate_index < len(review["candidates"])):
         raise HTTPException(status_code=400, detail="Candidato inválido.")
 
-    previous_path = _relative_clip_path(review["candidates"][review["chosen_index"]])
     chosen = review["candidates"][req.candidate_index]
     try:
         clip_path = await asyncio.to_thread(footage_search.download_candidate, chosen)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha ao baixar o candidato escolhido: {e}")
 
-    footage_search.save_candidates_for_review(
-        job.slug, beat_id, review["candidates"], req.candidate_index, slot=slot
+    updated_scenes = _apply_chosen_candidate(
+        job, beat_id, slot, review["candidates"], req.candidate_index, str(clip_path)
     )
-
-    # Troca o clipe em todas as cenas do beat que usavam o candidato anterior
-    # deste shot — é o composition.json em disco que o render (local ou
-    # GitHub) de fato lê depois da confirmação.
-    composition_path = output_dir(job.slug) / "composition.json"
-    composition = json.loads(composition_path.read_text(encoding="utf-8"))
-    relative_path = Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix()
-    updated_scenes = 0
-    for beat_entry in composition["beats"]:
-        if beat_entry["id"] != beat_id:
-            continue
-        for scene in beat_entry.get("scenes", []):
-            footage = scene.get("footage") or {}
-            if footage.get("clip_path") != previous_path:
-                continue
-            scene["footage"] = {
-                "clip_path": relative_path,
-                "source": chosen["source"],
-                "media_type": chosen.get("media_type", "video"),
-                "search_terms": footage.get("search_terms", []),
-            }
-            # o offset era calculado pra duração do clipe antigo; zera pra não
-            # começar depois do fim de um clipe mais curto (tela preta)
-            scene["clip_start_seconds"] = 0.0
-            updated_scenes += 1
-        break
-    validate_composition(composition)
-    composition_path.write_text(json.dumps(composition, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {
         "beat_id": beat_id,
         "slot": slot,
         "chosen_index": req.candidate_index,
         "source": chosen["source"],
+        "updated_scenes": updated_scenes,
+    }
+
+
+_MANUAL_UPLOAD_MAX_BYTES = 200 * 1024 * 1024  # 200MB — sobra pra um clipe curto, barra engano/upload errado
+
+
+@app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}/upload")
+async def upload_footage_candidate(job_id: str, beat_id: int, slot: int, file: UploadFile) -> dict:
+    """Envia um arquivo próprio pra usar num shot específico, em vez de
+    aceitar os candidatos achados automaticamente (ou o card de texto, se a
+    busca não achou nada bom). Funciona mesmo quando este slot nunca teve
+    review salva — o card de texto de um shot que buscou e não achou nada, ou
+    de um shot TEXT que nunca buscou, não tem arquivo de candidatos ainda."""
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Arquivo vazio.")
+    if len(data) > _MANUAL_UPLOAD_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 200MB.")
+
+    try:
+        manual_candidate = await asyncio.to_thread(
+            footage_search.save_manual_upload, data, file.filename or "upload.mp4"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Falha ao salvar o arquivo: {e}")
+
+    review = footage_search.load_candidates_for_review(job.slug, beat_id, slot)
+    candidates = [*(review["candidates"] if review else []), manual_candidate]
+    chosen_index = len(candidates) - 1
+
+    updated_scenes = _apply_chosen_candidate(
+        job, beat_id, slot, candidates, chosen_index, manual_candidate["clip_path"]
+    )
+
+    return {
+        "beat_id": beat_id,
+        "slot": slot,
+        "chosen_index": chosen_index,
+        "candidate": manual_candidate,
         "updated_scenes": updated_scenes,
     }
 

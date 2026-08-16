@@ -89,6 +89,10 @@
           "type": "number",
           "description": "Offset dentro do clipe (trimBefore no Remotion). Quando o mesmo clipe reaparece no beat, cada reuso começa de um ponto diferente pra não parecer loop."
         },
+        "shot_slot": {
+          "type": ["integer", "null"],
+          "description": "Índice do shot (dentro do beat) que gerou esta cena — o mesmo 'slot' usado pelo cache de candidatos de revisão (beat_XXX_shot_YY.json). Usado pelo painel pra saber qual cena atualizar quando o usuário troca ou envia mídia manualmente pra um shot; nulo em cenas de gráfico (chart), que não pertencem a um shot específico."
+        },
         "footage": {
           "type": ["object", "null"],
           "description": "Nulo se a busca falhou e não há nem fallback (cena fica preta).",
@@ -97,7 +101,7 @@
             "clip_path": { "type": "string" },
             "source": {
               "type": "string",
-              "enum": ["pexels", "pixabay", "wikimedia", "nasa", "youtube", "google_images", "fallback", "cache"]
+              "enum": ["pexels", "pixabay", "wikimedia", "nasa", "youtube", "google_images", "manual", "fallback", "cache"]
             },
             "media_type": {
               "type": "string",
