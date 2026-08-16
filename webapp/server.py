@@ -277,11 +277,10 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
     for beat in job.beats:
         beat_scenes = scenes_by_beat.get(beat["id"], [])
         shots = []
-        slot = 0
-        while True:
+        for slot in footage_search.list_review_slots(job.slug, beat["id"]):
             review = footage_search.load_candidates_for_review(job.slug, beat["id"], slot)
             if review is None:
-                break
+                continue
             chosen = review["candidates"][review["chosen_index"]] if review["candidates"] else None
             chosen_path = _relative_clip_path(chosen) if chosen else None
             cena = next(
@@ -301,7 +300,6 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
                     "visual_strategy": (cena or {}).get("visual_strategy"),
                 }
             )
-            slot += 1
 
         # cenas que viraram card conceitual não têm candidato pra revisar, mas
         # precisam aparecer: é o "não achamos nada bom" ficando visível

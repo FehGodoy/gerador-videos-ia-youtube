@@ -982,6 +982,28 @@ def _review_path(slug: str, beat_id: int, slot: int) -> Path:
     return cache_dir("footage_candidates", slug) / f"beat_{beat_id:03d}_shot_{slot:02d}.json"
 
 
+def list_review_slots(slug: str, beat_id: int) -> list[int]:
+    """Todos os slots (índices de shot) deste beat que têm candidatos
+    salvos pra revisão, em ordem crescente.
+
+    NÃO é uma sequência sem buracos: shots de estratégia TEXT/MOTION_GRAPHIC
+    nunca buscam (nunca gravam arquivo) e um shot que não achou candidato
+    NENHUM em nenhuma fonte cai direto no fallback sem gravar nada também —
+    então um beat pode ter cache nos slots 1 e 3 sem ter no 0 e no 2. Quem
+    assume "para no primeiro slot faltando" (como esta função substituiu)
+    esconde da revisão qualquer shot depois do buraco, mesmo achado de
+    verdade."""
+    directory = cache_dir("footage_candidates", slug)
+    prefix = f"beat_{beat_id:03d}_shot_"
+    slots = []
+    for path in directory.glob(f"{prefix}*.json"):
+        try:
+            slots.append(int(path.stem[len(prefix):]))
+        except ValueError:
+            continue
+    return sorted(slots)
+
+
 def load_candidates_for_review(slug: str, beat_id: int, slot: int = 0) -> dict | None:
     """Lê a lista ranqueada + escolha atual salva pra este shot, se existir.
     Usado tanto pra reaproveitar (não regerar/re-ranquear à toa quando o beat
