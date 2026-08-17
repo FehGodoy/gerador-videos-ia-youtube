@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -673,6 +674,34 @@ def _sources_for(strategy: str, cfg: dict, allowed_sources: list[str] | None = N
     )
 
 
+_SEARCH_RETRY_ATTEMPTS = 2
+_SEARCH_RETRY_DELAY_SECONDS = 2.0
+
+
+def _call_search_func(search_func, term: str, cfg: dict, source_name: str) -> list[dict]:
+    """Chama uma função de busca com uma retentativa curta antes de desistir.
+
+    Visto na prática: um blip de rede derrubava TODAS as fontes de um shot de
+    uma vez (mesmo instante em que o status do Serper no topo do painel
+    também mostrava "não consegui checar (rede)") — sem `assets/fallback/`
+    ter algum clipe genérico configurado, isso vira card de texto repetido em
+    vez de qualquer footage. Uma retentativa curta cobre o caso comum (blip
+    passageiro) sem atrasar muito o caso raro (fonte realmente fora do ar)."""
+    last_error: requests.RequestException | None = None
+    for attempt in range(1, _SEARCH_RETRY_ATTEMPTS + 1):
+        try:
+            return search_func(term, cfg)
+        except requests.RequestException as e:
+            last_error = e
+            if attempt < _SEARCH_RETRY_ATTEMPTS:
+                time.sleep(_SEARCH_RETRY_DELAY_SECONDS)
+    logger.warning(
+        "Busca de footage falhou em %s para o termo '%s' após %d tentativa(s): %s",
+        source_name, term, _SEARCH_RETRY_ATTEMPTS, last_error,
+    )
+    return []
+
+
 def _search_source_batches(
     search_terms: list[str],
     strategy: str,
@@ -693,14 +722,7 @@ def _search_source_batches(
         for source_name in fontes:
             found: list[dict] = []
             for search_func in _SEARCH_FUNCS[source_name]:
-                try:
-                    resultado = search_func(term, cfg)
-                except requests.RequestException:
-                    logger.exception(
-                        "Busca de footage falhou em %s para o termo '%s'", source_name, term
-                    )
-                    continue
-                found.extend(resultado)
+                found.extend(_call_search_func(search_func, term, cfg, source_name))
             if found:
                 yield found[:MAX_CANDIDATES_TO_RANK]
 
