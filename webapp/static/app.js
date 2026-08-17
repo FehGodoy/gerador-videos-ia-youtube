@@ -498,6 +498,7 @@ function resetDraft() {
   currentJobId = null;
   stepReview.classList.add("hidden");
   reviewBeats.innerHTML = "";
+  disarmPasteTarget();
   stepProgress.classList.add("hidden");
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
@@ -554,16 +555,17 @@ async function loadFootageReview(jobId) {
 }
 
 function markChosen(gridEl, thumbEl) {
-  gridEl.querySelectorAll(".candidate-thumb").forEach((el) => {
+  gridEl.querySelectorAll(".candidate-card").forEach((el) => {
     el.classList.remove("chosen");
-    const badge = el.querySelector(".candidate-badge");
-    if (badge) badge.remove();
+    const check = el.querySelector(".candidate-chosen-check");
+    if (check) check.remove();
   });
   thumbEl.classList.add("chosen");
-  const badge = document.createElement("span");
-  badge.className = "candidate-badge";
-  badge.textContent = "Escolhido";
-  thumbEl.appendChild(badge);
+  const check = document.createElement("span");
+  check.className = "candidate-chosen-check";
+  check.innerHTML = CHOSEN_CHECK_SVG;
+  check.title = "Escolhido pra esta cena";
+  thumbEl.querySelector(".candidate-media").appendChild(check);
 }
 
 function flashNote(el, message) {
@@ -573,55 +575,122 @@ function flashNote(el, message) {
   el._noteTimer = setTimeout(() => el.classList.remove("visible"), 2600);
 }
 
+// Ícone de checkmark do card escolhido — SVG em vez de emoji/texto, fica
+// legível em qualquer tamanho e não compete por espaço com a nota.
+const CHOSEN_CHECK_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" ' +
+  'stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
 function buildCandidateThumb(candidate, index, isChosen) {
-  const thumb = document.createElement("button");
-  thumb.className = "candidate-thumb" + (isChosen ? " chosen" : "");
-  thumb.dataset.index = index;
+  const card = document.createElement("button");
+  card.className = "candidate-card" + (isChosen ? " chosen" : "");
+  card.type = "button";
+  card.dataset.index = index;
+  card.title = candidate.ai_reasoning || "";
+
+  const media = document.createElement("div");
+  media.className = "candidate-media";
 
   const img = document.createElement("img");
   img.src = candidate.thumbnail_url;
   img.loading = "lazy";
   img.alt = `Candidato ${index + 1}`;
-  thumb.appendChild(img);
-
-  const typeBadge = document.createElement("span");
-  typeBadge.className = "candidate-type-badge";
-  const tipo =
-    candidate.media_type === "image" ? "Foto" : `Vídeo · ${Math.round(candidate.duration || 0)}s`;
-  // a fonte importa: Wikimedia exige crédito e costuma ser o único lugar com
-  // o assunto específico (modelo de carro, pessoa real, evento histórico)
-  typeBadge.textContent = `${tipo} · ${candidate.source}`;
-  thumb.appendChild(typeBadge);
+  media.appendChild(img);
 
   // nota de relevância com cor por faixa: verde recomendado, âmbar alternativa,
-  // vermelho abaixo do mínimo (esses nem chegam a ser usados)
-  if (typeof candidate.relevance_score === "number") {
+  // vermelho abaixo do mínimo (esses nem chegam a ser usados). Candidato
+  // enviado manualmente não passa pelo ranking — mostra "própria" no lugar,
+  // em vez de esconder o selo e deixar a mídia sem nenhum indicador.
+  if (candidate.source === "manual") {
+    const manualBadge = document.createElement("span");
+    manualBadge.className = "candidate-manual-badge";
+    manualBadge.textContent = "Própria";
+    media.appendChild(manualBadge);
+  } else if (typeof candidate.relevance_score === "number") {
     const faixa =
       candidate.relevance_score >= 80 ? "alta" : candidate.relevance_score >= 60 ? "media" : "baixa";
     const scoreBadge = document.createElement("span");
     scoreBadge.className = `candidate-score-badge ${faixa}`;
     scoreBadge.textContent = candidate.relevance_score;
-    thumb.appendChild(scoreBadge);
-  }
-
-  if (candidate.attribution) {
-    const creditBadge = document.createElement("span");
-    creditBadge.className = "candidate-credit-badge";
-    creditBadge.textContent = candidate.attribution.license;
-    creditBadge.title = `Exige crédito: ${candidate.attribution.author}`;
-    thumb.appendChild(creditBadge);
+    media.appendChild(scoreBadge);
   }
 
   if (isChosen) {
-    const badge = document.createElement("span");
-    badge.className = "candidate-badge";
-    badge.textContent = "Escolhido";
-    thumb.appendChild(badge);
+    const check = document.createElement("span");
+    check.className = "candidate-chosen-check";
+    check.innerHTML = CHOSEN_CHECK_SVG;
+    check.title = "Escolhido pra esta cena";
+    media.appendChild(check);
   }
 
-  thumb.title = candidate.ai_reasoning || "";
-  return thumb;
+  card.appendChild(media);
+
+  // Rodapé em fluxo normal (não sobreposto à imagem): tipo, duração e fonte
+  // truncam com "..." se não couberem, em vez de vazar por cima de outra
+  // informação. Crédito de licença vira ícone com o texto completo só no
+  // tooltip — o Google Imagens manda uma frase inteira em toda mídia
+  // ("Direitos não verificados..."), que nunca caberia como badge solta.
+  const info = document.createElement("div");
+  info.className = "candidate-info";
+
+  const infoText = document.createElement("span");
+  infoText.className = "candidate-info-text";
+  const tipo =
+    candidate.media_type === "image" ? "Foto" : `Vídeo · ${Math.round(candidate.duration || 0)}s`;
+  infoText.textContent = `${tipo} · ${candidate.source}`;
+  infoText.title = infoText.textContent;
+  info.appendChild(infoText);
+
+  if (candidate.attribution) {
+    const creditIcon = document.createElement("span");
+    creditIcon.className = "candidate-credit-icon";
+    creditIcon.textContent = "©";
+    creditIcon.title = `${candidate.attribution.license} — ${candidate.attribution.author}`;
+    info.appendChild(creditIcon);
+  }
+
+  card.appendChild(info);
+  return card;
 }
+
+// Qual shot recebe uma imagem colada (Ctrl+V) — só um por vez. Armado ao
+// clicar num botão/tile de envio (o mesmo clique que abre o seletor de
+// arquivo): se o usuário cancelar o seletor e colar em vez de escolher um
+// arquivo, o Ctrl+V vai pro shot certo mesmo assim.
+let pasteTarget = null;
+
+function armPasteTarget(target) {
+  disarmPasteTarget();
+  pasteTarget = target;
+  target.el.classList.add("armed");
+  flashNote(target.noteEl, "Pronto — escolha um arquivo ou cole (Ctrl+V) uma imagem copiada.");
+}
+
+function disarmPasteTarget() {
+  if (pasteTarget) pasteTarget.el.classList.remove("armed");
+  pasteTarget = null;
+}
+
+document.addEventListener("paste", (e) => {
+  if (!pasteTarget) return;
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const ext = item.type.split("/")[1] || "png";
+      const file = new File([blob], `colado.${ext}`, { type: item.type });
+      const target = pasteTarget;
+      disarmPasteTarget();
+      target.el.classList.add("loading");
+      uploadManualMedia(target.jobId, target.beatId, target.slot, file, target.noteEl, target.onDone).finally(
+        () => target.el.classList.remove("loading")
+      );
+      return;
+    }
+  }
+});
 
 async function uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone) {
   clearError();
@@ -652,9 +721,9 @@ function buildUploadTile(jobId, beatId, slot, noteEl, onDone) {
   wrap.className = "upload-wrap";
 
   const tile = document.createElement("button");
-  tile.className = "candidate-thumb candidate-upload-tile";
+  tile.className = "candidate-upload-tile";
   tile.type = "button";
-  tile.title = "Enviar um vídeo ou foto próprio pra esta cena";
+  tile.title = "Enviar um vídeo ou foto próprio pra esta cena, ou colar (Ctrl+V) uma imagem copiada";
 
   const icon = document.createElement("span");
   icon.className = "candidate-upload-icon";
@@ -671,13 +740,17 @@ function buildUploadTile(jobId, beatId, slot, noteEl, onDone) {
   input.addEventListener("change", () => {
     const file = input.files[0];
     if (!file) return;
+    disarmPasteTarget();
     tile.classList.add("loading");
     uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone).finally(() => {
       tile.classList.remove("loading");
       input.value = "";
     });
   });
-  tile.addEventListener("click", () => input.click());
+  tile.addEventListener("click", () => {
+    armPasteTarget({ jobId, beatId, slot, noteEl, onDone, el: tile });
+    input.click();
+  });
   wrap.append(tile, input);
   return wrap;
 }
@@ -689,6 +762,7 @@ function buildUploadButton(jobId, beatId, slot, noteEl, onDone) {
   btn.type = "button";
   btn.className = "ghost review-concept-upload";
   btn.textContent = "Enviar mídia própria";
+  btn.title = "Enviar um arquivo, ou colar (Ctrl+V) uma imagem copiada";
 
   const input = document.createElement("input");
   input.type = "file";
@@ -697,13 +771,17 @@ function buildUploadButton(jobId, beatId, slot, noteEl, onDone) {
   input.addEventListener("change", () => {
     const file = input.files[0];
     if (!file) return;
+    disarmPasteTarget();
     btn.disabled = true;
     uploadManualMedia(jobId, beatId, slot, file, noteEl, onDone).finally(() => {
       btn.disabled = false;
       input.value = "";
     });
   });
-  btn.addEventListener("click", () => input.click());
+  btn.addEventListener("click", () => {
+    armPasteTarget({ jobId, beatId, slot, noteEl, onDone, el: btn });
+    input.click();
+  });
 
   const wrap = document.createElement("span");
   wrap.className = "upload-wrap";
@@ -830,7 +908,7 @@ function renderReviewBeats(jobId, beatsData) {
               previewVideo.play().catch(() => {});
             }
           });
-          thumb.appendChild(playBtn);
+          thumb.querySelector(".candidate-media").appendChild(playBtn);
         }
         grid.appendChild(thumb);
       });
@@ -954,6 +1032,7 @@ async function handleGenerateVideo() {
   generateVideoBtn.disabled = true;
   stepReview.classList.add("hidden");
   reviewBeats.innerHTML = "";
+  disarmPasteTarget();
   stepResult.classList.add("hidden");
   renderProgressWrap.classList.add("hidden");
   renderStatusWrap.classList.add("hidden");
