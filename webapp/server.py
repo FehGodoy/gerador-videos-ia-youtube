@@ -96,6 +96,12 @@ class FootageChoiceRequest(BaseModel):
     candidate_index: int
 
 
+class YoutubeClipRequest(BaseModel):
+    url: str
+    start_seconds: float
+    end_seconds: float
+
+
 class SerperKeyRequest(BaseModel):
     api_key: str
 
@@ -435,6 +441,42 @@ async def upload_footage_candidate(job_id: str, beat_id: int, slot: int, file: U
         "slot": slot,
         "chosen_index": chosen_index,
         "candidate": manual_candidate,
+        "updated_scenes": updated_scenes,
+    }
+
+
+@app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}/youtube")
+async def add_youtube_clip(job_id: str, beat_id: int, slot: int, req: YoutubeClipRequest) -> dict:
+    """Baixa um trecho específico (início/fim escolhidos por quem está
+    revisando) de um vídeo do YouTube colado na hora, pra usar num shot —
+    mesma ideia do upload manual, mas buscando o vídeo em vez de precisar já
+    ter o arquivo no PC."""
+    job = job_manager.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job não encontrado.")
+
+    try:
+        clip_candidate = await asyncio.to_thread(
+            footage_search.save_youtube_clip, req.url, req.start_seconds, req.end_seconds
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao baixar o trecho do YouTube: {e}")
+
+    review = footage_search.load_candidates_for_review(job.slug, beat_id, slot)
+    candidates = [*(review["candidates"] if review else []), clip_candidate]
+    chosen_index = len(candidates) - 1
+
+    updated_scenes = _apply_chosen_candidate(
+        job, beat_id, slot, candidates, chosen_index, clip_candidate["clip_path"]
+    )
+
+    return {
+        "beat_id": beat_id,
+        "slot": slot,
+        "chosen_index": chosen_index,
+        "candidate": clip_candidate,
         "updated_scenes": updated_scenes,
     }
 

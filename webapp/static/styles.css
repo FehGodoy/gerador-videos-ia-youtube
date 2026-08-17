@@ -1158,6 +1158,12 @@ progress::-webkit-progress-value {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent);
 }
 
+.candidate-upload-tile.expanded {
+  align-items: stretch;
+  justify-content: flex-start;
+  cursor: default;
+}
+
 .candidate-upload-icon {
   font-size: 24px;
   font-weight: 400;
@@ -1286,6 +1292,93 @@ button.review-concept-upload.armed {
   color: var(--text-primary);
   background: color-mix(in srgb, var(--teal) 10%, transparent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent);
+}
+
+/* --- Formulário de link do YouTube (recorte manual de trecho) --- */
+
+.youtube-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  cursor: default;
+}
+
+.youtube-form-input,
+.youtube-form-input-sm {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-primary);
+  font-size: 12px;
+  width: 100%;
+}
+
+.youtube-form-input {
+  font-family: var(--font-body);
+}
+
+.youtube-form-input-sm {
+  font-family: var(--font-mono);
+}
+
+.youtube-form-input:focus,
+.youtube-form-input-sm:focus {
+  outline: none;
+  border-color: var(--orange);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 22%, transparent);
+}
+
+.youtube-form-range {
+  display: flex;
+  gap: 6px;
+}
+
+.youtube-form-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: auto;
+}
+
+.youtube-form-actions button {
+  flex: 1;
+  height: 30px;
+  padding: 0 8px;
+  font-size: 11.5px;
+}
+
+/* dentro do card de texto, o painel abre numa linha nova abaixo do resto —
+   review-concept é flex-wrap, então flex-basis:100% força a quebra */
+.youtube-form-panel {
+  flex-basis: 100%;
+  margin-top: var(--space-1);
+}
+
+.youtube-form-panel .youtube-form {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.youtube-form-panel .youtube-form-input {
+  flex: 2;
+  min-width: 180px;
+}
+
+.youtube-form-panel .youtube-form-range {
+  flex: 1;
+  min-width: 140px;
+}
+
+.youtube-form-panel .youtube-form-actions {
+  margin-top: 0;
+  flex: 0 0 auto;
+}
+
+.youtube-form-panel .youtube-form-actions button {
+  flex: 0 0 auto;
 }
 
 /* --- Result --- */

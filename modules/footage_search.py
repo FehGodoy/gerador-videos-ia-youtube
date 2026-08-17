@@ -1106,6 +1106,61 @@ def save_manual_upload(data: bytes, filename: str) -> dict:
     }
 
 
+_YOUTUBE_ID_RE = re.compile(
+    r"(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/|live/)|youtu\.be/)([A-Za-z0-9_-]{11})"
+)
+
+
+def extract_youtube_id(url: str) -> str | None:
+    """Tira o ID de 11 caracteres de qualquer formato comum de link do
+    YouTube (watch?v=, youtu.be/, shorts/, embed/, com ou sem parâmetros de
+    timestamp/playlist na frente ou depois do v=)."""
+    match = _YOUTUBE_ID_RE.search(url)
+    return match.group(1) if match else None
+
+
+def save_youtube_clip(url: str, start_seconds: float, end_seconds: float) -> dict:
+    """Baixa (ou reaproveita do cache) o trecho exato de um vídeo do YouTube
+    que o usuário colou e recortou manualmente na revisão — em vez de um dos
+    candidatos que a busca automática achou.
+
+    Reaproveita a mesma infraestrutura de download/corte que
+    search_and_download_footage já usa pra candidatos do YouTube achados pela
+    IA (download_candidate -> _download_youtube: baixa a fonte uma vez por
+    video-id, corta local com ffmpeg -c copy). A diferença é só quem escolheu
+    o vídeo e o trecho — o resultado final é o mesmo tipo de arquivo, cacheado
+    do mesmo jeito.
+    """
+    video_id = extract_youtube_id(url)
+    if not video_id:
+        raise ValueError("Não reconheci esse link como um vídeo do YouTube.")
+    if not (end_seconds > start_seconds >= 0):
+        raise ValueError("O segundo final precisa ser maior que o inicial.")
+
+    candidate = {
+        "source": "youtube",
+        "media_type": "video",
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "youtube_video_id": video_id,
+        "youtube_segment": [round(start_seconds, 2), round(end_seconds, 2)],
+    }
+    clip_path = Path(download_candidate(candidate))
+
+    thumb_path = cache_dir("footage") / f"{clip_path.stem}_thumb.jpg"
+    thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hq720.jpg"
+    if thumb_path.exists() or _generate_video_thumbnail(clip_path, thumb_path):
+        thumbnail_url = f"/footage_cache/{thumb_path.name}"
+
+    return {
+        "source": "manual",
+        "media_type": "video",
+        "url": f"/footage_cache/{clip_path.name}",
+        "thumbnail_url": thumbnail_url,
+        "duration": round(end_seconds - start_seconds, 2),
+        "clip_path": str(clip_path),
+    }
+
+
 def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:
     fallback = _fallback_clip(cfg)
     return {

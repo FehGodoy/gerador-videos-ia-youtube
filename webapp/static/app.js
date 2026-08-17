@@ -789,6 +789,170 @@ function buildUploadButton(jobId, beatId, slot, noteEl, onDone) {
   return wrap;
 }
 
+async function submitYoutubeClip(jobId, beatId, slot, url, start, end, noteEl, onDone) {
+  clearError();
+  if (!url.trim()) {
+    flashNote(noteEl, "Cole um link do YouTube.");
+    return false;
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    flashNote(noteEl, "Informe início e fim válidos (fim maior que início).");
+    return false;
+  }
+  flashNote(noteEl, "Baixando o trecho do YouTube...");
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}/footage-candidates/${beatId}/${slot}/youtube`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: url.trim(), start_seconds: start, end_seconds: end }),
+    });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || `Erro ao baixar o trecho (${resp.status})`);
+    }
+    onDone();
+    return true;
+  } catch (err) {
+    showError(err.message);
+    flashNote(noteEl, "Falhou — veja o erro acima.");
+    return false;
+  }
+}
+
+// Monta os 3 campos (link, início, fim) + ações — usado tanto dentro do
+// tile do grid quanto no painel do card de texto.
+function buildYoutubeForm(jobId, beatId, slot, noteEl, onDone, onCancel) {
+  const form = document.createElement("div");
+  form.className = "youtube-form";
+
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.placeholder = "Link do vídeo";
+  urlInput.className = "youtube-form-input";
+  urlInput.addEventListener("click", (e) => e.stopPropagation());
+
+  const rangeRow = document.createElement("div");
+  rangeRow.className = "youtube-form-range";
+  const startInput = document.createElement("input");
+  startInput.type = "number";
+  startInput.min = "0";
+  startInput.placeholder = "Início (s)";
+  startInput.className = "youtube-form-input-sm";
+  startInput.addEventListener("click", (e) => e.stopPropagation());
+  const endInput = document.createElement("input");
+  endInput.type = "number";
+  endInput.min = "0";
+  endInput.placeholder = "Fim (s)";
+  endInput.className = "youtube-form-input-sm";
+  endInput.addEventListener("click", (e) => e.stopPropagation());
+  rangeRow.append(startInput, endInput);
+
+  const actions = document.createElement("div");
+  actions.className = "youtube-form-actions";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "ghost";
+  confirmBtn.textContent = "Usar trecho";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost";
+  cancelBtn.textContent = "Cancelar";
+  actions.append(confirmBtn, cancelBtn);
+
+  form.append(urlInput, rangeRow, actions);
+
+  cancelBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    onCancel();
+  });
+
+  confirmBtn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    const ok = await submitYoutubeClip(
+      jobId, beatId, slot, urlInput.value, Number(startInput.value), Number(endInput.value), noteEl, onDone
+    );
+    if (!ok) {
+      confirmBtn.disabled = false;
+      cancelBtn.disabled = false;
+    }
+  });
+
+  requestAnimationFrame(() => urlInput.focus());
+  return form;
+}
+
+// Tile extra no grid, ao lado do "Enviar mídia" — clique expande o mesmo
+// tile num formulário de link + início/fim em vez de abrir seletor de arquivo.
+function buildYoutubeTile(jobId, beatId, slot, noteEl, onDone) {
+  const tile = document.createElement("div");
+  tile.className = "candidate-upload-tile candidate-youtube-tile";
+  tile.tabIndex = 0;
+  tile.setAttribute("role", "button");
+  tile.title = "Colar um link do YouTube e recortar um trecho pra esta cena";
+
+  function collapse() {
+    tile.innerHTML = "";
+    tile.classList.remove("expanded");
+    const icon = document.createElement("span");
+    icon.className = "candidate-upload-icon";
+    icon.textContent = "▶";
+    const label = document.createElement("span");
+    label.className = "candidate-upload-label";
+    label.textContent = "Link do YouTube";
+    tile.append(icon, label);
+  }
+
+  function expand() {
+    tile.classList.add("expanded");
+    tile.innerHTML = "";
+    tile.appendChild(buildYoutubeForm(jobId, beatId, slot, noteEl, onDone, collapse));
+  }
+
+  tile.addEventListener("click", () => {
+    if (!tile.classList.contains("expanded")) expand();
+  });
+  tile.addEventListener("keydown", (e) => {
+    if ((e.key === "Enter" || e.key === " ") && !tile.classList.contains("expanded")) {
+      e.preventDefault();
+      expand();
+    }
+  });
+
+  collapse();
+  return tile;
+}
+
+// Mesma ideia em forma de botão + painel que abre abaixo da linha — usado
+// nos cards de texto (mesmo lugar do "Enviar mídia própria").
+function buildYoutubeButton(jobId, beatId, slot, noteEl, onDone) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost review-concept-upload";
+  btn.textContent = "Link do YouTube";
+  btn.title = "Colar um link do YouTube e recortar um trecho pra esta cena";
+
+  const panel = document.createElement("div");
+  panel.className = "youtube-form-panel hidden";
+
+  btn.addEventListener("click", () => {
+    const opening = panel.classList.contains("hidden");
+    panel.innerHTML = "";
+    if (opening) {
+      panel.appendChild(
+        buildYoutubeForm(jobId, beatId, slot, noteEl, onDone, () => panel.classList.add("hidden"))
+      );
+    }
+    panel.classList.toggle("hidden", !opening);
+  });
+
+  const wrap = document.createElement("span");
+  wrap.className = "upload-wrap";
+  wrap.append(btn, panel);
+  return wrap;
+}
+
 function renderReviewBeats(jobId, beatsData) {
   reviewBeats.innerHTML = "";
   for (const beat of beatsData) {
@@ -826,7 +990,10 @@ function renderReviewBeats(jobId, beatsData) {
         const uploadBtn = buildUploadButton(jobId, beat.beat_id, card.slot, note, () =>
           loadFootageReview(jobId)
         );
-        el.append(uploadBtn, note);
+        const youtubeBtn = buildYoutubeButton(jobId, beat.beat_id, card.slot, note, () =>
+          loadFootageReview(jobId)
+        );
+        el.append(uploadBtn, youtubeBtn, note);
       }
 
       wrap.appendChild(el);
@@ -914,6 +1081,9 @@ function renderReviewBeats(jobId, beatsData) {
       });
       grid.appendChild(
         buildUploadTile(jobId, beat.beat_id, shot.slot, note, () => loadFootageReview(jobId))
+      );
+      grid.appendChild(
+        buildYoutubeTile(jobId, beat.beat_id, shot.slot, note, () => loadFootageReview(jobId))
       );
 
       shotWrap.append(grid, preview);
