@@ -29,6 +29,18 @@ WIKIMEDIA_SEARCH_URL = "https://commons.wikimedia.org/w/api.php"
 WIKIMEDIA_USER_AGENT = (
     "gerador-videos-ia-youtube/1.0 (uso pessoal; https://github.com/FehGodoy/gerador-videos-ia-youtube)"
 )
+# Só pro download de candidatos de sites de terceiro (google_images aponta pra
+# qualquer site que o Google indexou, não uma CDN feita pra acesso
+# automatizado como Wikimedia/Pexels/Pixabay). Mandar nosso UA identificável
+# ali é o oposto de ajudar — muita proteção anti-hotlink barra exatamente por
+# UA de script e ausência de Referer (a checagem mais comum: "esse pedido de
+# imagem veio da própria página que a mostra, ou de qualquer lugar?"). Não é
+# infalível — não passa por Cloudflare/fingerprint/captcha — mas resolve a
+# proteção mais comum, que é só isso.
+_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 # Só licenças que permitem uso comercial com atribuição. O Commons também
 # hospeda material "fair use", que NÃO pode ir pra um vídeo monetizado.
 WIKIMEDIA_OK_LICENSES = ("cc0", "cc-by", "cc by", "pd", "public domain")
@@ -917,6 +929,23 @@ def _download_youtube(candidate: dict, dest: Path) -> None:
         raise requests.RequestException(f"corte local com ffmpeg falhou: {resultado.stderr[-300:]}")
 
 
+def _download_headers(candidate: dict) -> dict:
+    """User-Agent + Referer pro download do arquivo em si — não da busca.
+
+    Wikimedia exige o UA identificável (política deles). Pras outras fontes
+    (na prática, o caso que importa é google_images), finge ser um navegador
+    de verdade: UA de Chrome comum + Referer pra página onde a imagem foi
+    encontrada, exatamente o que falta pra passar pela proteção anti-hotlink
+    mais comum."""
+    if candidate.get("source") == "wikimedia":
+        return {"User-Agent": WIKIMEDIA_USER_AGENT}
+    headers = {"User-Agent": _BROWSER_USER_AGENT}
+    referer = (candidate.get("attribution") or {}).get("page")
+    if referer:
+        headers["Referer"] = referer
+    return headers
+
+
 def download_candidate(candidate: dict) -> str:
     """Baixa (ou reaproveita do cache) um candidato específico.
 
@@ -950,14 +979,11 @@ def download_candidate(candidate: dict) -> str:
     last_error: Exception | None = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
         try:
-            # User-Agent identificável em todo download: os servidores da
-            # Wikimedia respondem 403 a requisição sem UA próprio, e mandar o
-            # nosso não atrapalha os CDNs de Pexels/Pixabay.
             with requests.get(
                 candidate["url"],
                 stream=True,
                 timeout=60,
-                headers={"User-Agent": WIKIMEDIA_USER_AGENT},
+                headers=_download_headers(candidate),
             ) as resp:
                 resp.raise_for_status()
                 expected = int(resp.headers.get("Content-Length") or 0)
@@ -1183,6 +1209,30 @@ def save_youtube_clip(url: str, start_seconds: float, end_seconds: float) -> dic
     }
 
 
+def _download_first_available(
+    ranked_batch: list[dict], beat_id: int, slot: int
+) -> tuple[dict | None, str | None, int]:
+    """Tenta baixar os candidatos de um lote (já ranqueado) em ordem de nota,
+    até um baixar de verdade. Um candidato com nota alta mas link quebrado
+    (comum em google_images, que aponta pra site de terceiro com bloqueio
+    anti-hotlink) não pode derrubar o shot inteiro pro fallback genérico
+    enquanto outros candidatos do mesmo lote — ou de outra fonte — ainda nem
+    foram tentados. Devolve (candidato, clip_path, índice no lote); em caso de
+    nenhum baixar, (None, None, -1)."""
+    for index, candidate in enumerate(ranked_batch):
+        try:
+            return candidate, download_candidate(candidate), index
+        except requests.RequestException as e:
+            logger.warning(
+                "Download de footage falhou, tentando próximo candidato (beat %d, shot %d, %s): %s",
+                beat_id,
+                slot,
+                candidate.get("source"),
+                e,
+            )
+    return None, None, -1
+
+
 def _fallback_result(cfg: dict, search_terms: list[str]) -> dict:
     fallback = _fallback_clip(cfg)
     return {
@@ -1297,23 +1347,26 @@ def search_and_download_footage(
     # waterfall antes de pexels/pixabay serem sequer tentados — o shot virava
     # card conceitual com nota 0-30 sem nenhuma fonte melhor ter sido checada.
     threshold = cfg["ranking"]["alternative_threshold"]
-    ranked: list[dict] | None = None
+    source_batches = _search_source_batches(search_terms, strategy, cfg, allowed_sources)
+    fetched_batches: list[list[dict]] = []
+    best_index: int | None = None
     best_score = -1
-    for batch in _search_source_batches(search_terms, strategy, cfg, allowed_sources):
+    for batch in source_batches:
         ranked_batch = rank_candidates(context, batch)
+        fetched_batches.append(ranked_batch)
         top_score = ranked_batch[0].get("relevance_score")
         if top_score is None:
             # ranking indisponível (sem chave, IA fora do ar, lote com 1 só
             # candidato) — aceita esse lote sem tentar mais fontes, como antes
-            ranked = ranked_batch
+            best_index = len(fetched_batches) - 1
             break
         if top_score > best_score:
             best_score = top_score
-            ranked = ranked_batch
+            best_index = len(fetched_batches) - 1
         if top_score >= threshold:
             break
 
-    if not ranked:
+    if best_index is None:
         logger.warning(
             "Nenhum footage encontrado (beat %d, shot %d, termos: %s). Usando fallback genérico.",
             beat_id,
@@ -1322,18 +1375,44 @@ def search_and_download_footage(
         )
         return _fallback_result(cfg, search_terms)
 
-    chosen = ranked[0]
+    # Tenta baixar: primeiro os candidatos do lote com melhor nota, depois os
+    # das outras fontes já buscadas (ordem de prioridade), e só então — se o
+    # lote vencedor bateu o threshold cedo e cortou a busca — puxa fontes que
+    # nem chegaram a ser tentadas. Um link quebrado não pode mais derrubar o
+    # shot inteiro pro fallback genérico enquanto outra fonte ainda nem foi
+    # tentada (ver _download_first_available).
+    ordered_batches = [fetched_batches[best_index]] + [
+        b for i, b in enumerate(fetched_batches) if i != best_index
+    ]
 
-    try:
-        clip_path = download_candidate(chosen)
-    except requests.RequestException:
-        logger.exception(
-            "Download de footage falhou (beat %d, shot %d, %s)", beat_id, slot, chosen["source"]
+    chosen = clip_path = chosen_batch = None
+    chosen_index = -1
+    for ranked_batch in ordered_batches:
+        chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot)
+        if clip_path is not None:
+            chosen_batch = ranked_batch
+            break
+
+    if clip_path is None:
+        for batch in source_batches:  # continua a mesma iteração, fontes que sobraram
+            ranked_batch = rank_candidates(context, batch)
+            chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot)
+            if clip_path is not None:
+                chosen_batch = ranked_batch
+                break
+
+    if clip_path is None:
+        logger.warning(
+            "Download de footage falhou em todas as fontes tentadas (beat %d, shot %d, termos: %s). "
+            "Usando fallback genérico.",
+            beat_id,
+            slot,
+            search_terms,
         )
         return _fallback_result(cfg, search_terms)
 
     if slug:
-        save_candidates_for_review(slug, beat_id, ranked, chosen_index=0, slot=slot)
+        save_candidates_for_review(slug, beat_id, chosen_batch, chosen_index=chosen_index, slot=slot)
 
     return _result_from_candidate(chosen, clip_path, search_terms, context)
 
