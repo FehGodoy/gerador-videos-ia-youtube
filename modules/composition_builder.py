@@ -433,6 +433,7 @@ def _assemble_composition(
     language: str | None = None,
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
+    google_images_recency: str | None = None,
 ) -> dict:
     """Monta o composition.json a partir de uma lista de beats já pronta —
     tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
@@ -519,6 +520,7 @@ def _assemble_composition(
                     strategy=shot["strategy"],
                     entities=analysis.get("entities") or [],
                     allowed_sources=allowed_sources,
+                    google_images_recency=google_images_recency,
                 )
             else:
                 found = {"clip_path": None, "relevance_score": None}
@@ -596,13 +598,14 @@ def build_composition(
     language: str | None = None,
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
+    google_images_recency: str | None = None,
 ) -> dict:
     """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
     script_path = Path(script_path)
     slug = slug or script_path.stem
     beats = parse_script(script_path)
     return _assemble_composition(
-        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources
+        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources, google_images_recency
     )
 
 
@@ -614,11 +617,12 @@ def build_composition_from_beats(
     language: str | None = None,
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
+    google_images_recency: str | None = None,
 ) -> dict:
     """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
     roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
     return _assemble_composition(
-        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources
+        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources, google_images_recency
     )
 
 

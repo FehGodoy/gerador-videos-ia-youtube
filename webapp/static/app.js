@@ -21,6 +21,7 @@ const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
 const sourcesList = document.getElementById("sources-list");
+const recencySelect = document.getElementById("recency-select");
 const newDraftBtn = document.getElementById("new-draft-btn");
 const stepReview = document.getElementById("step-review");
 const reviewBeats = document.getElementById("review-beats");
@@ -179,6 +180,15 @@ async function loadFootageSources() {
     selectedSources = new Set(data.default);
     renderSourcesGrid();
     updateGenerateVideoButton();
+
+    recencySelect.innerHTML = "";
+    for (const opt of data.recency_options) {
+      const option = document.createElement("option");
+      option.value = opt.id;
+      option.textContent = opt.label;
+      recencySelect.appendChild(option);
+    }
+    recencySelect.value = data.recency_default;
   } catch {
     sourcesList.innerHTML = '<p class="hint">Não consegui carregar as fontes disponíveis.</p>';
   }
@@ -1220,6 +1230,7 @@ async function handleGenerateVideo() {
         speed: Number(speedSlider.value),
         remote_render: remoteRenderToggle.checked,
         sources: Array.from(selectedSources),
+        google_images_recency: recencySelect.value,
       }),
     });
     if (!resp.ok) {

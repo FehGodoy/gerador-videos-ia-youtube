@@ -86,6 +86,11 @@ class CreateJobRequest(BaseModel):
     # footage.sources do config.yaml sem restrição extra (compatibilidade
     # com quem ainda não manda o campo).
     sources: list[str] | None = None
+    # Filtro de recência do Google Imagens pra este vídeo. None = usa
+    # footage.google_images.recency do config.yaml sem sobrepor nada
+    # (compatibilidade com quem ainda não manda o campo). "" = sem filtro,
+    # mesmo que o config.yaml tenha um valor padrão.
+    google_images_recency: str | None = None
 
 
 class ChannelRequest(BaseModel):
@@ -129,11 +134,21 @@ SOURCE_HINTS = {
     "google_images": "Foto específica via busca (Serper), sem filtro de licença",
 }
 
+RECENCY_OPTIONS = ("day", "week", "month", "year")
+RECENCY_LABELS = {
+    "": "Sem filtro",
+    "day": "Último dia",
+    "week": "Última semana",
+    "month": "Último mês",
+    "year": "Último ano",
+}
+
 
 @app.get("/api/footage-sources")
 async def get_footage_sources() -> dict:
     cfg = load_config()
     habilitadas = cfg["footage"]["sources"]
+    recency_default = (cfg["footage"].get("google_images") or {}).get("recency") or ""
     return {
         "sources": [
             {"id": s, "label": SOURCE_LABELS.get(s, s), "hint": SOURCE_HINTS.get(s, "")}
@@ -141,6 +156,10 @@ async def get_footage_sources() -> dict:
             if s in habilitadas
         ],
         "default": habilitadas,
+        "recency_options": [
+            {"id": r, "label": RECENCY_LABELS[r]} for r in ("", *RECENCY_OPTIONS)
+        ],
+        "recency_default": recency_default,
     }
 
 
@@ -187,6 +206,8 @@ async def create_job(req: CreateJobRequest) -> dict:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
     if req.sources is not None and not req.sources:
         raise HTTPException(status_code=400, detail="Selecione ao menos uma fonte de mídia.")
+    if req.google_images_recency not in (None, "", *RECENCY_OPTIONS):
+        raise HTTPException(status_code=400, detail="Filtro de recência inválido.")
 
     # Falha cedo: sem isso, um gh sem login só estourava lá na frente, depois
     # da revisão manual de footage inteira — e jogava esse trabalho fora.
@@ -204,6 +225,7 @@ async def create_job(req: CreateJobRequest) -> dict:
         req.speed,
         remote=req.remote_render,
         allowed_sources=req.sources,
+        google_images_recency=req.google_images_recency,
     )
     return {"job_id": job.id, "beats": job.beats}
 

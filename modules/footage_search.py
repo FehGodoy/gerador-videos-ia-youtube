@@ -1471,6 +1471,7 @@ def search_and_download_footage(
     strategy: str = "FOOTAGE",
     entities: list[str] | None = None,
     allowed_sources: list[str] | None = None,
+    google_images_recency: str | None = None,
 ) -> dict:
     """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
     candidato pra um shot do beat. Se `slug` for passado, reaproveita uma
@@ -1480,6 +1481,10 @@ def search_and_download_footage(
     `slot` identifica o shot dentro do beat (um beat longo tem vários).
     `allowed_sources` restringe a busca às fontes escolhidas no painel pra
     este vídeo (None = usa todas as habilitadas no config.yaml).
+    `google_images_recency` sobrepõe footage.google_images.recency do
+    config.yaml só pra este job — None mantém o que estiver no arquivo,
+    "" (string vazia, mandada pelo painel pra "Sem filtro") desliga o
+    filtro mesmo que o config.yaml tenha um valor padrão.
 
     Retorna {"clip_path", "source", "media_type", "duration", "search_terms"}.
     `duration` é a duração do clipe em segundos (None pra imagem ou fallback)
@@ -1494,6 +1499,11 @@ def search_and_download_footage(
     from modules.footage_ranker import rank_candidates
 
     cfg = load_config()
+    if google_images_recency is not None:
+        # load_config() lê o YAML do zero a cada chamada (sem cache
+        # compartilhado), então sobrescrever aqui é seguro — não vaza pra
+        # outra chamada/job.
+        cfg["footage"]["google_images"] = {"recency": google_images_recency or None}
 
     # contexto curto e focado no shot em vez do beat inteiro: um beat pode ter
     # centenas de palavras cobrindo vários assuntos, e mandar tudo faria a IA

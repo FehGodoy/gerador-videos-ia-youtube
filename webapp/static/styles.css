@@ -359,6 +359,24 @@ button:focus-visible {
   margin-bottom: var(--space-2);
 }
 
+.recency-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.recency-row label {
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.recency-row select {
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
 .sources-grid {
   display: flex;
   flex-wrap: wrap;
