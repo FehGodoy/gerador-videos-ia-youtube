@@ -58,6 +58,14 @@ footage:
     clip_seconds: 20 # quanto de cada vídeo baixar
     start_offset_seconds: 10 # pula a vinheta de abertura
     max_source_duration_seconds: 1800 # ignora vídeo muito longo (live, palestra inteira)
+  google_images:
+    # Restringe a busca a resultados recentes (mesmo filtro "ferramentas" do
+    # Google: qualquer hora/dia/semana/mês/ano). Ajuda MUITO em conteúdo de
+    # notícia/atualidade (evita foto antiga sem relação com o fato recente).
+    # Valores: null (sem filtro, padrão), "day", "week", "month", "year".
+    # Desligue (null) se o roteiro for sobre assunto histórico — o filtro
+    # tiraria justamente a foto de arquivo antiga que faria sentido ali.
+    recency: null
   # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
   # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
   min_duration_seconds: 8

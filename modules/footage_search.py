@@ -404,6 +404,15 @@ def _search_nasa(term: str, cfg: dict) -> list[dict]:
     return candidates
 
 
+# Mesmo parâmetro que o Google usa na própria busca (tbs=qdr:X), que o
+# Serper repassa direto. Ajuda muito em conteúdo de notícia/atualidade
+# (evita imagem antiga sem relação com o fato recente), mas ATRAPALHA roteiro
+# sobre assunto histórico — filtraria fora justamente a foto de arquivo
+# antiga que faria sentido ali. Por isso é opção em config.yaml
+# (footage.google_images.recency), não fixo no código.
+_RECENCY_TBS = {"day": "qdr:d", "week": "qdr:w", "month": "qdr:m", "year": "qdr:y"}
+
+
 def _search_google_images(term: str, cfg: dict) -> list[dict]:
     """Google Imagens via Serper.dev (SERPER_API_KEY no .env).
 
@@ -421,11 +430,17 @@ def _search_google_images(term: str, cfg: dict) -> list[dict]:
     if not api_key:
         return []
 
+    body = {"q": term, "num": max(cfg["footage"]["candidates_per_beat"], 3)}
+    recency = (cfg["footage"].get("google_images") or {}).get("recency")
+    tbs = _RECENCY_TBS.get(recency)
+    if tbs:
+        body["tbs"] = tbs
+
     try:
         resp = requests.post(
             SERPER_IMAGES_URL,
             headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
-            json={"q": term, "num": max(cfg["footage"]["candidates_per_beat"], 3)},
+            json=body,
             timeout=20,
         )
         resp.raise_for_status()
