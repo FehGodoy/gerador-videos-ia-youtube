@@ -1012,12 +1012,14 @@ def _browser_cookies_for_playwright() -> list[dict]:
 
 def _download_via_browser(candidate: dict) -> bytes | None:
     """Baixa a mídia abrindo a página de origem (não a URL do arquivo) num
-    Chromium real e headless, com os cookies do usuário carregados — em vez
-    de pedir o arquivo direto (o que a proteção anti-hotlink barra), abre a
-    página como um visitante de verdade: pede a URL do arquivo diretamente,
-    mas com o Referer apontando pra página de origem e os cookies do usuário
-    carregados no contexto — o mesmo par (Referer + sessão real) que a
-    proteção anti-hotlink mais comum checa.
+    Chromium real e VISÍVEL (uma janela abre na tela, faz a navegação
+    sozinha e fecha — pedido explícito do usuário: preferir ver a janela
+    acontecendo a deixar escondido), com os cookies do usuário carregados —
+    em vez de pedir o arquivo direto (o que a proteção anti-hotlink barra),
+    abre a página como um visitante de verdade: pede a URL do arquivo
+    diretamente, mas com o Referer apontando pra página de origem e os
+    cookies do usuário carregados no contexto — o mesmo par (Referer + sessão
+    real) que a proteção anti-hotlink mais comum checa.
 
     Versão anterior abria a página de origem inteira e "escutava" a rede
     esperando uma resposta com URL EXATAMENTE igual à esperada — muitos sites
@@ -1039,10 +1041,10 @@ def _download_via_browser(candidate: dict) -> bytes | None:
     except ImportError:
         return None
 
-    logger.info("Baixando via navegador headless: %s", target_url)
+    logger.info("Baixando via navegador (janela visível): %s", target_url)
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(headless=False)
             try:
                 context = browser.new_context(user_agent=_BROWSER_USER_AGENT)
                 cookies = _browser_cookies_for_playwright()
@@ -1059,7 +1061,7 @@ def _download_via_browser(candidate: dict) -> bytes | None:
                 )
                 if response is None or not response.ok:
                     status = response.status if response else "sem resposta"
-                    logger.warning("Navegador headless: resposta não-OK (%s) pra %s", status, target_url)
+                    logger.warning("Navegador: resposta não-OK (%s) pra %s", status, target_url)
                     return None
                 try:
                     return response.body()
@@ -1069,12 +1071,12 @@ def _download_via_browser(candidate: dict) -> bytes | None:
                     # gente conseguir ler o corpo — não é uma falha real do
                     # nosso lado, só um caso que essa fonte não dá pra pegar
                     # assim. Aviso curto em vez do traceback inteiro.
-                    logger.warning("Navegador headless: corpo da resposta indisponível pra %s (%s)", target_url, e)
+                    logger.warning("Navegador: corpo da resposta indisponível pra %s (%s)", target_url, e)
                     return None
             finally:
                 browser.close()
     except Exception:
-        logger.exception("Download via navegador headless falhou (%s)", target_url)
+        logger.exception("Download via navegador falhou (%s)", target_url)
         return None
 
 
@@ -1120,7 +1122,7 @@ def download_candidate(candidate: dict) -> str:
             return str(dest)
         if dados:
             logger.warning(
-                "Navegador headless baixou algo, mas não parece o formato esperado — "
+                "Navegador baixou algo, mas não parece o formato esperado — "
                 "caindo pro download direto"
             )
 
