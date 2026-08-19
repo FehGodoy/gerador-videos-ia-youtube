@@ -815,25 +815,30 @@ YOUTUBE_SOURCE_CACHE_SUBDIR = "footage_youtube_src"
 _youtube_cookie_option: dict | None = None
 
 
+class _LoggerSilencioso:
+    """yt_dlp.cookies.extract_cookies_from_browser exige um logger — sem um
+    silencioso ele imprime aviso pra cada cookie que não consegue decifrar,
+    o que é normal e não deveria poluir a saída."""
+
+    def debug(self, msg):
+        pass
+
+    def info(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
+
 def _resolve_youtube_cookies() -> dict:
     global _youtube_cookie_option
     if _youtube_cookie_option is not None:
         return _youtube_cookie_option
 
     from yt_dlp.cookies import extract_cookies_from_browser
-
-    class _LoggerSilencioso:
-        def debug(self, msg):
-            pass
-
-        def info(self, msg):
-            pass
-
-        def warning(self, msg):
-            pass
-
-        def error(self, msg):
-            pass
 
     logger_mudo = _LoggerSilencioso()
     for browser in YOUTUBE_COOKIE_BROWSERS:
@@ -946,6 +951,123 @@ def _download_headers(candidate: dict) -> dict:
     return headers
 
 
+# Fontes cujo link direto (candidate["url"]) já costuma ser barrado por
+# proteção anti-hotlink de terceiro — pra essas, abrir a página de origem num
+# navegador de verdade (com os cookies do usuário) é tentado ANTES do
+# download direto por requests, não depois: na prática, boa parte dos
+# resultados do Google Imagens vem de rede social (Instagram/TikTok/Facebook)
+# cujo endpoint de preview exige sessão de verdade, então o caminho rápido
+# raramente funciona pra essas mesmo — vale pagar o navegador de cara.
+_BROWSER_FIRST_SOURCES = ("google_images",)
+
+# Cache de cookies convertidos pro formato do Playwright — mesmo raciocínio
+# do cache de cookies do YouTube (_youtube_cookie_option): descoberto uma vez
+# por processo, não a cada candidato.
+_playwright_cookie_cache: list[dict] | None = None
+
+# Tempo máximo esperando a página de origem carregar antes de desistir e cair
+# pro download direto — generoso o bastante pra página pesada de rede social,
+# sem travar o pipeline inteiro numa página que nunca termina de carregar.
+_BROWSER_NAV_TIMEOUT_MS = 20_000
+_BROWSER_EXTRA_WAIT_MS = 1_500  # sobra pra imagem lazy-load que carrega depois do "network idle"
+
+
+def _browser_cookies_for_playwright() -> list[dict]:
+    """Cookies do navegador do usuário, convertidos pro formato que o
+    Playwright espera — mesma extração já usada pro YouTube
+    (_resolve_youtube_cookies: yt_dlp.cookies.extract_cookies_from_browser),
+    só que aqui repassados pro Chromium controlado por código em vez de pro
+    yt-dlp. Sem filtro de domínio de propósito: o Google Imagens pode apontar
+    pra qualquer site, não dá pra saber de antemão qual cookie vai importar."""
+    global _playwright_cookie_cache
+    if _playwright_cookie_cache is not None:
+        return _playwright_cookie_cache
+
+    from yt_dlp.cookies import extract_cookies_from_browser
+
+    logger_mudo = _LoggerSilencioso()
+    resultado: list[dict] = []
+    for browser in YOUTUBE_COOKIE_BROWSERS:
+        try:
+            jar = extract_cookies_from_browser(browser, None, logger_mudo)
+        except Exception:
+            continue
+        for cookie in jar:
+            if not cookie.domain or not cookie.name:
+                continue
+            resultado.append(
+                {
+                    "name": cookie.name,
+                    "value": cookie.value or "",
+                    "domain": cookie.domain,
+                    "path": cookie.path or "/",
+                    "secure": bool(cookie.secure),
+                    "expires": float(cookie.expires) if cookie.expires else -1,
+                }
+            )
+        if resultado:
+            break
+    _playwright_cookie_cache = resultado
+    return resultado
+
+
+def _download_via_browser(candidate: dict) -> bytes | None:
+    """Baixa a mídia abrindo a página de origem (não a URL do arquivo) num
+    Chromium real e headless, com os cookies do usuário carregados — em vez
+    de pedir o arquivo direto (o que a proteção anti-hotlink barra), abre a
+    página como um visitante de verdade e escuta a mesma resposta de rede que
+    o navegador recebeu ao carregar a imagem, pegando os bytes originais
+    exatos (não um print da tela, que perderia qualidade).
+
+    None se não der pra tentar (sem página de origem, Playwright não
+    instalado) ou se a resposta não chegar dentro do timeout — quem chama cai
+    pro download direto por requests nesse caso, não é fatal."""
+    page_url = (candidate.get("attribution") or {}).get("page")
+    target_url = candidate.get("url")
+    if not page_url or not target_url:
+        return None
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return None
+
+    captured: dict[str, bytes] = {}
+
+    def on_response(response):
+        if "data" not in captured and response.url == target_url and response.ok:
+            try:
+                captured["data"] = response.body()
+            except Exception:
+                pass
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                context = browser.new_context(user_agent=_BROWSER_USER_AGENT)
+                cookies = _browser_cookies_for_playwright()
+                if cookies:
+                    try:
+                        context.add_cookies(cookies)
+                    except Exception:
+                        logger.warning("Playwright: cookies do navegador rejeitados, seguindo sem eles")
+                page = context.new_page()
+                page.on("response", on_response)
+                try:
+                    page.goto(page_url, timeout=_BROWSER_NAV_TIMEOUT_MS, wait_until="networkidle")
+                except Exception:
+                    pass  # timeout de navegação não é fatal — a resposta pode já ter chegado
+                page.wait_for_timeout(_BROWSER_EXTRA_WAIT_MS)
+            finally:
+                browser.close()
+    except Exception:
+        logger.exception("Download via navegador headless falhou (%s)", page_url)
+        return None
+
+    return captured.get("data")
+
+
 def download_candidate(candidate: dict) -> str:
     """Baixa (ou reaproveita do cache) um candidato específico.
 
@@ -975,6 +1097,22 @@ def download_candidate(candidate: dict) -> str:
             raise
         partial.replace(dest)
         return str(dest)
+
+    if candidate.get("source") in _BROWSER_FIRST_SOURCES:
+        # Tentado ANTES do download direto por requests, não como último
+        # recurso — pra essas fontes o link direto raramente funciona mesmo
+        # (ver _BROWSER_FIRST_SOURCES), então vale pagar o navegador de cara
+        # em vez de gastar as 3 tentativas rápidas que quase sempre falham.
+        dados = _download_via_browser(candidate)
+        if dados and _looks_like_real_media(dados[:512], candidate.get("media_type", "video")):
+            partial.write_bytes(dados)
+            partial.replace(dest)
+            return str(dest)
+        if dados:
+            logger.warning(
+                "Navegador headless baixou algo, mas não parece o formato esperado — "
+                "caindo pro download direto"
+            )
 
     last_error: Exception | None = None
     for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):

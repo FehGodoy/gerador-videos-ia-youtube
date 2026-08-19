@@ -9,6 +9,11 @@ jsonschema>=4.23
 fastapi>=0.115
 uvicorn[standard]>=0.32
 python-multipart>=0.0.12 # upload de arquivo (UploadFile) no painel web — sem isso o FastAPI recusa multipart/form-data
+# Download de imagem do Google Imagens abrindo a página de origem num
+# Chromium real (com os cookies do usuário) em vez de pedir a URL do arquivo
+# direto — contorna proteção anti-hotlink que barra requisição de script.
+# Depois de instalar, rodar: python -m playwright install chromium
+playwright>=1.62
 
 # Fallback de transcrição, usado apenas se a Cartesia não retornar timestamps
 # para algum beat (ver modules/captions.py). Não é chamado no fluxo padrão.
