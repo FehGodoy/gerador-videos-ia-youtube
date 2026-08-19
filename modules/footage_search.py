@@ -965,11 +965,10 @@ _BROWSER_FIRST_SOURCES = ("google_images",)
 # por processo, não a cada candidato.
 _playwright_cookie_cache: list[dict] | None = None
 
-# Tempo máximo esperando a página de origem carregar antes de desistir e cair
-# pro download direto — generoso o bastante pra página pesada de rede social,
-# sem travar o pipeline inteiro numa página que nunca termina de carregar.
+# Tempo máximo esperando a resposta antes de desistir e cair pro download
+# direto — generoso o bastante pra CDN lenta, sem travar o pipeline inteiro
+# numa resposta que nunca chega.
 _BROWSER_NAV_TIMEOUT_MS = 20_000
-_BROWSER_EXTRA_WAIT_MS = 1_500  # sobra pra imagem lazy-load que carrega depois do "network idle"
 
 
 def _browser_cookies_for_playwright() -> list[dict]:
@@ -1015,16 +1014,24 @@ def _download_via_browser(candidate: dict) -> bytes | None:
     """Baixa a mídia abrindo a página de origem (não a URL do arquivo) num
     Chromium real e headless, com os cookies do usuário carregados — em vez
     de pedir o arquivo direto (o que a proteção anti-hotlink barra), abre a
-    página como um visitante de verdade e escuta a mesma resposta de rede que
-    o navegador recebeu ao carregar a imagem, pegando os bytes originais
-    exatos (não um print da tela, que perderia qualidade).
+    página como um visitante de verdade: pede a URL do arquivo diretamente,
+    mas com o Referer apontando pra página de origem e os cookies do usuário
+    carregados no contexto — o mesmo par (Referer + sessão real) que a
+    proteção anti-hotlink mais comum checa.
 
-    None se não der pra tentar (sem página de origem, Playwright não
-    instalado) ou se a resposta não chegar dentro do timeout — quem chama cai
-    pro download direto por requests nesse caso, não é fatal."""
+    Versão anterior abria a página de origem inteira e "escutava" a rede
+    esperando uma resposta com URL EXATAMENTE igual à esperada — muitos sites
+    redirecionam ou servem a imagem por uma URL levemente diferente (versão
+    redimensionada, parâmetro de cache-busting), então a escuta nunca batia e
+    falhava em silêncio, sem log nenhum. Pedir a URL final direto (com
+    Referer/cookies certos) evita esse problema de casamento.
+
+    None se não der pra tentar (sem URL, Playwright não instalado) ou se a
+    resposta não vier OK dentro do timeout — quem chama cai pro download
+    direto por requests nesse caso, não é fatal."""
     page_url = (candidate.get("attribution") or {}).get("page")
     target_url = candidate.get("url")
-    if not page_url or not target_url:
+    if not target_url:
         return None
 
     try:
@@ -1032,15 +1039,7 @@ def _download_via_browser(candidate: dict) -> bytes | None:
     except ImportError:
         return None
 
-    captured: dict[str, bytes] = {}
-
-    def on_response(response):
-        if "data" not in captured and response.url == target_url and response.ok:
-            try:
-                captured["data"] = response.body()
-            except Exception:
-                pass
-
+    logger.info("Baixando via navegador headless: %s", target_url)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -1053,19 +1052,30 @@ def _download_via_browser(candidate: dict) -> bytes | None:
                     except Exception:
                         logger.warning("Playwright: cookies do navegador rejeitados, seguindo sem eles")
                 page = context.new_page()
-                page.on("response", on_response)
+                response = page.goto(
+                    target_url,
+                    timeout=_BROWSER_NAV_TIMEOUT_MS,
+                    referer=page_url or "",
+                )
+                if response is None or not response.ok:
+                    status = response.status if response else "sem resposta"
+                    logger.warning("Navegador headless: resposta não-OK (%s) pra %s", status, target_url)
+                    return None
                 try:
-                    page.goto(page_url, timeout=_BROWSER_NAV_TIMEOUT_MS, wait_until="networkidle")
-                except Exception:
-                    pass  # timeout de navegação não é fatal — a resposta pode já ter chegado
-                page.wait_for_timeout(_BROWSER_EXTRA_WAIT_MS)
+                    return response.body()
+                except Exception as e:
+                    # Visto na prática (Facebook): o goto segue um redirect e a
+                    # página "navega pra longe" da resposta original antes da
+                    # gente conseguir ler o corpo — não é uma falha real do
+                    # nosso lado, só um caso que essa fonte não dá pra pegar
+                    # assim. Aviso curto em vez do traceback inteiro.
+                    logger.warning("Navegador headless: corpo da resposta indisponível pra %s (%s)", target_url, e)
+                    return None
             finally:
                 browser.close()
     except Exception:
-        logger.exception("Download via navegador headless falhou (%s)", page_url)
+        logger.exception("Download via navegador headless falhou (%s)", target_url)
         return None
-
-    return captured.get("data")
 
 
 def download_candidate(candidate: dict) -> str:
