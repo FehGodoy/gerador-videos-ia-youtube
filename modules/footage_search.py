@@ -16,6 +16,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
@@ -55,12 +56,28 @@ NASA_SEARCH_URL = "https://images-api.nasa.gov/search"
 
 SERPER_IMAGES_URL = "https://google.serper.dev/images"
 SERPER_ACCOUNT_URL = "https://google.serper.dev/account"
-# Abaixo disso a imagem costuma ser thumbnail de baixa qualidade demais pra
-# tela cheia; medido nos primeiros resultados reais (3072x2304, 1152x1152).
-SERPER_MIN_WIDTH = 640
+# Abaixo disso a imagem fica visivelmente borrada em tela cheia (o vídeo
+# renderiza a 1920px de largura, e a imagem ainda leva um Ken Burns sutil —
+# um zoom leve que pede folga a mais de resolução pra não pixelar). 640 era
+# baixo demais pra isso; 1280 ainda aceita a maioria das fotos editoriais
+# normais, só corta thumbnail pequena mesmo.
+SERPER_MIN_WIDTH = 1280
 # Aviso no painel abaixo disso — não é um corte automático, só um alerta pra
 # trocar de chave antes de ficar sem crédito no meio de um vídeo.
 SERPER_LOW_BALANCE_THRESHOLD = 100
+
+# Instagram/Facebook servem imagem por um endpoint interno de preview que não
+# existe pra visitante comum (confirmado testando: nem navegador com cookies
+# reais resolve — não é proteção, é a porta simplesmente não estar aberta pro
+# público). TikTok recusa com 403 mesmo pra navegador autenticado. Nenhum dos
+# três algum dia funcionou nos testes desta sessão — bloquear aqui evita
+# gastar ~10-30s abrindo navegador pra uma tentativa que sempre falha.
+_BLOCKED_IMAGE_DOMAINS = ("instagram.com", "facebook.com", "fbsbx.com", "tiktok.com")
+
+
+def _is_blocked_domain(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith(f".{d}") for d in _BLOCKED_IMAGE_DOMAINS)
 
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
@@ -420,6 +437,8 @@ def _search_google_images(term: str, cfg: dict) -> list[dict]:
     for item in resp.json().get("images", []):
         url = item.get("imageUrl")
         if not url or (item.get("imageWidth") or 0) < SERPER_MIN_WIDTH:
+            continue
+        if _is_blocked_domain(url) or _is_blocked_domain(item.get("link") or ""):
             continue
         candidates.append(
             {
