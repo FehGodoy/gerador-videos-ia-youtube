@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 THUMBNAIL_TIMEOUT = 10
 
+# "not_required" = a cena não pede um assunto específico nomeado (maioria dos
+# casos). Os outros 4 só importam quando o shot marca identity_required=true
+# (ver modules/keyword_extractor.py) — aí "uncertain"/"contradicted" vetam o
+# aceite automático mesmo com nota alta, decisão tomada em Python
+# (search_and_download_footage), nunca só confiando no texto do modelo.
+_IDENTITY_STATUSES = ("confirmed", "probable", "uncertain", "contradicted", "not_required")
+
 
 def _image_media_type(data: bytes) -> str:
     """Tipo real da miniatura, pelos bytes iniciais.
@@ -99,9 +106,28 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
                 "  70-84  = serve bem, mesmo não sendo o assunto exato\n"
                 "  50-69  = só tematicamente relacionado, passaria como tapa-buraco\n"
                 "  0-49   = não representa a cena\n"
+                "Além da nota, avalie a IDENTIDADE separadamente pra cada candidato — a nota "
+                "sozinha não pode aprovar um assunto que na verdade não dá pra confirmar. "
+                "\"identity_status\" é um destes:\n"
+                "  \"not_required\" = a cena não pede um assunto específico nomeado (uso normal, "
+                "a maioria dos casos)\n"
+                "  \"confirmed\"    = dá pra confirmar pela miniatura que é EXATAMENTE o assunto "
+                "pedido (marca/modelo/pessoa/lugar nomeado visível e reconhecível)\n"
+                "  \"probable\"     = muito provavelmente é o assunto certo, mas a miniatura não "
+                "deixa 100% claro (ângulo ruim, resolução baixa, logo parcialmente visível)\n"
+                "  \"uncertain\"    = não dá pra confirmar nem descartar — pode ser o assunto "
+                "certo ou só parecido\n"
+                "  \"contradicted\" = a miniatura mostra claramente que NÃO é o assunto pedido "
+                "(marca/modelo/pessoa errada, mesmo que o tema geral bata)\n"
+                "\"visible_evidence\": frase curta e factual do que realmente dá pra ver na "
+                "miniatura que embasa o identity_status — não repita o que a cena pedia, diga o "
+                "que a IMAGEM mostra.\n"
+                "\"publish_recommendation\": sua recomendação (\"accept\"/\"review\"/\"reject\") — é "
+                "só informativa, a decisão final não é sua, mas ajuda a explicar seu raciocínio.\n"
                 "Responda APENAS com um JSON, sem markdown: "
-                '{"scores": [{"index": 0, "score": 0-100, "reason": "frase curta"}], '
-                '"best_index": N}'
+                '{"scores": [{"index": 0, "score": 0-100, "reason": "frase curta", '
+                '"identity_status": "not_required", "visible_evidence": "frase curta", '
+                '"publish_recommendation": "accept"}], "best_index": N}'
             ),
         }
     ]
@@ -120,8 +146,13 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
 
     response = client.messages.create(
         model=cfg["keywords"]["model"],
-        # uma nota + motivo curto por candidato; com 8 candidatos, ~400 tokens
-        max_tokens=900,
+        # nota + motivo + identity_status + evidência + recomendação por
+        # candidato agora — 900 cobria só nota+motivo (~400 tokens com 8
+        # candidatos). Com os 3 campos novos por candidato o teto real
+        # precisa de folga maior, mesmo risco de truncar no meio do JSON já
+        # visto em keyword_extractor.MAX_TOKENS — valor abaixo medido com
+        # lote cheio de 8 candidatos antes de fechar esta mudança.
+        max_tokens=1400,
         messages=[{"role": "user", "content": content}],
     )
     raw = response.content[0].text.strip()
@@ -139,9 +170,18 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
         score = item.get("score")
         if not isinstance(index, int) or not isinstance(score, (int, float)):
             continue
+        identity_status = item.get("identity_status")
+        if identity_status not in _IDENTITY_STATUSES:
+            identity_status = None  # resposta antiga ou campo faltando — "sem informação", não é falha
+        recommendation = item.get("publish_recommendation")
+        if recommendation not in ("accept", "review", "reject"):
+            recommendation = None
         scores[index] = {
             "score": max(0, min(100, int(score))),
             "reason": str(item.get("reason", "")).strip(),
+            "identity_status": identity_status,
+            "visible_evidence": str(item.get("visible_evidence", "")).strip(),
+            "publish_recommendation": recommendation,
         }
 
     best_index = parsed.get("best_index")
@@ -192,7 +232,11 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
         return candidates
 
     # nota e motivo em TODO candidato avaliado, não só no vencedor: é o que
-    # alimenta o threshold/fallback e o que a revisão mostra pra você decidir
+    # alimenta o threshold/fallback e o que a revisão mostra pra você decidir.
+    # identity_status/visible_evidence/publish_recommendation seguem o mesmo
+    # princípio — "sem informação" (None) pra candidato sem esses campos
+    # (resposta antiga, ou o item nem apareceu em "scores"), nunca tratado
+    # como falha.
     scored = []
     for i, candidate in enumerate(valid_candidates):
         info = scores.get(i, {})
@@ -201,6 +245,9 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
                 **candidate,
                 "relevance_score": info.get("score"),
                 "ai_reasoning": info.get("reason", ""),
+                "identity_status": info.get("identity_status"),
+                "visible_evidence": info.get("visible_evidence", ""),
+                "publish_recommendation": info.get("publish_recommendation"),
             }
         )
 

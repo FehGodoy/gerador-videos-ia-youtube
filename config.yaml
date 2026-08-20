@@ -87,9 +87,14 @@ ranking:
   # O princípio: material que só lembra o assunto é pior que assumir que não
   # achamos nada — abaixo do mínimo o shot vira card conceitual em vez de
   # footage genérico.
-  recommend_threshold: 80 # >= isso: recomendado
-  alternative_threshold: 60 # entre os dois: aceito, mas marcado como alternativa
-  # < alternative_threshold: descarta a mídia e cai no card conceitual
+  # >= isso: a busca para de tentar mais fontes (achou algo bom o bastante).
+  # Antes esse "para de buscar" usava o mesmo valor do piso de baixo
+  # (60) — parava a primeira fonte que trouxesse algo só "razoável",
+  # sem chegar a tentar uma fonte melhor. Esse campo existia no config.yaml
+  # sem nenhum código ler ele (conferido: zero referência em modules/ ou
+  # webapp/) até esta mudança religar ele de verdade.
+  auto_accept_threshold: 80
+  alternative_threshold: 60 # piso de revisão: abaixo disso a mídia é descartada e cai no card conceitual, nunca publica
 
 highlights:
   # Selos de informação sobrepostos ao footage, posicionados no segundo exato

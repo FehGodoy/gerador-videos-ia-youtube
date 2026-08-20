@@ -1536,11 +1536,13 @@ def search_and_download_footage(
 
     # Tenta as fontes uma a uma (ordem da hierarquia) e RANQUEIA cada lote —
     # só para de tentar a próxima fonte quando a nota do melhor candidato já
-    # bate o mínimo aceitável. Sem isso, youtube/google_images (que quase
-    # sempre acham "alguma coisa" pra qualquer termo, mesmo ruim) paravam o
-    # waterfall antes de pexels/pixabay serem sequer tentados — o shot virava
-    # card conceitual com nota 0-30 sem nenhuma fonte melhor ter sido checada.
-    threshold = cfg["ranking"]["alternative_threshold"]
+    # bate o limiar de aceite automático (não o piso de revisão — esses dois
+    # eram o MESMO valor antes, então a busca parava na primeira fonte que
+    # trouxesse algo só "razoável" (60), sem chegar a tentar uma fonte
+    # melhor. Com o limiar mais alto (80), só para cedo quando acha algo
+    # realmente bom; "razoável" ainda é guardado como candidato, mas a busca
+    # continua tentando fazer melhor antes de se contentar com ele.
+    threshold = cfg["ranking"]["auto_accept_threshold"]
     source_batches = _search_source_batches(search_terms, strategy, cfg, allowed_sources)
     fetched_batches: list[list[dict]] = []
     best_index: int | None = None
