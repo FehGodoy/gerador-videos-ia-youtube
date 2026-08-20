@@ -66,6 +66,14 @@ footage:
     # Desligue (null) se o roteiro for sobre assunto histórico — o filtro
     # tiraria justamente a foto de arquivo antiga que faria sentido ali.
     recency: null
+  # Piso de largura do ARQUIVO baixado de verdade (não a largura declarada
+  # pela fonte antes do download, que pode estar errada — caso real de
+  # google_images, sem controle sobre o metadado do site de terceiro). Ver
+  # _validate_downloaded_media em modules/footage_search.py. Mais baixo que
+  # WIKIMEDIA_MIN_WIDTH/SERPER_MIN_WIDTH (1280, aplicados na escolha do
+  # candidato) de propósito: aqui é só uma rede de segurança contra imagem
+  # minúscula/quebrada, não o filtro de qualidade em si.
+  min_downloaded_width: 640
   # Clipe curto rende poucos trechos distintos quando reaproveitado; a partir
   # de ~8s dá pra mostrar um pedaço diferente a cada reuso.
   min_duration_seconds: 8

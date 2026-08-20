@@ -1393,19 +1393,141 @@ def save_youtube_clip(url: str, start_seconds: float, end_seconds: float) -> dic
     }
 
 
+# Fontes onde a miniatura julgada pelo ranking e o arquivo final baixado vêm
+# de URLs DIFERENTES (google_images: miniatura é a do resultado de busca,
+# arquivo final é o site de origem; youtube: miniatura é a capa do vídeo,
+# arquivo final é um trecho recortado). Nas outras fontes a miniatura já é um
+# recorte do mesmo arquivo (Pexels/Pixabay/Wikimedia/NASA) — comparar seria
+# certeza de bater e desperdício de CPU/IO.
+_HASH_CHECK_SOURCES = {"google_images", "youtube"}
+_HASH_MAX_DISTANCE = 10  # distância de Hamming entre phash miniatura vs arquivo final
+_BLACK_FRAME_STDDEV_THRESHOLD = 6.0  # abaixo disso o frame não tem variação de pixel nenhuma
+
+
+def _looks_like_black_video(path: Path, duration: float) -> bool:
+    """True só quando TODOS os frames amostrados são essencialmente lisos —
+    o sinal prático de uma página de bloqueio/erro salva como vídeo (visto na
+    prática com google_images antes do fix de _looks_like_real_media), não de
+    um vídeo real com uma cena escura no meio. Reaproveita a mesma extração de
+    frame do Fase 3 (frame_analyzer), sem chamar IA — só um desvio-padrão de
+    pixel, bem mais barato."""
+    import io
+
+    from PIL import Image, ImageStat
+
+    from modules.frame_analyzer import _extract_frames
+
+    frames = _extract_frames(str(path), duration)
+    if not frames:
+        return False  # ffmpeg não conseguiu extrair nada — não é motivo pra rejeitar o vídeo
+    for _, jpeg_bytes in frames:
+        try:
+            img = Image.open(io.BytesIO(jpeg_bytes)).convert("L")
+            if ImageStat.Stat(img).stddev[0] >= _BLACK_FRAME_STDDEV_THRESHOLD:
+                return False  # achou pelo menos um frame com variação real de pixel
+        except Exception:
+            continue
+    return True
+
+
+def _thumbnail_mismatch(path: Path, candidate: dict) -> str | None:
+    """Distância perceptual entre a miniatura julgada pelo ranking e o
+    arquivo final baixado. Heurística, não rejeição dura — só entra como
+    aviso no log (ver _validate_downloaded_media) até medir a taxa real de
+    falso positivo; qualquer falha na comparação (miniatura não abre, etc.)
+    não é motivo pra suspeitar de nada."""
+    thumb_url = candidate.get("thumbnail_url")
+    if not thumb_url:
+        return None
+    try:
+        import io
+
+        import imagehash
+        from PIL import Image
+
+        resp = requests.get(thumb_url, timeout=10, headers=_download_headers(candidate))
+        resp.raise_for_status()
+        thumb_hash = imagehash.phash(Image.open(io.BytesIO(resp.content)))
+        final_hash = imagehash.phash(Image.open(path))
+    except Exception:
+        return None
+    distance = thumb_hash - final_hash
+    if distance > _HASH_MAX_DISTANCE:
+        return f"distância de hash perceptual {distance} (limite {_HASH_MAX_DISTANCE})"
+    return None
+
+
+def _validate_downloaded_media(path: Path, candidate: dict, cfg: dict) -> tuple[bool, str]:
+    """Confere o ARQUIVO baixado de verdade — não só a miniatura julgada pelo
+    ranking (modules/footage_ranker), nem a largura declarada pela fonte
+    ANTES do download (que pode estar errada ou ser de metadado de site de
+    terceiro não confiável, caso de google_images). Roda depois de todo
+    download bem-sucedido, mesmo quando reaproveitado do cache — um arquivo
+    ruim cacheado antes de um fix (como o bug do HTML de bloqueio já visto
+    nesta sessão) senão seria reaproveitado pra sempre.
+
+    Retorna (ok, motivo). ok=False é rejeição DURA — chamador deve descartar
+    o arquivo e tentar o próximo candidato, igual a uma falha de download.
+    Checagens heurísticas (hash perceptual) nunca retornam ok=False — só
+    avisam no log — pra não descartar material bom por falso positivo antes
+    de medir a taxa de acerto real."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(512)
+    except OSError:
+        return False, "arquivo baixado não abre no disco"
+
+    media_type = candidate.get("media_type", "video")
+    if not _looks_like_real_media(head, media_type):
+        return False, "assinatura do arquivo não bate com o media_type esperado"
+
+    if media_type == "image":
+        try:
+            from PIL import Image
+
+            with Image.open(path) as img:
+                width, _height = img.size
+        except Exception:
+            return False, "imagem baixada não abre (arquivo corrompido ou não é imagem de verdade)"
+        min_width = cfg["footage"].get("min_downloaded_width", 640)
+        if width < min_width:
+            return False, f"imagem baixada tem {width}px de largura, abaixo do piso de {min_width}px"
+    else:
+        duration = _probe_video_duration(path)
+        if duration is None:
+            return False, "vídeo baixado não abre no ffprobe (arquivo corrompido)"
+        if duration < 0.5:
+            return False, "vídeo baixado tem duração quase zero"
+        if _looks_like_black_video(path, duration):
+            return False, "vídeo baixado parece tela preta/quebrada (nenhum frame com variação de pixel)"
+
+    if media_type == "image" and candidate.get("source") in _HASH_CHECK_SOURCES:
+        mismatch = _thumbnail_mismatch(path, candidate)
+        if mismatch:
+            logger.warning(
+                "Miniatura e arquivo final parecem diferentes (fonte %s): %s",
+                candidate.get("source"),
+                mismatch,
+            )
+
+    return True, ""
+
+
 def _download_first_available(
-    ranked_batch: list[dict], beat_id: int, slot: int
+    ranked_batch: list[dict], beat_id: int, slot: int, cfg: dict | None = None
 ) -> tuple[dict | None, str | None, int]:
     """Tenta baixar os candidatos de um lote (já ranqueado) em ordem de nota,
-    até um baixar de verdade. Um candidato com nota alta mas link quebrado
+    até um baixar de verdade E passar na revalidação do arquivo final (ver
+    _validate_downloaded_media). Um candidato com nota alta mas link quebrado
     (comum em google_images, que aponta pra site de terceiro com bloqueio
     anti-hotlink) não pode derrubar o shot inteiro pro fallback genérico
     enquanto outros candidatos do mesmo lote — ou de outra fonte — ainda nem
     foram tentados. Devolve (candidato, clip_path, índice no lote); em caso de
     nenhum baixar, (None, None, -1)."""
+    cfg = cfg or load_config()
     for index, candidate in enumerate(ranked_batch):
         try:
-            return candidate, download_candidate(candidate), index
+            clip_path = download_candidate(candidate)
         except requests.RequestException as e:
             logger.warning(
                 "Download de footage falhou, tentando próximo candidato (beat %d, shot %d, %s): %s",
@@ -1414,6 +1536,20 @@ def _download_first_available(
                 candidate.get("source"),
                 e,
             )
+            continue
+        ok, motivo = _validate_downloaded_media(Path(clip_path), candidate, cfg)
+        if not ok:
+            logger.warning(
+                "Arquivo baixado reprovou na revalidação, descartando e tentando próximo candidato "
+                "(beat %d, shot %d, %s): %s",
+                beat_id,
+                slot,
+                candidate.get("source"),
+                motivo,
+            )
+            Path(clip_path).unlink(missing_ok=True)
+            continue
+        return candidate, clip_path, index
     return None, None, -1
 
 
@@ -1601,7 +1737,7 @@ def search_and_download_footage(
     chosen = clip_path = chosen_batch = None
     chosen_index = -1
     for ranked_batch in ordered_batches:
-        chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot)
+        chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot, cfg)
         if clip_path is not None:
             chosen_batch = ranked_batch
             break
@@ -1609,7 +1745,7 @@ def search_and_download_footage(
     if clip_path is None:
         for batch in source_batches:  # continua a mesma iteração, fontes que sobraram
             ranked_batch = rank_candidates(context, batch, identity_required=identity_required)
-            chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot)
+            chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot, cfg)
             if clip_path is not None:
                 chosen_batch = ranked_batch
                 break

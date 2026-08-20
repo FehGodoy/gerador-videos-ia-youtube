@@ -18,3 +18,8 @@ playwright>=1.62
 # Fallback de transcrição, usado apenas se a Cartesia não retornar timestamps
 # para algum beat (ver modules/captions.py). Não é chamado no fluxo padrão.
 faster-whisper>=1.0
+
+# Revalidação do arquivo baixado (não só a miniatura julgada pelo ranking) —
+# ver _validate_downloaded_media em modules/footage_search.py.
+Pillow>=10.0        # dimensão real de imagem baixada
+imagehash>=4.3       # confere se o arquivo final é o mesmo da miniatura (google_images/youtube)
