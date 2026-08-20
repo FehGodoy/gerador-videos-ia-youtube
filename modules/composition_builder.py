@@ -145,13 +145,22 @@ def _tile_scenes(
         score = shot.get("relevance_score")
         if shot.get("clip_path") and (score is None or score >= minimo):
             usaveis.append(shot)
+            logger.info(
+                "Shot aceito (nota %s, fonte %s, identity_status %s, estratégia %s)",
+                score,
+                shot.get("source"),
+                shot.get("identity_status"),
+                shot.get("strategy"),
+            )
         elif shot.get("concept_text"):
             # tira o clip_path: sem isso o tiling ainda enxerga mídia e emite
             # a cena como "footage", deixando o threshold puramente decorativo
             descartados.append({**shot, "clip_path": None})
             logger.info(
-                "Shot vira card conceitual (nota %s, estratégia %s): %r",
+                "Shot vira card conceitual (nota %s, fonte %s, identity_status %s, estratégia %s): %r",
                 score,
+                shot.get("source"),
+                shot.get("identity_status"),
                 shot.get("strategy"),
                 shot["concept_text"],
             )

@@ -1595,6 +1595,7 @@ def _result_from_candidate(
         "search_terms": search_terms,
         "relevance_score": candidate.get("relevance_score"),
         "ai_reasoning": candidate.get("ai_reasoning", ""),
+        "identity_status": candidate.get("identity_status"),
     }
     # Wikimedia é CC BY / CC BY-SA na maioria: creditar não é opcional. Carrega
     # a atribuição até o composition.json pra dar pra montar os créditos.
@@ -1781,6 +1782,18 @@ def search_and_download_footage(
     if slug:
         save_candidates_for_review(slug, beat_id, chosen_batch, chosen_index=chosen_index, slot=slot)
 
+    logger.info(
+        "Footage escolhido (beat %d, shot %d, estratégia %s, termos %s): fonte=%s nota=%s "
+        "identity_status=%s identity_required=%s",
+        beat_id,
+        slot,
+        strategy,
+        search_terms,
+        chosen.get("source"),
+        chosen.get("relevance_score"),
+        chosen.get("identity_status"),
+        identity_required,
+    )
     return _result_from_candidate(chosen, clip_path, search_terms, context)
 
 
