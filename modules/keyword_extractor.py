@@ -79,6 +79,12 @@ markdown e sem lista no nível de cima:
   "shots": [
     {{"strategy": "FOOTAGE",
       "terms": ["busca em inglês", "alternativa", "alternativa"],
+      "subject": "o que precisa aparecer na tela, curto e específico",
+      "action": "o que está acontecendo, se houver algo acontecendo (senão \"\")",
+      "context": "ambiente, período ou local, se for relevante pro shot (senão \"\")",
+      "must_not": ["elemento que, se aparecer, invalida o candidato — geralmente vazio"],
+      "identity_required": false,
+      "original_language_query": "a mesma busca do 'subject', só que no idioma do roteiro",
       "concept_text": "frase curta em {language_name} pra virar card se nada servir",
       "motion_graphic": null ou {{
         "kind": "timeline" | "quote" | "ranking",
@@ -115,6 +121,24 @@ houver nenhum. Elas são o que faz a busca achar o assunto exato em vez de um ge
 é uma imagem/vídeo diferente que vai ocupar um pedaço do trecho na tela. Os shots precisam ser \
 VISUALMENTE DIFERENTES entre si (assuntos, objetos ou ângulos distintos que o trecho menciona) — \
 não repita a mesma ideia com outras palavras.
+- "subject": em poucas palavras, o que PRECISA aparecer na imagem/vídeo pra o shot fazer sentido \
+(ex: "Torre Eiffel", "reunião de executivos", "Cristiano Ronaldo comemorando gol"). É o critério \
+que decide se um candidato de busca serve ou não.
+- "action": o que está acontecendo no momento do shot, se houver algo acontecendo de fato (ex: \
+"assinando um contrato", "correndo na chuva"). Deixe "" quando o shot é só um retrato/paisagem \
+sem ação.
+- "context": ambiente, época ou local que muda o que serve como shot, quando isso importa (ex: \
+"Nova York, anos 1980", "dentro de um tribunal"). Deixe "" quando não for relevante.
+- "must_not": lista de elementos que, se aparecerem no candidato, o tornam ERRADO mesmo com nota \
+alta (ex: um shot sobre carro elétrico não pode mostrar posto de gasolina). Geralmente vazia — só \
+preencha quando houver um erro óbvio e específico que uma busca pode trazer por engano.
+- "identity_required": true quando o shot exige uma pessoa, marca, lugar ou objeto ESPECÍFICO e \
+RECONHECÍVEL (ex: Torre Eiffel, um político nomeado, o logo de uma empresa) — um genérico parecido \
+(outro prédio, outra pessoa de terno) não serve. false quando qualquer cena que ilustre o "subject" \
+de forma genérica já resolve (ex: "pessoas trabalhando em escritório").
+- "original_language_query": a mesma busca do "subject", mas escrita em {language_name} em vez de \
+inglês — cobre casos onde o nome próprio ou termo local só aparece em fontes no idioma original \
+(ex: um evento ou pessoa conhecida majoritariamente no Brasil).
 - "strategy": decida como um editor, POR SHOT. Não assuma que tudo é footage.
     FOOTAGE  — existe cena filmável genérica que ilustra bem (ação, ambiente, profissão).
     NEWS     — o trecho fala de fato/pessoa/evento REAL e específico, que só material de arquivo \
@@ -407,12 +431,32 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
                 # renderizar — mesmo texto que a IA já escreveu em concept_text.
                 strategy = "TEXT"
 
+        subject = shot.get("subject")
+        action = shot.get("action")
+        context_field = shot.get("context")
+        must_not = shot.get("must_not")
+        original_language_query = shot.get("original_language_query")
+
         parsed_shots.append(
             {
                 "terms": clean,
                 "strategy": strategy,
                 "concept_text": concept.strip() if isinstance(concept, str) else "",
                 "motion_graphic": motion_graphic,
+                # campos novos são sempre opcionais na leitura: resposta antiga
+                # do cache ou do modelo sem eles nunca derruba o shot.
+                "subject": subject.strip() if isinstance(subject, str) else "",
+                "action": action.strip() if isinstance(action, str) else "",
+                "context": context_field.strip() if isinstance(context_field, str) else "",
+                "must_not": (
+                    [m.strip() for m in must_not if isinstance(m, str) and m.strip()]
+                    if isinstance(must_not, list)
+                    else []
+                ),
+                "identity_required": shot.get("identity_required") is True,
+                "original_language_query": (
+                    original_language_query.strip() if isinstance(original_language_query, str) else ""
+                ),
             }
         )
 

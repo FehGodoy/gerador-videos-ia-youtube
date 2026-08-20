@@ -28,8 +28,9 @@ THUMBNAIL_TIMEOUT = 10
 # "not_required" = a cena não pede um assunto específico nomeado (maioria dos
 # casos). Os outros 4 só importam quando o shot marca identity_required=true
 # (ver modules/keyword_extractor.py) — aí "uncertain"/"contradicted" vetam o
-# aceite automático mesmo com nota alta, decisão tomada em Python
-# (search_and_download_footage), nunca só confiando no texto do modelo.
+# aceite automático mesmo com nota alta, decisão tomada em Python dentro de
+# rank_candidates (ponto único de aplicação), nunca só confiando no texto do
+# modelo.
 _IDENTITY_STATUSES = ("confirmed", "probable", "uncertain", "contradicted", "not_required")
 
 
@@ -191,13 +192,26 @@ def _ask_claude(context: str, images: list[bytes], media_types: list[str]) -> tu
     return best_index, scores
 
 
-def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
+def rank_candidates(
+    context: str, candidates: list[dict], identity_required: bool = False
+) -> list[dict]:
     """Reordena `candidates` (melhor primeiro) usando visão do Claude pra
     comparar cada miniatura com o contexto da cena (trecho da narração + o
     que essa cena específica deve mostrar — ver footage_search). Se algo
     falhar (sem chave de API, erro de rede, resposta não parseável), devolve
     a lista na ordem original — o mesmo princípio de fallback já usado em
     keyword_extractor.py, o ranking nunca deve derrubar o pipeline.
+
+    `identity_required=True` (shot com identity_required no
+    keyword_extractor) ativa o veto de identidade: a nota do modelo
+    (`model_score`) fica preservada pra transparência, mas `relevance_score`
+    — o valor que TODO o resto do pipeline usa pra decidir (threshold do
+    waterfall, aceite final no composition_builder, ordenação no painel) —
+    é derrubada quando `identity_status` vem "uncertain" (abaixo do piso de
+    aceite automático, ainda pode cair em revisão manual) ou "contradicted"
+    (abaixo do piso de revisão, nunca publica). Ponto único de aplicação:
+    não confia na string `publish_recommendation` do próprio modelo, e nada
+    downstream precisa saber que o veto existe.
     """
     if len(candidates) <= 1:
         return candidates
@@ -240,10 +254,12 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
     scored = []
     for i, candidate in enumerate(valid_candidates):
         info = scores.get(i, {})
+        model_score = info.get("score")
         scored.append(
             {
                 **candidate,
-                "relevance_score": info.get("score"),
+                "relevance_score": model_score,
+                "model_score": model_score,
                 "ai_reasoning": info.get("reason", ""),
                 "identity_status": info.get("identity_status"),
                 "visible_evidence": info.get("visible_evidence", ""),
@@ -251,11 +267,40 @@ def rank_candidates(context: str, candidates: list[dict]) -> list[dict]:
             }
         )
 
-    # ordena pela nota, mas o best_index do modelo tem a palavra final na 1ª
-    # posição (ele pode preferir vídeo a foto num empate de nota)
-    ranked = sorted(scored, key=lambda c: c.get("relevance_score") or 0, reverse=True)
+    if identity_required:
+        cfg = load_config()
+        auto_accept = cfg["ranking"]["auto_accept_threshold"]
+        review_floor = cfg["ranking"]["alternative_threshold"]
+        for item in scored:
+            score = item["relevance_score"]
+            if score is None:
+                continue
+            if item["identity_status"] == "contradicted":
+                item["relevance_score"] = min(score, review_floor - 1)
+            elif item["identity_status"] == "uncertain":
+                item["relevance_score"] = min(score, auto_accept - 1)
+
+    # ordena pela nota, mas com identity_required uma identidade não confirmada
+    # nunca passa na frente de uma confirmada só por ter nota bruta maior —
+    # senão o corte de nota (acima) evita o auto-aceite cedo, mas ainda deixa
+    # esse candidato vencer a ordenação final contra um "confirmed" mais fraco
+    # (bug real pego testando esta mudança com um caso sintético). "confirmed"/
+    # "probable"/"not_required"/None ficam no mesmo nível (nenhum é sinal de
+    # problema); só "uncertain" e "contradicted" caem pra trás.
+    _BAD_IDENTITY_RANK = {"uncertain": 1, "contradicted": 2}
+
+    def _sort_key(c: dict) -> tuple:
+        score = c.get("relevance_score")
+        tier = _BAD_IDENTITY_RANK.get(c.get("identity_status"), 0) if identity_required else 0
+        return (tier, -(score if score is not None else -1))
+
+    ranked = sorted(scored, key=_sort_key)
     winner = scored[best_index]
-    ranked = [winner] + [c for c in ranked if c is not winner]
+    if winner.get("relevance_score") == winner.get("model_score"):
+        # o modelo não vetou esse candidato (senão a nota teria sido cortada
+        # acima): sua preferência declarada (best_index) tem a palavra final
+        # num empate de nota.
+        ranked = [winner] + [c for c in ranked if c is not winner]
 
     # candidatos sem thumbnail (não avaliados) vão pro fim, sem nota
     skipped = [

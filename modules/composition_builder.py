@@ -521,6 +521,9 @@ def _assemble_composition(
                     entities=analysis.get("entities") or [],
                     allowed_sources=allowed_sources,
                     google_images_recency=google_images_recency,
+                    subject=shot.get("subject") or "",
+                    identity_required=shot.get("identity_required") or False,
+                    original_language_query=shot.get("original_language_query") or "",
                 )
             else:
                 found = {"clip_path": None, "relevance_score": None}

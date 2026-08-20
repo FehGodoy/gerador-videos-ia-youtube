@@ -1472,6 +1472,9 @@ def search_and_download_footage(
     entities: list[str] | None = None,
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
+    subject: str = "",
+    identity_required: bool = False,
+    original_language_query: str = "",
 ) -> dict:
     """Busca, ranqueia por IA (modules/footage_ranker) e baixa o melhor
     candidato pra um shot do beat. Se `slug` for passado, reaproveita uma
@@ -1485,6 +1488,11 @@ def search_and_download_footage(
     config.yaml só pra este job — None mantém o que estiver no arquivo,
     "" (string vazia, mandada pelo painel pra "Sem filtro") desliga o
     filtro mesmo que o config.yaml tenha um valor padrão.
+    `subject`/`original_language_query` vêm da análise estruturada do shot
+    (modules/keyword_extractor) e só entram no contexto passado pro ranker,
+    sem afetar a busca em si. `identity_required` quando True faz o ranker
+    (modules/footage_ranker) derrubar a nota de candidato com identidade
+    incerta/contraditória, mesmo que o resto do candidato pareça bom.
 
     Retorna {"clip_path", "source", "media_type", "duration", "search_terms"}.
     `duration` é a duração do clipe em segundos (None pra imagem ou fallback)
@@ -1515,6 +1523,15 @@ def search_and_download_footage(
         # entidades explícitas no contexto: é o que faz a IA cobrar o assunto
         # exato em vez de aceitar um parecido
         partes.append(f"Entidades citadas (o visual precisa bater com elas): {', '.join(entities)}")
+    if subject:
+        partes.append(f"O shot precisa mostrar: {subject}")
+    if identity_required:
+        partes.append(
+            "Identidade específica obrigatória: só aceite se o candidato mostrar "
+            "claramente esse assunto exato, não um parecido genérico."
+        )
+    if original_language_query:
+        partes.append(f"Busca no idioma original: {original_language_query}")
     partes.append(f"Tipo de visual pedido: {strategy}")
     partes.append(f"Esta cena deve mostrar: {', '.join(search_terms)}")
     context = " | ".join(partes)
@@ -1548,7 +1565,7 @@ def search_and_download_footage(
     best_index: int | None = None
     best_score = -1
     for batch in source_batches:
-        ranked_batch = rank_candidates(context, batch)
+        ranked_batch = rank_candidates(context, batch, identity_required=identity_required)
         fetched_batches.append(ranked_batch)
         top_score = ranked_batch[0].get("relevance_score")
         if top_score is None:
@@ -1591,7 +1608,7 @@ def search_and_download_footage(
 
     if clip_path is None:
         for batch in source_batches:  # continua a mesma iteração, fontes que sobraram
-            ranked_batch = rank_candidates(context, batch)
+            ranked_batch = rank_candidates(context, batch, identity_required=identity_required)
             chosen, clip_path, chosen_index = _download_first_available(ranked_batch, beat_id, slot)
             if clip_path is not None:
                 chosen_batch = ranked_batch
