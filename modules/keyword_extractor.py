@@ -15,6 +15,7 @@ cenas propriamente dito fica em modules/composition_builder.py.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -33,6 +34,15 @@ logger = logging.getLogger(__name__)
 # verdade sem custar nada a mais nos casos normais (é só um teto, não é
 # cobrado pelo tamanho não usado).
 MAX_TOKENS = 4000
+
+# Sobe manualmente sempre que _PROMPT_TEMPLATE ou _parse_analysis mudarem de
+# formato (campo novo, regra nova) — entra no hash do cache (_cache_key)
+# pra invalidar respostas antigas sozinho, sem precisar apagar cache_dir/
+# keywords à mão. Bug real desta sessão: antes o cache só conferia
+# n_shots/n_highlights, então mudar o prompt (fix do MAX_TOKENS, fix do
+# gráfico) deixava beats já processados presos na resposta velha até eu
+# apagar o cache manualmente.
+ANALYSIS_VERSION = 1
 
 # Último recurso, quando nem a chamada normal nem o retry devolveram algo
 # parseável — genérico o bastante pra retornar *algum* footage em vez de
@@ -521,6 +531,16 @@ def _context_snippet(text: str | None, limit: int = 240) -> str:
     return flat[:limit] + ("..." if len(flat) > limit else "")
 
 
+def _cache_key(beat_text: str, n_shots: int, n_highlights: int, language: str, model: str) -> str:
+    """Chave de frescor do cache de análise: muda sozinha quando qualquer
+    entrada que afeta a resposta muda (texto do beat, quantidade pedida,
+    idioma, modelo) OU quando ANALYSIS_VERSION sobe (formato do prompt/parse
+    mudou). Cache antigo sem essa chave simplesmente não bate e regenera
+    sozinho — sem precisar de migração."""
+    payload = f"{ANALYSIS_VERSION}|{beat_text}|{n_shots}|{n_highlights}|{language}|{model}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
 def analyze_beat(
     beat: Beat,
     slug: str,
@@ -536,9 +556,11 @@ def analyze_beat(
 
     `n_shots` e `n_highlights` vêm da duração do beat (ver composition_builder)
     — beats longos precisam de mais material visual pra não ficar um clipe só
-    na tela, e de mais selos de informação pra não ficarem "secos". O cache
-    guarda os dois valores e é refeito se algum mudar (ex: a narração foi
-    regerada numa velocidade diferente e o beat encolheu/cresceu).
+    na tela, e de mais selos de informação pra não ficarem "secos". Cache em
+    disco por beat, versionado por _cache_key: refeito se o texto do beat,
+    n_shots, n_highlights, idioma ou modelo mudarem, ou se ANALYSIS_VERSION
+    subir (formato do prompt/parse mudou) — nunca fica preso numa resposta
+    de um formato antigo.
 
     Retorna {"type": "concreto"|"estatistico", "shots": [{"terms": [...]}, ...],
     "chart": None | {...}, "highlights": [...], "n_shots": int}.
@@ -547,16 +569,16 @@ def analyze_beat(
     beat_dir = cache_dir("keywords", slug)
     cache_path = beat_dir / f"beat_{beat.id:03d}.json"
 
-    if cache_path.exists():
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
-        fresh = cached.get("n_shots") == n_shots and cached.get("n_highlights") == n_highlights
-        if fresh and cached.get("shots"):
-            return cached
-
     kw_cfg = cfg["keywords"]
     call = {"anthropic": _call_anthropic, "openai": _call_openai}.get(kw_cfg["provider"])
     if call is None:
         raise ValueError(f"provider desconhecido em config.yaml: {kw_cfg['provider']}")
+
+    cache_key = _cache_key(beat.text, n_shots, n_highlights, language, kw_cfg["model"])
+    if cache_path.exists():
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        if cached.get("cache_key") == cache_key and cached.get("shots"):
+            return cached
 
     prompt = _PROMPT_TEMPLATE.format(
         n_shots=n_shots,
@@ -581,6 +603,7 @@ def analyze_beat(
         analysis = _fallback_analysis(n_shots)
 
     analysis["n_highlights"] = n_highlights
+    analysis["cache_key"] = cache_key
     cache_path.write_text(json.dumps(analysis, ensure_ascii=False, indent=2), encoding="utf-8")
     return analysis
 

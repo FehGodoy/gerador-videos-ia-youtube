@@ -33,6 +33,13 @@ THUMBNAIL_TIMEOUT = 10
 # modelo.
 _IDENTITY_STATUSES = ("confirmed", "probable", "uncertain", "contradicted", "not_required")
 
+# Sobe manualmente sempre que o FORMATO da resposta de rank_candidates mudar
+# (campo novo, regra de veto nova) — usado por footage_search.py pra
+# invalidar sozinho um cache de candidatos ranqueados salvo com uma versão
+# antiga (ver load_candidates_for_review), no mesmo espírito de
+# ANALYSIS_VERSION em keyword_extractor.py.
+RANKING_POLICY_VERSION = 1
+
 
 def _image_media_type(data: bytes) -> str:
     """Tipo real da miniatura, pelos bytes iniciais.

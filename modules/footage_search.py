@@ -1244,20 +1244,38 @@ def load_candidates_for_review(slug: str, beat_id: int, slot: int = 0) -> dict |
 
     `slot` é o índice do shot dentro do beat — um beat longo é preenchido por
     vários shots visualmente distintos, cada um com sua própria lista de
-    candidatos e sua própria escolha."""
+    candidatos e sua própria escolha.
+
+    Descarta (devolve None) um cache salvo com uma versão antiga do ranking
+    (ver RANKING_POLICY_VERSION em footage_ranker.py) — sem essa checagem,
+    ficava preso pra sempre num formato de candidato antigo (esta cache nunca
+    teve NENHUMA checagem de frescor antes desta mudança)."""
+    from modules.footage_ranker import RANKING_POLICY_VERSION
+
     path = _review_path(slug, beat_id, slot)
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    cached = json.loads(path.read_text(encoding="utf-8"))
+    if cached.get("ranking_policy_version") != RANKING_POLICY_VERSION:
+        return None
+    return cached
 
 
 def save_candidates_for_review(
     slug: str, beat_id: int, candidates: list[dict], chosen_index: int, slot: int = 0
 ) -> None:
+    from modules.footage_ranker import RANKING_POLICY_VERSION
+
     path = _review_path(slug, beat_id, slot)
     path.write_text(
         json.dumps(
-            {"candidates": candidates, "chosen_index": chosen_index}, ensure_ascii=False, indent=2
+            {
+                "candidates": candidates,
+                "chosen_index": chosen_index,
+                "ranking_policy_version": RANKING_POLICY_VERSION,
+            },
+            ensure_ascii=False,
+            indent=2,
         ),
         encoding="utf-8",
     )
