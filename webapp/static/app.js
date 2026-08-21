@@ -1095,7 +1095,12 @@ function renderReviewBeats(jobId, beatsData) {
     if (!beat.shots.length) {
       const empty = document.createElement("div");
       empty.className = "review-beat-empty";
-      empty.textContent = "Nenhum candidato encontrado — usando footage genérico (fallback).";
+      // shots vazio quer dizer coisas diferentes: modo de mídia própria
+      // nunca salva candidato pra revisão (a mídia está lá, só não dá pra
+      // trocar por aqui) — bem diferente de "a busca não achou nada bom".
+      empty.textContent = beat.used_own_media
+        ? "Este bloco usa mídia do seu lote próprio — sem revisão disponível nesse modo."
+        : "Nenhum candidato encontrado — usando footage genérico (fallback).";
       wrap.appendChild(empty);
       reviewBeats.appendChild(wrap);
       continue;

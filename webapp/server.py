@@ -397,6 +397,16 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
             for s in beat_scenes
             if s["kind"] == "concept"
         ]
+        # shots vazio pode significar duas coisas bem diferentes: a busca por
+        # IA não achou nada bom (fallback de verdade) OU o modo de mídia
+        # própria foi usado (nunca salva candidato pra revisão, ver
+        # modules/media_pool.py) e a mídia está lá, só não é revisável. Sem
+        # essa distinção, um vídeo cheio de mídia própria mostrava a mesma
+        # mensagem assustadora de "nada encontrado".
+        used_own_media = any(
+            s["kind"] == "footage" and (s.get("footage") or {}).get("source") == "manual"
+            for s in beat_scenes
+        )
         result.append(
             {
                 "beat_id": beat["id"],
@@ -404,6 +414,7 @@ async def get_footage_candidates(job_id: str) -> list[dict]:
                 "entities": entities_by_beat.get(beat["id"], []),
                 "shots": shots,
                 "concept_cards": cards,
+                "used_own_media": used_own_media,
             }
         )
     return result
