@@ -25,6 +25,7 @@ from modules.captions import ensure_captions
 from modules.config import PROJECT_ROOT, load_config, output_dir
 from modules.footage_search import search_and_download_footage
 from modules.keyword_extractor import STRATEGIES_THAT_SEARCH, analyze_beat
+from modules.media_pool import PoolDistributor
 from modules.narration import build_narration
 from modules.script_parser import Beat, parse_script
 
@@ -113,6 +114,7 @@ def _tile_scenes(
     cfg: dict,
     has_chart: bool,
     chart_at_seconds: float | None = None,
+    on_reuse: Callable[[dict], dict] | None = None,
 ) -> list[dict]:
     """Preenche o intervalo [start, end) com cenas curtas, revezando os shots.
 
@@ -120,6 +122,12 @@ def _tile_scenes(
     o congelamento. Quando o mesmo clipe é reutilizado (beat longo, poucos
     shots), cada reuso começa de um ponto diferente do clipe
     (`clip_start_seconds`) pra não parecer o mesmo trecho em loop.
+
+    `on_reuse`: só usado no modo de mídia própria (PoolDistributor.reuse_video).
+    Um vídeo do pool já chega pré-cortado no tamanho exato do shot — sem
+    folga nenhuma pra deslocar `clip_start_seconds` como o resto da lógica
+    abaixo faz. Quando reaparece dentro do mesmo beat, `on_reuse` corta um
+    trecho ALEATÓRIO NOVO da mesma fonte em vez de repetir o trecho exato.
 
     `chart_at_seconds` é o instante em que o dado do gráfico é FALADO (ancorado
     nos timestamps por palavra). A cena de gráfico é encaixada ali no meio do
@@ -277,6 +285,19 @@ def _tile_scenes(
             )
             cursor += duration
             continue
+
+        if (
+            on_reuse
+            and footage.get("source") == "manual"
+            and footage.get("media_type") == "video"
+            and reuse_count.get(footage.get("clip_path") or "", 0) > 0
+        ):
+            # vídeo do pool próprio reaparecendo dentro do beat: já chega
+            # pré-cortado no tamanho exato do shot (sem folga pra deslocar
+            # clip_start como a lógica abaixo faz pro resto dos casos) — pede
+            # um trecho aleatório NOVO da mesma fonte em vez de repetir.
+            footage = on_reuse(footage)
+            shots[shot_i] = footage
 
         clip_path = footage.get("clip_path") or ""
         used = reuse_count.get(clip_path, 0)
@@ -443,6 +464,7 @@ def _assemble_composition(
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
+    media_mode: str = "ai_search",
 ) -> dict:
     """Monta o composition.json a partir de uma lista de beats já pronta —
     tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
@@ -450,6 +472,11 @@ def _assemble_composition(
 
     `allowed_sources`: fontes de footage escolhidas pra este vídeo específico
     (None = usa footage.sources do config.yaml sem restrição extra).
+
+    `media_mode`: "ai_search" (padrão, busca automática por IA) ou
+    "own_media" (distribui o lote de mídia própria enviado pelo usuário —
+    ver modules/media_pool.py — em vez de buscar. `allowed_sources`/
+    `google_images_recency` são ignorados nesse modo).
     """
     cfg = load_config()
 
@@ -467,6 +494,11 @@ def _assemble_composition(
 
     beats_by_id = {b["id"]: b for b in narration["beats"]}
     footage_cfg = cfg["footage"]
+
+    # instanciado uma vez pro vídeo INTEIRO, não por beat — o padrão
+    # foto/foto/vídeo precisa ser contínuo do início ao fim, não reiniciar a
+    # cada bloco de narração.
+    distributor = PoolDistributor(slug, cfg) if media_mode == "own_media" else None
 
     composition_beats = []
     for position, beat in enumerate(beats):
@@ -519,7 +551,15 @@ def _assemble_composition(
         # Shots com estratégia MOTION_GRAPHIC/TEXT não buscam nada: viram card.
         shots = []
         for slot, shot in enumerate(analysis["shots"]):
-            if shot["strategy"] in STRATEGIES_THAT_SEARCH:
+            if shot["strategy"] not in STRATEGIES_THAT_SEARCH:
+                found = {"clip_path": None, "relevance_score": None}
+            elif distributor is not None:
+                # modo de mídia própria: ignora terms/entities/identity —
+                # esses vêm da análise por IA (ainda roda, é o que decide
+                # n_shots/chart/concept_text), mas a ESCOLHA de mídia é só
+                # o rodízio fixo, sem julgamento de relevância nenhum.
+                found = distributor.next_shot_media(beat.id, slot)
+            else:
                 found = search_and_download_footage(
                     beat.id,
                     beat.text,
@@ -534,8 +574,6 @@ def _assemble_composition(
                     identity_required=shot.get("identity_required") or False,
                     original_language_query=shot.get("original_language_query") or "",
                 )
-            else:
-                found = {"clip_path": None, "relevance_score": None}
             shots.append(
                 {
                     **found,
@@ -558,7 +596,8 @@ def _assemble_composition(
             if has_chart
             else None
         )
-        scenes = _tile_scenes(visual_start, visual_end, shots, cfg, has_chart, chart_at)
+        on_reuse = distributor.reuse_video if distributor is not None else None
+        scenes = _tile_scenes(visual_start, visual_end, shots, cfg, has_chart, chart_at, on_reuse)
         chart_ranges = [
             (s["start_seconds"], s["end_seconds"]) for s in scenes if s["kind"] == "chart"
         ]
@@ -611,13 +650,22 @@ def build_composition(
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
+    media_mode: str = "ai_search",
 ) -> dict:
     """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
     script_path = Path(script_path)
     slug = slug or script_path.stem
     beats = parse_script(script_path)
     return _assemble_composition(
-        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources, google_images_recency
+        beats,
+        slug,
+        on_beat_progress,
+        voice_id,
+        language,
+        speed,
+        allowed_sources,
+        google_images_recency,
+        media_mode,
     )
 
 
@@ -630,11 +678,20 @@ def build_composition_from_beats(
     speed: float | None = None,
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
+    media_mode: str = "ai_search",
 ) -> dict:
     """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
     roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
     return _assemble_composition(
-        beats, slug, on_beat_progress, voice_id, language, speed, allowed_sources, google_images_recency
+        beats,
+        slug,
+        on_beat_progress,
+        voice_id,
+        language,
+        speed,
+        allowed_sources,
+        google_images_recency,
+        media_mode,
     )
 
 
