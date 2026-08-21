@@ -22,6 +22,13 @@ const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
 const sourcesList = document.getElementById("sources-list");
 const recencySelect = document.getElementById("recency-select");
+const sourcesPicker = document.getElementById("sources-picker");
+const ownMediaPicker = document.getElementById("own-media-picker");
+const ownMediaInput = document.getElementById("own-media-input");
+const ownMediaAddBtn = document.getElementById("own-media-add-btn");
+const ownMediaStatus = document.getElementById("own-media-status");
+const ownMediaList = document.getElementById("own-media-list");
+const mediaModeRadios = document.querySelectorAll('input[name="media-mode"]');
 const newDraftBtn = document.getElementById("new-draft-btn");
 const stepReview = document.getElementById("step-review");
 const reviewBeats = document.getElementById("review-beats");
@@ -58,6 +65,8 @@ let nextBlockId = 0;
 let currentJobId = null;
 let selectedSources = new Set();
 let allSources = [];
+let mediaMode = "ai_search";
+let poolItemCount = 0;
 
 function icon(templateId) {
   const tpl = document.getElementById(templateId);
@@ -141,7 +150,75 @@ serperKeySave.addEventListener("click", async () => {
 // --- Fontes de mídia ---
 
 function updateGenerateVideoButton() {
-  generateVideoBtn.disabled = blocks.length === 0 || selectedSources.size === 0;
+  const mediaReady =
+    mediaMode === "own_media" ? poolItemCount > 0 : selectedSources.size > 0;
+  generateVideoBtn.disabled = blocks.length === 0 || !mediaReady;
+}
+
+// --- Modo de mídia (busca por IA vs. lote próprio) ---
+
+function setMediaMode(mode) {
+  mediaMode = mode;
+  sourcesPicker.classList.toggle("hidden", mode !== "ai_search");
+  ownMediaPicker.classList.toggle("hidden", mode !== "own_media");
+  if (mode === "own_media") refreshPoolPreview();
+  updateGenerateVideoButton();
+}
+
+function renderPoolThumbs(pool) {
+  ownMediaList.innerHTML = "";
+  const items = [
+    ...pool.photos.map((url) => ({ url, kind: "foto" })),
+    ...pool.videos.map((url) => ({ url, kind: "vídeo" })),
+  ];
+  for (const item of items) {
+    const thumb = document.createElement("div");
+    thumb.className = "own-media-thumb";
+    const media =
+      item.kind === "foto"
+        ? Object.assign(document.createElement("img"), { src: item.url })
+        : Object.assign(document.createElement("video"), { src: item.url, muted: true });
+    const kindTag = document.createElement("span");
+    kindTag.className = "own-media-thumb-kind";
+    kindTag.textContent = item.kind;
+    thumb.append(media, kindTag);
+    ownMediaList.appendChild(thumb);
+  }
+  poolItemCount = items.length;
+  ownMediaStatus.textContent = poolItemCount
+    ? `${pool.photos.length} foto(s), ${pool.videos.length} vídeo(s) prontos.`
+    : "Nenhum arquivo enviado ainda.";
+  updateGenerateVideoButton();
+}
+
+async function refreshPoolPreview() {
+  if (!draftSlug) return;
+  try {
+    const resp = await fetch(`/api/media-pool/${draftSlug}`);
+    if (!resp.ok) return;
+    renderPoolThumbs(await resp.json());
+  } catch {
+    // preview é só cortesia visual; falha aqui não bloqueia o upload em si
+  }
+}
+
+async function uploadPoolFiles(files) {
+  if (!draftSlug || !files.length) return;
+  ownMediaStatus.textContent = "Enviando...";
+  const formData = new FormData();
+  for (const file of files) formData.append("files", file);
+  try {
+    const resp = await fetch(`/api/media-pool/${draftSlug}`, { method: "POST", body: formData });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao enviar (${resp.status})`);
+    }
+    const { pool } = await resp.json();
+    renderPoolThumbs(pool);
+  } catch (err) {
+    showError(err.message);
+    refreshPoolPreview();
+  }
 }
 
 function renderSourcesGrid() {
@@ -516,6 +593,12 @@ function resetDraft() {
   clearError();
   unlockDraft();
   updateGenerateBlockButton();
+
+  poolItemCount = 0;
+  ownMediaList.innerHTML = "";
+  ownMediaStatus.textContent = "";
+  for (const radio of mediaModeRadios) radio.checked = radio.value === "ai_search";
+  setMediaMode("ai_search");
 }
 
 // --- Geração do vídeo ---
@@ -1205,8 +1288,12 @@ function startJobEvents(jobId) {
 
 async function handleGenerateVideo() {
   clearError();
-  if (selectedSources.size === 0) {
+  if (mediaMode === "ai_search" && selectedSources.size === 0) {
     showError("Selecione ao menos uma fonte de mídia.");
+    return;
+  }
+  if (mediaMode === "own_media" && poolItemCount === 0) {
+    showError("Envie ao menos uma foto ou vídeo antes de gerar.");
     return;
   }
   generateVideoBtn.disabled = true;
@@ -1231,6 +1318,7 @@ async function handleGenerateVideo() {
         remote_render: remoteRenderToggle.checked,
         sources: Array.from(selectedSources),
         google_images_recency: recencySelect.value,
+        media_mode: mediaMode,
       }),
     });
     if (!resp.ok) {
@@ -1248,6 +1336,19 @@ async function handleGenerateVideo() {
 }
 
 // --- Eventos ---
+
+for (const radio of mediaModeRadios) {
+  radio.addEventListener("change", () => {
+    if (radio.checked) setMediaMode(radio.value);
+  });
+}
+
+ownMediaAddBtn.addEventListener("click", () => ownMediaInput.click());
+
+ownMediaInput.addEventListener("change", async () => {
+  await uploadPoolFiles(Array.from(ownMediaInput.files));
+  ownMediaInput.value = ""; // permite reenviar o mesmo arquivo depois, se precisar
+});
 
 channelSelect.addEventListener("change", async () => {
   currentChannel = channelSelect.value;

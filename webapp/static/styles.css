@@ -439,6 +439,118 @@ button:focus-visible {
   outline-offset: 1px;
 }
 
+.media-mode-picker {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--border);
+}
+
+.media-mode-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.media-mode-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.media-mode-chip:hover {
+  border-color: var(--border-strong);
+}
+
+.media-mode-chip input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.media-mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex-shrink: 0;
+  transition: background 0.15s ease;
+}
+
+.media-mode-label {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.media-mode-chip:has(input:checked) {
+  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
+  border-color: var(--orange-dim);
+}
+
+.media-mode-chip:has(input:checked) .media-mode-dot {
+  background: var(--orange);
+}
+
+.media-mode-chip:has(input:checked) .media-mode-label {
+  color: var(--text-primary);
+}
+
+.media-mode-chip:has(input:focus-visible) {
+  outline: 2px solid var(--orange);
+  outline-offset: 1px;
+}
+
+.own-media-picker {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--border);
+}
+
+.own-media-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.own-media-thumb {
+  width: 84px;
+  height: 84px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  position: relative;
+  flex-shrink: 0;
+}
+
+.own-media-thumb img,
+.own-media-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.own-media-thumb-kind {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, black 55%, transparent);
+  color: white;
+}
+
 /* --- Switch (toggle) --- */
 
 .switch-row {

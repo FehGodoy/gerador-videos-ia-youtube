@@ -87,7 +87,25 @@
       <button id="generate-block-btn" class="primary" disabled>Gerar narração deste bloco</button>
     </div>
     <ul id="blocks-list" class="blocks-list"></ul>
-    <div class="sources-picker">
+    <div class="media-mode-picker">
+      <div class="sources-picker-head">
+        <strong>Como buscar mídia</strong>
+        <span class="hint">Busca automática por IA, ou seu próprio lote de fotos/vídeos.</span>
+      </div>
+      <div class="media-mode-grid">
+        <label class="media-mode-chip">
+          <input type="radio" name="media-mode" id="media-mode-ai" value="ai_search" checked>
+          <span class="media-mode-dot"></span>
+          <span class="media-mode-label">Busca automática por IA</span>
+        </label>
+        <label class="media-mode-chip">
+          <input type="radio" name="media-mode" id="media-mode-own" value="own_media">
+          <span class="media-mode-dot"></span>
+          <span class="media-mode-label">Minha própria mídia</span>
+        </label>
+      </div>
+    </div>
+    <div class="sources-picker" id="sources-picker">
       <div class="sources-picker-head">
         <strong>Fontes de mídia</strong>
         <span class="hint">Quais acervos buscar footage/imagens pra este vídeo.</span>
@@ -97,6 +115,16 @@
         <label for="recency-select">Google Imagens — resultados de</label>
         <select id="recency-select"></select>
       </div>
+    </div>
+    <div class="own-media-picker hidden" id="own-media-picker">
+      <div class="sources-picker-head">
+        <strong>Meu lote de mídia</strong>
+        <span class="hint">Distribuído pelo vídeo inteiro na sequência foto, foto, vídeo. Vídeos usam um trecho aleatório de pelo menos 3s a cada aparição.</span>
+      </div>
+      <input type="file" id="own-media-input" accept="image/*,video/*" multiple class="hidden">
+      <button type="button" id="own-media-add-btn" class="ghost">Adicionar fotos/vídeos</button>
+      <p id="own-media-status" class="hint"></p>
+      <div id="own-media-list" class="own-media-grid"></div>
     </div>
     <div class="generate-video-row">
       <label class="switch-row">
