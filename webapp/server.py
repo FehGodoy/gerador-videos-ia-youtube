@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from modules import footage_search, github_render, settings as settings_module
+from modules import footage_search, github_render, media_pool, settings as settings_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.narration import synthesize_beat
@@ -38,6 +38,7 @@ VOICE_PREVIEWS_DIR = PROJECT_ROOT / cfg["paths"]["cache_dir"] / "voice_previews"
 VOICE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 NARRATION_CACHE_DIR = cache_dir("narration")
 FOOTAGE_CACHE_DIR = cache_dir("footage")
+OWN_MEDIA_CACHE_DIR = cache_dir("own_media")
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -58,6 +59,9 @@ app.mount("/narration_cache", StaticFiles(directory=str(NARRATION_CACHE_DIR)), n
 # arquivos de upload manual — os dois só existem localmente, sem URL externa
 # pra usar como thumbnail_url/url do jeito que os outros candidatos têm.
 app.mount("/footage_cache", StaticFiles(directory=str(FOOTAGE_CACHE_DIR)), name="footage_cache")
+# Preview do lote de mídia própria (modo alternativo à busca por IA, ver
+# modules/media_pool.py) — cada slug tem sua própria subpasta.
+app.mount("/own_media_cache", StaticFiles(directory=str(OWN_MEDIA_CACHE_DIR)), name="own_media_cache")
 
 
 class BlockIn(BaseModel):
@@ -91,6 +95,11 @@ class CreateJobRequest(BaseModel):
     # (compatibilidade com quem ainda não manda o campo). "" = sem filtro,
     # mesmo que o config.yaml tenha um valor padrão.
     google_images_recency: str | None = None
+    # "ai_search" (padrão) busca automaticamente; "own_media" distribui o
+    # lote de fotos/vídeos que o usuário subiu via /api/media-pool/{slug}
+    # antes de criar o job (ver modules/media_pool.py) — sources/
+    # google_images_recency são ignorados nesse modo.
+    media_mode: str = "ai_search"
 
 
 class ChannelRequest(BaseModel):
@@ -204,10 +213,17 @@ async def create_job(req: CreateJobRequest) -> dict:
         raise HTTPException(status_code=400, detail="Nenhum bloco de narração adicionado.")
     if not req.voice_id:
         raise HTTPException(status_code=400, detail="Nenhuma voz selecionada.")
-    if req.sources is not None and not req.sources:
-        raise HTTPException(status_code=400, detail="Selecione ao menos uma fonte de mídia.")
-    if req.google_images_recency not in (None, "", *RECENCY_OPTIONS):
-        raise HTTPException(status_code=400, detail="Filtro de recência inválido.")
+    if req.media_mode not in ("ai_search", "own_media"):
+        raise HTTPException(status_code=400, detail="media_mode inválido.")
+    if req.media_mode == "ai_search":
+        if req.sources is not None and not req.sources:
+            raise HTTPException(status_code=400, detail="Selecione ao menos uma fonte de mídia.")
+        if req.google_images_recency not in (None, "", *RECENCY_OPTIONS):
+            raise HTTPException(status_code=400, detail="Filtro de recência inválido.")
+    else:
+        pool = media_pool.list_pool(req.slug)
+        if not pool["photos"] and not pool["videos"]:
+            raise HTTPException(status_code=400, detail="Envie ao menos uma foto ou vídeo antes de gerar.")
 
     # Falha cedo: sem isso, um gh sem login só estourava lá na frente, depois
     # da revisão manual de footage inteira — e jogava esse trabalho fora.
@@ -226,6 +242,7 @@ async def create_job(req: CreateJobRequest) -> dict:
         remote=req.remote_render,
         allowed_sources=req.sources,
         google_images_recency=req.google_images_recency,
+        media_mode=req.media_mode,
     )
     return {"job_id": job.id, "beats": job.beats}
 
@@ -464,6 +481,48 @@ async def upload_footage_candidate(job_id: str, beat_id: int, slot: int, file: U
         "chosen_index": chosen_index,
         "candidate": manual_candidate,
         "updated_scenes": updated_scenes,
+    }
+
+
+@app.post("/api/media-pool/{slug}")
+async def upload_media_pool(slug: str, files: list[UploadFile]) -> dict:
+    """Recebe o lote de fotos/vídeos do modo de mídia própria (ver
+    modules/media_pool.py), ANTES do job existir — escopado por slug (o
+    mesmo draftSlug gerado no painel ao escolher a voz), não por job_id."""
+    if not files:
+        raise HTTPException(status_code=400, detail="Nenhum arquivo enviado.")
+
+    saved = []
+    for file in files:
+        data = await file.read()
+        if not data:
+            continue
+        if len(data) > _MANUAL_UPLOAD_MAX_BYTES:
+            raise HTTPException(
+                status_code=400, detail=f"{file.filename}: arquivo maior que 200MB."
+            )
+        result = await asyncio.to_thread(
+            media_pool.save_pool_upload, slug, file.filename or "upload", data
+        )
+        saved.append(result)
+
+    return {"saved": saved, "pool": _media_pool_summary(slug)}
+
+
+@app.get("/api/media-pool/{slug}")
+async def get_media_pool(slug: str) -> dict:
+    return _media_pool_summary(slug)
+
+
+def _media_pool_summary(slug: str) -> dict:
+    pool = media_pool.list_pool(slug)
+    return {
+        "photos": [
+            f"/own_media_cache/{slug}/{p.name}" for p in pool["photos"]
+        ],
+        "videos": [
+            f"/own_media_cache/{slug}/{v.name}" for v in pool["videos"]
+        ],
     }
 
 
