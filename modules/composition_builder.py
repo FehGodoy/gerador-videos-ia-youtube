@@ -123,11 +123,15 @@ def _tile_scenes(
     shots), cada reuso começa de um ponto diferente do clipe
     (`clip_start_seconds`) pra não parecer o mesmo trecho em loop.
 
-    `on_reuse`: só usado no modo de mídia própria (PoolDistributor.reuse_video).
-    Um vídeo do pool já chega pré-cortado no tamanho exato do shot — sem
-    folga nenhuma pra deslocar `clip_start_seconds` como o resto da lógica
-    abaixo faz. Quando reaparece dentro do mesmo beat, `on_reuse` corta um
-    trecho ALEATÓRIO NOVO da mesma fonte em vez de repetir o trecho exato.
+    `on_reuse`: só usado no modo de mídia própria (PoolDistributor.reuse_media).
+    Um beat mais longo que a quantidade de shots distintos gerados pra ele
+    (comum: pool com dezenas de fotos, mas só 2-3 shots por beat) fazia a
+    MESMA foto/trecho de vídeo repetir várias vezes seguidas dentro do beat,
+    ignorando o resto do pool. `on_reuse` troca por mídia nova a cada
+    reaparição: foto pega a PRÓXIMA do pool (rodízio global, nunca a mesma
+    de novo enquanto sobrar opção); vídeo corta um trecho aleatório novo da
+    mesma fonte (já chega pré-cortado no tamanho exato do shot, sem folga
+    pra deslocar `clip_start_seconds` como o resto da lógica abaixo faz).
 
     `chart_at_seconds` é o instante em que o dado do gráfico é FALADO (ancorado
     nos timestamps por palavra). A cena de gráfico é encaixada ali no meio do
@@ -289,13 +293,15 @@ def _tile_scenes(
         if (
             on_reuse
             and footage.get("source") == "manual"
-            and footage.get("media_type") == "video"
             and reuse_count.get(footage.get("clip_path") or "", 0) > 0
         ):
-            # vídeo do pool próprio reaparecendo dentro do beat: já chega
-            # pré-cortado no tamanho exato do shot (sem folga pra deslocar
-            # clip_start como a lógica abaixo faz pro resto dos casos) — pede
-            # um trecho aleatório NOVO da mesma fonte em vez de repetir.
+            # shot do pool próprio reaparecendo dentro do beat (beat pede
+            # mais cortes de tela do que shots distintos existem): sem isso,
+            # a MESMA foto/trecho de vídeo tocava de novo à toa mesmo com
+            # dezenas de outros itens no pool esperando a vez. Vídeo já
+            # chega pré-cortado no tamanho exato (sem folga pra deslocar
+            # clip_start como o resto da lógica abaixo faz), então pede um
+            # trecho novo da mesma fonte; foto pede a PRÓXIMA do pool.
             footage = on_reuse(footage)
             shots[shot_i] = footage
 
@@ -596,7 +602,7 @@ def _assemble_composition(
             if has_chart
             else None
         )
-        on_reuse = distributor.reuse_video if distributor is not None else None
+        on_reuse = distributor.reuse_media if distributor is not None else None
         scenes = _tile_scenes(visual_start, visual_end, shots, cfg, has_chart, chart_at, on_reuse)
         chart_ranges = [
             (s["start_seconds"], s["end_seconds"]) for s in scenes if s["kind"] == "chart"

@@ -166,11 +166,20 @@ class PoolDistributor:
         self._video_index += 1
         return self._trim_random_segment(path)
 
-    def reuse_video(self, footage: dict) -> dict:
-        """Chamada por _tile_scenes quando um shot de vídeo do pool precisa
-        reaparecer dentro do mesmo beat — em vez de deslocar clip_start num
-        clipe que já é só o trecho exato (sem folga nenhuma pra deslocar),
-        corta um trecho ALEATÓRIO NOVO da mesma fonte."""
+    def reuse_media(self, footage: dict) -> dict:
+        """Chamada por _tile_scenes quando um shot do pool precisa reaparecer
+        dentro do mesmo beat (o beat pede mais cortes de tela do que shots
+        distintos existem). Despacha por media_type — o objetivo dos dois é o
+        mesmo (nunca mostrar a mesma mídia de novo à toa quando o pool tem
+        mais opção), mas a técnica é diferente pra cada um."""
+        if footage.get("media_type") == "video":
+            return self._reuse_video(footage)
+        return self._next_photo()
+
+    def _reuse_video(self, footage: dict) -> dict:
+        """Vídeo já é só o trecho exato do shot (sem folga pra deslocar
+        clip_start como o resto da lógica de tiling faz) — corta um trecho
+        ALEATÓRIO NOVO da mesma fonte em vez de repetir o trecho exato."""
         source_path = footage.get("source_path")
         if not source_path:
             # não deveria acontecer (todo dict de vídeo do pool carrega
