@@ -42,7 +42,7 @@ MAX_TOKENS = 4000
 # n_shots/n_highlights, então mudar o prompt (fix do MAX_TOKENS, fix do
 # gráfico) deixava beats já processados presos na resposta velha até eu
 # apagar o cache manualmente.
-ANALYSIS_VERSION = 1
+ANALYSIS_VERSION = 2  # 2 = shot ganhou effect/gallery_items (Fase 5)
 
 # Último recurso, quando nem a chamada normal nem o retry devolveram algo
 # parseável — genérico o bastante pra retornar *algum* footage em vez de
@@ -95,6 +95,8 @@ markdown e sem lista no nível de cima:
       "must_not": ["elemento que, se aparecer, invalida o candidato — geralmente vazio"],
       "identity_required": false,
       "original_language_query": "a mesma busca do 'subject', só que no idioma do roteiro",
+      "effect": "none" | "split_screen" | "comparison_slider" | "gallery_grid" | "masonry",
+      "gallery_items": null ou [{{"terms": ["busca em inglês pra este item"], "subject": "sub-assunto deste item"}}, ...],
       "concept_text": "frase curta em {language_name} pra virar card se nada servir",
       "motion_graphic": null ou {{
         "kind": "timeline" | "quote" | "ranking",
@@ -149,6 +151,24 @@ de forma genérica já resolve (ex: "pessoas trabalhando em escritório").
 - "original_language_query": a mesma busca do "subject", mas escrita em {language_name} em vez de \
 inglês — cobre casos onde o nome próprio ou termo local só aparece em fontes no idioma original \
 (ex: um evento ou pessoa conhecida majoritariamente no Brasil).
+- "effect": só vale quando "strategy" é FOOTAGE, NEWS ou IMAGE (NUNCA em MOTION_GRAPHIC/TEXT — esses \
+já têm sua própria representação). Escolha com liberdade sempre que o trecho encaixar bem — não é \
+recurso raro, é parte normal de como este canal conta histórico visualmente:
+    "comparison_slider" — o trecho descreve uma TRANSFORMAÇÃO direta, antes→depois do MESMO \
+assunto (reforma, evolução de um produto, antes/depois de um resultado). "gallery_items" tem \
+EXATAMENTE 2 itens: o primeiro é o "antes", o segundo é o "depois".
+    "split_screen" — o trecho põe EXATAMENTE DUAS coisas lado a lado pra comparar ou contrastar, \
+sem ser necessariamente antes/depois (dois países, duas pessoas, duas abordagens). "gallery_items" \
+tem EXATAMENTE 2 itens.
+    "gallery_grid" ou "masonry" — o trecho cita TRÊS OU MAIS itens/exemplos nomeados na mesma \
+frase (uma lista de produtos, de lugares, de pessoas) — NUNCA junte 3+ num "split_screen" só \
+combinando tudo num item visual. "gallery_items" tem um item POR exemplo citado (até 6), nunca \
+invente item repetido só pra preencher, nunca agrupe dois exemplos reais num único item. Entre \
+os dois, escolha por variedade visual ao longo do roteiro (não use sempre o mesmo).
+    "none" — o caso comum: um assunto só, sem comparação nem lista. "gallery_items" fica null.
+- "gallery_items": null quando "effect" for "none". Quando não for, cada item é um SUB-ASSUNTO \
+DISTINTO (nunca repita o mesmo "subject" do shot em dois itens) com seu próprio "terms" (2-4 \
+buscas em inglês, mesmo critério do "terms" do shot) e "subject" (curto, como o "subject" do shot).
 - "strategy": decida como um editor, POR SHOT. Não assuma que tudo é footage.
     FOOTAGE  — existe cena filmável genérica que ilustra bem (ação, ambiente, profissão).
     NEWS     — o trecho fala de fato/pessoa/evento REAL e específico, que só material de arquivo \
@@ -402,6 +422,47 @@ def _parse_chart(raw: object) -> dict | None:
     }
 
 
+# Fase 5: efeitos multi-mídia (2-6 itens ao mesmo tempo na cena). Decisão
+# semântica da IA, diferente de transition_in/render_style (algorítmicos,
+# ver modules/composition_builder.py::_EffectPicker).
+_GALLERY_EFFECTS = ("split_screen", "comparison_slider", "gallery_grid", "masonry")
+_GALLERY_PAIR_EFFECTS = ("split_screen", "comparison_slider")  # exigem exatamente 2 itens
+
+
+def _parse_gallery_effect(
+    effect_raw, gallery_items_raw, strategy: str
+) -> tuple[str, list[dict] | None]:
+    """Nunca derruba o shot por causa de effect/gallery_items malformado —
+    só rebaixa pra "none" (shot vira footage/imagem normal) quando algo não
+    bate: strategy que não busca mídia, effect desconhecido, contagem de
+    itens errada pro effect escolhido, ou item sem terms utilizável."""
+    if strategy not in ("FOOTAGE", "NEWS", "IMAGE"):
+        return "none", None
+    effect = effect_raw if effect_raw in _GALLERY_EFFECTS else "none"
+    if effect == "none" or not isinstance(gallery_items_raw, list):
+        return "none", None
+
+    items = []
+    for item in gallery_items_raw:
+        if not isinstance(item, dict):
+            continue
+        terms = item.get("terms")
+        clean_terms = (
+            [t.strip() for t in terms if isinstance(t, str) and t.strip()]
+            if isinstance(terms, list)
+            else []
+        )
+        if not clean_terms:
+            continue
+        subject = item.get("subject")
+        items.append({"terms": clean_terms, "subject": subject.strip() if isinstance(subject, str) else ""})
+
+    max_items = 2 if effect in _GALLERY_PAIR_EFFECTS else 6
+    if len(items) < 2:
+        return "none", None
+    return effect, items[:max_items]
+
+
 def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dict:
     text = raw_response.strip()
     # o modelo às vezes envolve o JSON em ```json ... ``` apesar da instrução
@@ -446,6 +507,7 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
         context_field = shot.get("context")
         must_not = shot.get("must_not")
         original_language_query = shot.get("original_language_query")
+        effect, gallery_items = _parse_gallery_effect(shot.get("effect"), shot.get("gallery_items"), strategy)
 
         parsed_shots.append(
             {
@@ -467,6 +529,8 @@ def _parse_analysis(raw_response: str, n_shots: int, beat_text: str = "") -> dic
                 "original_language_query": (
                     original_language_query.strip() if isinstance(original_language_query, str) else ""
                 ),
+                "effect": effect,
+                "gallery_items": gallery_items,
             }
         )
 
