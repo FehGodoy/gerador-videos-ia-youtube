@@ -91,6 +91,18 @@ def _probe_duration(path: Path) -> float | None:
         return None
 
 
+def _photo_dict(path: Path) -> dict:
+    return {
+        "clip_path": str(path),
+        "source": "manual",
+        "media_type": "image",
+        "duration": None,
+        "search_terms": [],
+        "relevance_score": None,
+        "ai_reasoning": "",
+    }
+
+
 def _trim_video(source: Path, start: float, end: float, dest: Path) -> None:
     """Corta [start, end) de `source` em `dest` sem recodificar (-c copy,
     quase instantâneo). -ss ANTES de -i: seek rápido, mesmo padrão já usado
@@ -125,6 +137,10 @@ class PoolDistributor:
         self._pattern_index = 0
         self._photo_index = 0
         self._video_index = 0
+        # cursores independentes dos de cima — next_gallery_items nunca
+        # perturba o ritmo foto/foto/vídeo do resto do vídeo
+        self._gallery_photo_index = 0
+        self._gallery_video_index = 0
         self._trim_counter = 0
         # fonte (str do path) -> lista de pontos de início já usados, pra
         # não sortear um trecho que sobrepõe um já mostrado antes
@@ -151,20 +167,36 @@ class PoolDistributor:
     def _next_photo(self) -> dict:
         path = self._photos[self._photo_index % len(self._photos)]
         self._photo_index += 1
-        return {
-            "clip_path": str(path),
-            "source": "manual",
-            "media_type": "image",
-            "duration": None,
-            "search_terms": [],
-            "relevance_score": None,
-            "ai_reasoning": "",
-        }
+        return _photo_dict(path)
 
     def _next_video(self) -> dict:
         path = self._videos[self._video_index % len(self._videos)]
         self._video_index += 1
         return self._trim_random_segment(path)
+
+    def next_gallery_items(self, n: int) -> list[dict]:
+        """Puxa `n` itens pra um shot de galeria (Split Screen/Gallery Grid/
+        Comparison Slider/Masonry) — cursor PRÓPRIO
+        (`_gallery_photo_index`/`_gallery_video_index`), não avança
+        `_pattern_index`/`_photo_index`/`_video_index` principais, senão
+        desalinharia o ritmo foto/foto/vídeo do resto do vídeo. Prioriza
+        foto (mais barato, mais consistente visualmente numa colagem) — só
+        usa vídeo se o pool de fotos estiver vazio."""
+        if self._photos:
+            items = []
+            for _ in range(n):
+                path = self._photos[self._gallery_photo_index % len(self._photos)]
+                self._gallery_photo_index += 1
+                items.append(_photo_dict(path))
+            return items
+        if self._videos:
+            items = []
+            for _ in range(n):
+                path = self._videos[self._gallery_video_index % len(self._videos)]
+                self._gallery_video_index += 1
+                items.append(self._trim_random_segment(path))
+            return items
+        return []
 
     def reuse_media(self, footage: dict) -> dict:
         """Chamada por _tile_scenes quando um shot do pool precisa reaparecer
