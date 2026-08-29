@@ -26,6 +26,19 @@
         "volume": { "type": "number" }
       }
     },
+    "subscribe_popup": {
+      "type": ["object", "null"],
+      "description": "Barra animada de like/inscrever-se/sino, ciclando ao longo de todo o vídeo. Nulo quando o canal escolhido não tem @handle configurado no painel (ativação exige handle).",
+      "properties": {
+        "channel_name": { "type": "string" },
+        "channel_handle": { "type": "string" },
+        "avatar_path": { "type": ["string", "null"], "description": "Caminho relativo à raiz do repositório (state/channel_avatars/...), resolvido via staticFile(). Nulo quando o canal não tem avatar." },
+        "cycle_seconds": { "type": "number" },
+        "offset_seconds": { "type": "number" },
+        "subscribe_text": { "type": "string" },
+        "subscribed_text": { "type": "string" }
+      }
+    },
     "beats": {
       "type": "array",
       "items": { "$ref": "#/definitions/beat" }

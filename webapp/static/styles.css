@@ -291,6 +291,14 @@ h2 {
   color: var(--error);
 }
 
+.avatar-preview {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid var(--border);
+}
+
 /* --- Panels --- */
 
 .panel {

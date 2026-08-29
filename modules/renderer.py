@@ -23,6 +23,14 @@ _PROGRESS_RE = re.compile(r"Rendered (\d+)/(\d+)")
 
 OnProgress = Callable[[int, int], None]
 
+_SUBSCRIBE_ICON_FILES = (
+    "like-ativado.png",
+    "like-desativado.png",
+    "bell-novo.png",
+    "bell-desativado.png",
+    "hand-cursor.webp",
+)
+
 
 def stage_media_for_render(composition_path: Path, slug: str) -> Path:
     """Copia só os arquivos de mídia que este composition.json realmente
@@ -68,6 +76,17 @@ def stage_media_for_render(composition_path: Path, slug: str) -> Path:
                 for item in gallery.get("items", []):
                     if item.get("clip_path"):
                         referenced_paths.add(item["clip_path"])
+
+    subscribe_popup = composition.get("subscribe_popup")
+    if subscribe_popup:
+        # Ícones fixos de UI (não são "footage" de shot nenhum, então nunca
+        # apareceriam por scan de scene.footage/scene.gallery acima) — nomes
+        # hardcoded de propósito, não glob: esta função só copia o que é
+        # explicitamente citado, nunca o conteúdo inteiro de uma pasta.
+        for icon_name in _SUBSCRIBE_ICON_FILES:
+            referenced_paths.add(f"assets/subscribe/{icon_name}")
+        if subscribe_popup.get("avatar_path"):
+            referenced_paths.add(subscribe_popup["avatar_path"])
 
     missing = [p for p in sorted(referenced_paths) if not (PROJECT_ROOT / p).exists()]
     if missing:

@@ -136,6 +136,14 @@ highlights:
   duration_seconds: 4.5 # quanto tempo cada selo fica na tela
   min_gap_seconds: 3.0 # espaço mínimo entre o fim de um selo e o início do próximo
 
+subscribe:
+  # Barra de like/inscrever-se/sino, ciclando por todo o vídeo (só aparece
+  # em vídeos de canais com @handle configurado no painel).
+  cycle_seconds: 30
+  # offset_seconds=0 faria a barra entrar no frame 0, antes do gancho inicial
+  # do documentário dizer qualquer coisa. Atraso fixo pra não atropelar.
+  offset_seconds: 8
+
 paths:
   cache_dir: "cache"
   output_dir: "output"

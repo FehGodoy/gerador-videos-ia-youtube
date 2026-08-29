@@ -58,3 +58,30 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
     entry["favorites"] = [v for v in entry["favorites"] if v["id"] != voice_id]
     _save(data)
     return entry["favorites"]
+
+
+_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None}
+
+
+def get_identity(channel: str) -> dict:
+    entry = _load().get(channel, {})
+    identity = entry.get("identity", {})
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_handle(channel: str, handle: str) -> dict:
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity["handle"] = handle
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_avatar_filename(channel: str, filename: str) -> dict:
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity["avatar_filename"] = filename
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}

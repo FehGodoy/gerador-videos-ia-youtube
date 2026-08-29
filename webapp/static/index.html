@@ -40,6 +40,18 @@
       <button id="new-channel-btn" class="ghost">Criar canal</button>
     </div>
     <p class="hint">Favoritos de voz ficam salvos por canal.</p>
+
+    <div class="row" id="channel-identity-form">
+      <input type="text" id="channel-handle-input" placeholder="@handle do canal (ex: @meucanal)" autocomplete="off">
+      <button id="channel-handle-save" class="ghost small" type="button">Salvar</button>
+      <span id="channel-handle-feedback" class="api-key-feedback"></span>
+    </div>
+    <div class="row">
+      <input type="file" id="channel-avatar-input" accept="image/*" class="hidden">
+      <button type="button" id="channel-avatar-btn" class="ghost">Avatar do canal</button>
+      <img id="channel-avatar-preview" class="avatar-preview hidden" alt="Avatar do canal">
+    </div>
+    <p class="hint">Barra de "inscrever-se" aparece automaticamente em todo vídeo deste canal — ativa somente com um @handle preenchido.</p>
   </section>
 
   <section id="step-voice" class="panel">

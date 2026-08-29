@@ -70,6 +70,20 @@ _OFFSET_STEPS = 4
 # buraco na timeline.
 _MAX_SHOT_REUSES = 2
 
+# Texto do botão da SubscribeBar (Inscrever-se/Inscrito), traduzido pro
+# idioma da narração — o componente original tinha italiano fixo
+# ("Iscriviti"/"Iscritto"), errado pra uma ferramenta multi-idioma. Mesmas
+# 7 chaves de _LANGUAGE_NAMES em keyword_extractor.py.
+_SUBSCRIBE_LABELS = {
+    "pt": ("Inscrever-se", "Inscrito"),
+    "en": ("Subscribe", "Subscribed"),
+    "es": ("Suscríbete", "Suscrito"),
+    "fr": ("S'abonner", "Abonné"),
+    "de": ("Abonnieren", "Abonniert"),
+    "it": ("Iscriviti", "Iscritto"),
+    "ja": ("チャンネル登録", "登録済み"),
+}
+
 
 class _EffectPicker:
     """Decide transição de corte (Whip Pan/Film Burn/fade) e estilo de
@@ -666,6 +680,7 @@ def _assemble_composition(
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
+    subscribe_identity: dict | None = None,
 ) -> dict:
     """Monta o composition.json a partir de uma lista de beats já pronta —
     tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
@@ -678,6 +693,11 @@ def _assemble_composition(
     "own_media" (distribui o lote de mídia própria enviado pelo usuário —
     ver modules/media_pool.py — em vez de buscar. `allowed_sources`/
     `google_images_recency` são ignorados nesse modo).
+
+    `subscribe_identity`: `{"channel_name", "handle", "avatar_filename"}` já
+    resolvido pelo caller (webapp/server.py — este módulo nunca importa
+    webapp/, então não sabe o que é "canal" nem lê state/channels.json
+    sozinho). None ou handle vazio = vídeo sem a barra de inscrever-se.
     """
     cfg = load_config()
 
@@ -841,6 +861,26 @@ def _assemble_composition(
             }
         )
 
+    subscribe_popup = None
+    if subscribe_identity and subscribe_identity.get("handle"):
+        effective_language = language or cfg["narration"]["language"]
+        subscribe_text, subscribed_text = _SUBSCRIBE_LABELS.get(
+            effective_language, _SUBSCRIBE_LABELS["pt"]
+        )
+        subscribe_cfg = cfg["subscribe"]
+        avatar_filename = subscribe_identity.get("avatar_filename")
+        subscribe_popup = {
+            "channel_name": subscribe_identity.get("channel_name", ""),
+            "channel_handle": subscribe_identity["handle"],
+            "avatar_path": (
+                f"state/channel_avatars/{avatar_filename}" if avatar_filename else None
+            ),
+            "cycle_seconds": subscribe_cfg["cycle_seconds"],
+            "offset_seconds": subscribe_cfg["offset_seconds"],
+            "subscribe_text": subscribe_text,
+            "subscribed_text": subscribed_text,
+        }
+
     composition = {
         "fps": cfg["video"]["fps"],
         "width": cfg["video"]["width"],
@@ -850,6 +890,7 @@ def _assemble_composition(
             "duration_seconds": narration["duration_seconds"],
         },
         "music": None,
+        "subscribe_popup": subscribe_popup,
         "beats": composition_beats,
     }
 
@@ -874,6 +915,7 @@ def build_composition(
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
+    subscribe_identity: dict | None = None,
 ) -> dict:
     """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
     script_path = Path(script_path)
@@ -889,6 +931,7 @@ def build_composition(
         allowed_sources,
         google_images_recency,
         media_mode,
+        subscribe_identity,
     )
 
 
@@ -902,6 +945,7 @@ def build_composition_from_beats(
     allowed_sources: list[str] | None = None,
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
+    subscribe_identity: dict | None = None,
 ) -> dict:
     """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
     roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
@@ -915,6 +959,7 @@ def build_composition_from_beats(
         allowed_sources,
         google_images_recency,
         media_mode,
+        subscribe_identity,
     )
 
 

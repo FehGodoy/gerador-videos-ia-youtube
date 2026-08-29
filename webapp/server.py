@@ -12,10 +12,14 @@ import json
 import logging
 from pathlib import Path
 
+import hashlib
+import io
+
 import requests
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel
 
 from modules import footage_search, github_render, media_pool, settings as settings_module
@@ -39,6 +43,8 @@ VOICE_PREVIEWS_DIR.mkdir(parents=True, exist_ok=True)
 NARRATION_CACHE_DIR = cache_dir("narration")
 FOOTAGE_CACHE_DIR = cache_dir("footage")
 OWN_MEDIA_CACHE_DIR = cache_dir("own_media")
+CHANNEL_AVATARS_DIR = PROJECT_ROOT / "state" / "channel_avatars"
+CHANNEL_AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -62,6 +68,8 @@ app.mount("/footage_cache", StaticFiles(directory=str(FOOTAGE_CACHE_DIR)), name=
 # Preview do lote de mídia própria (modo alternativo à busca por IA, ver
 # modules/media_pool.py) — cada slug tem sua própria subpasta.
 app.mount("/own_media_cache", StaticFiles(directory=str(OWN_MEDIA_CACHE_DIR)), name="own_media_cache")
+# Avatar do canal pra barra de inscrever-se — preview no painel.
+app.mount("/channel_avatars", StaticFiles(directory=str(CHANNEL_AVATARS_DIR)), name="channel_avatars")
 
 
 class BlockIn(BaseModel):
@@ -100,10 +108,18 @@ class CreateJobRequest(BaseModel):
     # antes de criar o job (ver modules/media_pool.py) — sources/
     # google_images_recency são ignorados nesse modo.
     media_mode: str = "ai_search"
+    # Canal escolhido no painel — usado só pra resolver a identidade (nome/
+    # @handle/avatar) da barra de inscrever-se (ver webapp/channels.py).
+    # None/vazio = vídeo sem a barra.
+    channel: str | None = None
 
 
 class ChannelRequest(BaseModel):
     name: str
+
+
+class HandleRequest(BaseModel):
+    handle: str
 
 
 class FootageChoiceRequest(BaseModel):
@@ -232,6 +248,19 @@ async def create_job(req: CreateJobRequest) -> dict:
         if auth_error:
             raise HTTPException(status_code=400, detail=auth_error)
 
+    # Resolvido aqui (não em modules/composition_builder.py): "canal" é um
+    # conceito só do painel (state/channels.json), e modules/ nunca importa
+    # webapp/ — só desce um dict com dados já primitivos.
+    subscribe_identity = None
+    if req.channel:
+        identity = channels_module.get_identity(req.channel)
+        if identity["handle"]:
+            subscribe_identity = {
+                "channel_name": req.channel,
+                "handle": identity["handle"],
+                "avatar_filename": identity["avatar_filename"],
+            }
+
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
     job = job_manager.create_job(
         req.slug,
@@ -243,6 +272,7 @@ async def create_job(req: CreateJobRequest) -> dict:
         allowed_sources=req.sources,
         google_images_recency=req.google_images_recency,
         media_mode=req.media_mode,
+        subscribe_identity=subscribe_identity,
     )
     return {"job_id": job.id, "beats": job.beats}
 
@@ -612,6 +642,52 @@ async def post_favorite(name: str, voice: dict) -> list[dict]:
 @app.delete("/api/channels/{name}/favorites/{voice_id}")
 async def delete_favorite(name: str, voice_id: str) -> list[dict]:
     return channels_module.remove_favorite(name, voice_id)
+
+
+def _identity_response(name: str) -> dict:
+    identity = channels_module.get_identity(name)
+    avatar_url = (
+        f"/channel_avatars/{identity['avatar_filename']}"
+        if identity["avatar_filename"]
+        else None
+    )
+    return {"handle": identity["handle"], "avatar_url": avatar_url}
+
+
+@app.get("/api/channels/{name}/identity")
+async def get_identity(name: str) -> dict:
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/identity")
+async def post_identity(name: str, req: HandleRequest) -> dict:
+    channels_module.set_handle(name, req.handle.strip())
+    return _identity_response(name)
+
+
+_AVATAR_MAX_BYTES = 5 * 1024 * 1024  # avatar, não footage — 5MB já é generoso
+
+
+@app.post("/api/channels/{name}/avatar")
+async def post_avatar(name: str, file: UploadFile) -> dict:
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Arquivo vazio.")
+    if len(data) > _AVATAR_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 5MB.")
+
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.verify()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Arquivo não é uma imagem válida.")
+
+    ext = Path(file.filename or "").suffix.lower() or ".png"
+    filename = f"{hashlib.sha1(name.encode('utf-8')).hexdigest()[:16]}{ext}"
+    (CHANNEL_AVATARS_DIR / filename).write_bytes(data)
+
+    channels_module.set_avatar_filename(name, filename)
+    return _identity_response(name)
 
 
 @app.get("/api/serper-status")

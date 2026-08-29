@@ -51,6 +51,12 @@ const serperKeyForm = document.getElementById("serper-key-form");
 const serperKeyInput = document.getElementById("serper-key-input");
 const serperKeySave = document.getElementById("serper-key-save");
 const serperKeyFeedback = document.getElementById("serper-key-feedback");
+const channelHandleInput = document.getElementById("channel-handle-input");
+const channelHandleSave = document.getElementById("channel-handle-save");
+const channelHandleFeedback = document.getElementById("channel-handle-feedback");
+const channelAvatarInput = document.getElementById("channel-avatar-input");
+const channelAvatarBtn = document.getElementById("channel-avatar-btn");
+const channelAvatarPreview = document.getElementById("channel-avatar-preview");
 
 let currentChannel = localStorage.getItem("lastChannel") || null;
 let favoriteIds = new Set();
@@ -297,8 +303,78 @@ async function loadChannels() {
   channelSelect.value = currentChannel;
   localStorage.setItem("lastChannel", currentChannel);
   await loadFavorites();
+  await loadIdentity();
   await loadVoices(languageSelect.value);
 }
+
+// --- Identidade do canal (barra de inscrever-se) ---
+
+async function loadIdentity() {
+  channelHandleInput.value = "";
+  channelHandleFeedback.textContent = "";
+  channelAvatarPreview.classList.add("hidden");
+  if (!currentChannel) return;
+  const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/identity`);
+  const identity = await resp.json();
+  channelHandleInput.value = identity.handle || "";
+  if (identity.avatar_url) {
+    channelAvatarPreview.src = identity.avatar_url;
+    channelAvatarPreview.classList.remove("hidden");
+  }
+}
+
+channelHandleSave.addEventListener("click", async () => {
+  if (!currentChannel) return;
+  const handle = channelHandleInput.value.trim();
+  channelHandleFeedback.textContent = "Salvando...";
+  channelHandleFeedback.className = "api-key-feedback";
+  channelHandleSave.disabled = true;
+  try {
+    const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/identity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      channelHandleFeedback.textContent = data.detail || "Não deu certo.";
+      channelHandleFeedback.className = "api-key-feedback error";
+      return;
+    }
+    channelHandleFeedback.textContent = "Salvo.";
+    channelHandleFeedback.className = "api-key-feedback ok";
+  } catch {
+    channelHandleFeedback.textContent = "Falha de rede ao salvar.";
+    channelHandleFeedback.className = "api-key-feedback error";
+  } finally {
+    channelHandleSave.disabled = false;
+  }
+});
+
+channelAvatarBtn.addEventListener("click", () => channelAvatarInput.click());
+
+channelAvatarInput.addEventListener("change", async () => {
+  if (!currentChannel || !channelAvatarInput.files[0]) return;
+  const formData = new FormData();
+  formData.append("file", channelAvatarInput.files[0]);
+  try {
+    const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/avatar`, {
+      method: "POST",
+      body: formData,
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      showError(data.detail || "Não foi possível enviar o avatar.");
+      return;
+    }
+    channelAvatarPreview.src = data.avatar_url;
+    channelAvatarPreview.classList.remove("hidden");
+  } catch {
+    showError("Falha de rede ao enviar o avatar.");
+  } finally {
+    channelAvatarInput.value = "";
+  }
+});
 
 async function loadFavorites() {
   if (!currentChannel) {
@@ -1324,6 +1400,7 @@ async function handleGenerateVideo() {
         sources: Array.from(selectedSources),
         google_images_recency: recencySelect.value,
         media_mode: mediaMode,
+        channel: currentChannel,
       }),
     });
     if (!resp.ok) {
@@ -1359,6 +1436,7 @@ channelSelect.addEventListener("change", async () => {
   currentChannel = channelSelect.value;
   localStorage.setItem("lastChannel", currentChannel);
   await loadFavorites();
+  await loadIdentity();
   await loadVoices(languageSelect.value);
 });
 
@@ -1374,6 +1452,7 @@ newChannelBtn.addEventListener("click", async () => {
   currentChannel = name;
   await loadChannels();
 });
+
 
 favoritesTabs.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-filter]");

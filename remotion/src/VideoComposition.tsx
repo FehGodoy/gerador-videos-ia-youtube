@@ -17,6 +17,7 @@ import { ImageComparisonSlider } from "./ImageComparisonSlider";
 import { GalleryGrid } from "./GalleryGrid";
 import { MasonryGallery } from "./MasonryGallery";
 import { whipPan } from "./transitions/whipPan";
+import { SubscribeBar } from "./SubscribePopup";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
@@ -187,6 +188,24 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
             </Sequence>
           );
         })
+      )}
+
+      {/* Barra de like/inscrever-se/sino, ciclando por todo o vídeo. Irmã
+          da TransitionSeries pelo mesmo motivo dos selos acima: SubscribeBar
+          lê useCurrentFrame() direto (tempo absoluto), então não pode ficar
+          dentro da série que sobrepõe frames pro crossfade. Não usa
+          <Sequence> — o componente cicla sozinho via frame % cycleFrames,
+          então uma montagem única cobre o vídeo inteiro. */}
+      {data.subscribe_popup && (
+        <SubscribeBar
+          channelName={data.subscribe_popup.channel_name}
+          channelHandle={data.subscribe_popup.channel_handle}
+          avatarSrc={data.subscribe_popup.avatar_path ? staticFile(data.subscribe_popup.avatar_path) : ""}
+          cycleSec={data.subscribe_popup.cycle_seconds}
+          offsetSec={data.subscribe_popup.offset_seconds}
+          subscribeText={data.subscribe_popup.subscribe_text}
+          subscribedText={data.subscribe_popup.subscribed_text}
+        />
       )}
     </AbsoluteFill>
   );

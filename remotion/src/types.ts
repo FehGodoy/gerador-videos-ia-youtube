@@ -159,7 +159,18 @@ export interface CompositionData {
     duration_seconds: number;
   };
   music: { path: string; volume: number } | null;
+  subscribe_popup: SubscribePopupData | null;
   beats: Beat[];
+}
+
+export interface SubscribePopupData {
+  channel_name: string;
+  channel_handle: string;
+  avatar_path: string | null;
+  cycle_seconds: number;
+  offset_seconds: number;
+  subscribe_text: string;
+  subscribed_text: string;
 }
 
 // Usado como defaultProps no Root para o Remotion Studio ter algo válido para
@@ -170,5 +181,6 @@ export const emptyCompositionData: CompositionData = {
   height: 1080,
   audio: { path: "", duration_seconds: 1 },
   music: null,
+  subscribe_popup: null,
   beats: [],
 };
