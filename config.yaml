@@ -89,6 +89,30 @@ footage:
   seconds_per_shot: 15 # a cada ~15s de narração, mais uma ideia visual distinta
   max_shots_per_beat: 14 # teto de clipes distintos baixados por bloco
   chart_scene_seconds: 6 # quanto tempo o gráfico ocupa a tela num bloco estatístico
+  # Fase 5: Split Screen/Comparison Slider/Gallery Grid/Masonry têm timing de
+  # entrada escalonado (spring) pensado pra um corte perto de scene_seconds.
+  # Um corte mais curto que isso (sobra no fim de um beat) vira footage
+  # normal com o 1º item da galeria, em vez de uma galeria capada que mal
+  # termina de entrar antes do corte.
+  min_gallery_scene_seconds: 4.5
+
+effects:
+  # Fase 5: variedade de transição entre cortes (Whip Pan/Film Burn nativo
+  # do Remotion, ver remotion/src/VideoComposition.tsx) e do estilo de
+  # exibição de um shot único (Parallax Pan) — decidido ALGORITMICAMENTE em
+  # composition_builder.py (_EffectPicker), não pela IA: analyze_beat roda
+  # isolado por beat e não tem como saber que efeito já foi usado no resto
+  # do vídeo, só quem monta todos os beats consegue evitar repetir o mesmo
+  # tipo em sequência ou bater uma frequência global.
+  transition_weights:
+    fade: 0.5
+    whip_pan: 0.25
+    film_burn: 0.25
+  # Chance de um shot de imagem/vídeo único (não galeria) usar Parallax Pan
+  # em vez do Ken Burns/cover padrão. Decidida uma vez por SHOT (não por
+  # cena) — um shot reaproveitado várias vezes no mesmo beat mantém o
+  # mesmo estilo em todas as aparições, não fica alternando.
+  parallax_pan_chance: 0.3
 
 ranking:
   # Nota 0-100 que a IA de visão dá a cada candidato (ver modules/footage_ranker).

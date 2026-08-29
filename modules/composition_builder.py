@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Callable
 
@@ -70,6 +71,43 @@ _OFFSET_STEPS = 4
 _MAX_SHOT_REUSES = 2
 
 
+class _EffectPicker:
+    """Decide transição de corte (Whip Pan/Film Burn/fade) e estilo de
+    exibição de shot único (Parallax Pan) — Fase 5, ver remotion/src/
+    VideoComposition.tsx. Estado de UMA instância por vídeo INTEIRO (não por
+    beat), instanciada em _assemble_composition: transição não pode repetir
+    o mesmo tipo (fora fade) duas vezes seguidas, e isso só é possível de
+    garantir vendo os cortes do vídeo inteiro, não beat a beat.
+
+    Decisão ALGORÍTMICA, não da IA: analyze_beat roda isolado por beat,
+    sem ver o resto do vídeo, então não tem como saber que efeito já foi
+    usado antes nem bater uma frequência global.
+    """
+
+    def __init__(self, cfg: dict):
+        effects_cfg = cfg.get("effects") or {}
+        weights = effects_cfg.get("transition_weights") or {"fade": 1.0}
+        self._transition_options = list(weights.keys())
+        self._transition_weights = list(weights.values())
+        self._parallax_chance = effects_cfg.get("parallax_pan_chance", 0.0)
+        self._last_transition: str | None = None
+
+    def pick_transition(self) -> str:
+        choice = random.choices(self._transition_options, weights=self._transition_weights, k=1)[0]
+        if choice != "fade" and choice == self._last_transition:
+            # nunca repete o mesmo tipo NÃO-FADE duas vezes seguidas —
+            # re-sorteia só entre as opções restantes
+            remaining_options = [o for o in self._transition_options if o != choice]
+            remaining_weights = [w for o, w in zip(self._transition_options, self._transition_weights) if o != choice]
+            if remaining_options:
+                choice = random.choices(remaining_options, weights=remaining_weights, k=1)[0]
+        self._last_transition = choice
+        return choice
+
+    def maybe_parallax(self) -> bool:
+        return random.random() < self._parallax_chance
+
+
 def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds: float) -> float:
     """Quanto tempo esse footage/gráfico aguenta na tela sem congelar no
     último frame.
@@ -83,6 +121,21 @@ def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds:
     """
     if footage.get("motion_graphic"):
         return chart_scene_seconds
+    if footage.get("gallery_items"):
+        # Galeria (Fase 5): limitada pelo item de VÍDEO mais curto entre os
+        # itens, se houver algum — mesmo raciocínio do vídeo normal abaixo,
+        # só que aplicado a cada item em vez de um clipe só. Sem vídeo na
+        # galeria (o caso comum — PoolDistributor prioriza foto), usa o
+        # alvo cheio como imagem já usa.
+        video_durations = [
+            item.get("duration")
+            for item in footage["gallery_items"]
+            if item.get("media_type") == "video" and item.get("duration")
+        ]
+        if not video_durations:
+            return scene_seconds
+        shortest = min(video_durations)
+        return max(_MIN_SCENE_SECONDS, min(scene_seconds, shortest - _TRANSITION_MARGIN_SECONDS))
     if footage.get("clip_path") is None or footage.get("media_type") == "image":
         return scene_seconds
     duration = footage.get("duration")
@@ -104,7 +157,29 @@ def _scene_footage(footage: dict) -> dict | None:
     }
     if footage.get("attribution"):
         scene_footage["attribution"] = footage["attribution"]
+    if footage.get("render_style"):
+        scene_footage["render_style"] = footage["render_style"]
     return scene_footage
+
+
+def _scene_gallery(gallery: dict) -> dict | None:
+    """Monta o campo scene.gallery (Fase 5: Split Screen/Comparison Slider/
+    Gallery Grid/Masonry) — reaproveita _scene_footage por item (mesmo
+    formato), só descarta os campos que não fazem sentido numa colagem
+    (relevance_score/ai_reasoning: nota individual não existe aqui;
+    render_style: Parallax Pan não se aplica a um item de galeria)."""
+    items = []
+    for item in gallery.get("items") or []:
+        scene_item = _scene_footage(item)
+        if scene_item is None:
+            continue
+        scene_item.pop("relevance_score", None)
+        scene_item.pop("ai_reasoning", None)
+        scene_item.pop("render_style", None)
+        items.append(scene_item)
+    if len(items) < 2:
+        return None
+    return {"effect": gallery["effect"], "items": items[:6]}
 
 
 def _tile_scenes(
@@ -115,6 +190,8 @@ def _tile_scenes(
     has_chart: bool,
     chart_at_seconds: float | None = None,
     on_reuse: Callable[[dict], dict] | None = None,
+    effect_picker: "_EffectPicker | None" = None,
+    on_gallery_reuse: Callable[[dict], dict] | None = None,
 ) -> list[dict]:
     """Preenche o intervalo [start, end) com cenas curtas, revezando os shots.
 
@@ -133,6 +210,13 @@ def _tile_scenes(
     mesma fonte (já chega pré-cortado no tamanho exato do shot, sem folga
     pra deslocar `clip_start_seconds` como o resto da lógica abaixo faz).
 
+    `on_gallery_reuse` (PoolDistributor.reuse_gallery_item): mesmo
+    problema, mas pra shot de galeria (Fase 5, 2-6 itens) — callback
+    dedicado, não `on_reuse`, porque o de shot único usa o cursor
+    PRINCIPAL de foto/vídeo do PoolDistributor, e um item de galeria
+    precisa do cursor PRÓPRIO de galeria (`next_gallery_items`), senão
+    desalinha o ritmo foto/foto/vídeo do resto do vídeo.
+
     `chart_at_seconds` é o instante em que o dado do gráfico é FALADO (ancorado
     nos timestamps por palavra). A cena de gráfico é encaixada ali no meio do
     bloco em vez de sempre no começo — num bloco de 4 minutos, o começo pode
@@ -140,8 +224,17 @@ def _tile_scenes(
     """
     scene_seconds = cfg["footage"]["scene_seconds"]
     chart_scene_seconds = cfg["footage"]["chart_scene_seconds"]
+    min_gallery_scene_seconds = cfg["footage"].get("min_gallery_scene_seconds", 4.5)
     scenes: list[dict] = []
     cursor = start_seconds
+
+    def append_scene(cena: dict) -> None:
+        # transition_in é algorítmico (Fase 5) e vale pra TODA cena — o
+        # primeiro corte do vídeo inteiro nunca usa isso de verdade
+        # (VideoComposition.tsx só desenha <Transition> a partir do índice
+        # 1), então atribuir sem exceção aqui não tem efeito nenhum nele.
+        cena["transition_in"] = effect_picker.pick_transition() if effect_picker else "fade"
+        scenes.append(cena)
 
     # Threshold: mídia que só lembra o assunto é pior que assumir que não
     # achamos nada. Abaixo do mínimo, o shot perde o clipe e vira card
@@ -155,14 +248,16 @@ def _tile_scenes(
             motion_graphics.append(shot)
             continue
         score = shot.get("relevance_score")
-        if shot.get("clip_path") and (score is None or score >= minimo):
+        is_gallery = len(shot.get("gallery_items") or []) >= 2
+        if (shot.get("clip_path") or is_gallery) and (score is None or score >= minimo):
             usaveis.append(shot)
             logger.info(
-                "Shot aceito (nota %s, fonte %s, identity_status %s, estratégia %s)",
+                "Shot aceito (nota %s, fonte %s, identity_status %s, estratégia %s, galeria %s)",
                 score,
                 shot.get("source"),
                 shot.get("identity_status"),
                 shot.get("strategy"),
+                shot.get("gallery_effect") if is_gallery else None,
             )
         elif shot.get("concept_text"):
             # tira o clip_path: sem isso o tiling ainda enxerga mídia e emite
@@ -185,7 +280,7 @@ def _tile_scenes(
 
     if not shots:
         if end_seconds - cursor > 0.01:
-            scenes.append(
+            append_scene(
                 {
                     "start_seconds": round(cursor, 3),
                     "end_seconds": round(end_seconds, 3),
@@ -221,7 +316,7 @@ def _tile_scenes(
     def emit_chart() -> None:
         nonlocal cursor, index
         fundo = com_midia[index % len(com_midia)] if com_midia else None
-        scenes.append(
+        append_scene(
             {
                 "start_seconds": round(cursor, 3),
                 "end_seconds": round(cursor + chart_seconds, 3),
@@ -275,7 +370,7 @@ def _tile_scenes(
             # como o footage ganha ao mudar o clip_start; num beat muito longo
             # com poucos shots ele pode aparecer de novo, limitação aceita
             # por ora).
-            scenes.append(
+            append_scene(
                 {
                     "start_seconds": round(cursor, 3),
                     "end_seconds": round(cursor + duration, 3),
@@ -289,6 +384,45 @@ def _tile_scenes(
             )
             cursor += duration
             continue
+
+        gallery_items = footage.get("gallery_items")
+        if gallery_items:
+            if on_gallery_reuse and shot_reuse_count[shot_i] > 1:
+                # mesma ideia do reuso de mídia própria abaixo, item por
+                # item — em busca por IA (on_gallery_reuse=None aqui) a
+                # colagem se repete como está: rebuscar N termos + rankear
+                # de novo só porque o beat esgotou ideias de shot custaria
+                # caro à toa (mesmo princípio que motion_graphic já usa
+                # acima). Callback DEDICADO (não on_reuse, feito pra shot
+                # único) — bug real pego testando: usar on_reuse aqui lia/
+                # avançava o cursor PRINCIPAL de foto do PoolDistributor,
+                # não o de galeria, desalinhando o ritmo do resto do vídeo.
+                gallery_items = [on_gallery_reuse(item) for item in gallery_items]
+                footage = {**footage, "gallery_items": gallery_items}
+                shots[shot_i] = footage
+
+            if duration >= min_gallery_scene_seconds:
+                gallery_scene = _scene_gallery({"effect": footage.get("gallery_effect"), "items": gallery_items})
+                if gallery_scene is not None:
+                    append_scene(
+                        {
+                            "start_seconds": round(cursor, 3),
+                            "end_seconds": round(cursor + duration, 3),
+                            "kind": "gallery",
+                            "clip_start_seconds": 0.0,
+                            "visual_strategy": footage.get("strategy", "FOOTAGE"),
+                            "footage": None,
+                            "gallery": gallery_scene,
+                            "shot_slot": footage.get("slot"),
+                        }
+                    )
+                    cursor += duration
+                    continue
+            # corte curto demais pra uma galeria (timing de entrada dela
+            # assume ~scene_seconds) ou itens insuficientes de verdade
+            # (download falhou depois da checagem inicial) — cai pro 1º
+            # item como footage normal, evita perder a cena inteira
+            footage = gallery_items[0] if gallery_items else footage
 
         if (
             on_reuse
@@ -330,6 +464,13 @@ def _tile_scenes(
             )
         reuse_count[clip_path] = used + 1
 
+        if clip_path and effect_picker and "render_style" not in footage:
+            # decidido uma vez por SHOT (não por cena) e cacheado no dict —
+            # um shot reaproveitado várias vezes no beat mantém o mesmo
+            # estilo em todas as aparições, não fica alternando.
+            footage["render_style"] = "parallax_pan" if effect_picker.maybe_parallax() else "default"
+            shots[shot_i] = footage
+
         cena = {
             "start_seconds": round(cursor, 3),
             "end_seconds": round(cursor + duration, 3),
@@ -343,7 +484,7 @@ def _tile_scenes(
             # sem mídia usável: card com a frase-chave, em vez de tela preta
             # ou de um clipe genérico que não representa o trecho
             cena["concept_text"] = footage.get("concept_text", "")
-        scenes.append(cena)
+        append_scene(cena)
         cursor += duration
 
     return scenes
@@ -461,6 +602,60 @@ def validate_composition(data: dict) -> None:
     jsonschema.validate(instance=data, schema=schema)
 
 
+def _fetch_gallery_items(
+    beat_id: int,
+    beat_text: str,
+    shot: dict,
+    gallery_items_spec: list[dict],
+    analysis: dict,
+    distributor,
+    allowed_sources: list[str] | None,
+    google_images_recency: str | None,
+) -> list[dict]:
+    """Busca as 2-6 mídias de um shot de galeria (Split Screen/Comparison
+    Slider/Gallery Grid/Masonry, Fase 5). Modo mídia própria: pega N itens
+    do pool (PoolDistributor.next_gallery_items) ignorando os termos —
+    mesmo princípio já usado pra shot único desse modo. Modo busca por IA:
+    uma chamada a search_and_download_footage POR item, cada um com seus
+    próprios termos (`gallery_items_spec[i]["terms"]`) — chamar a MESMA
+    busca N vezes devolveria sempre o mesmo candidato (busca e ranking são
+    determinísticos), por isso a IA planeja sub-assuntos distintos em vez
+    de reusar o "terms" do shot.
+
+    `slug=None` de propósito: pula save/load_candidates_for_review (as duas
+    únicas coisas que usam `slug` nessa função) — um item de galeria não é
+    revisável nesta entrega (mesmo precedente já aceito pra mídia própria),
+    então nem precisa de slot sintético pra evitar colisão de cache — sem
+    slug, a checagem de review nunca roda pra esses itens.
+    """
+    if distributor is not None:
+        return distributor.next_gallery_items(len(gallery_items_spec))
+
+    items = []
+    for item_spec in gallery_items_spec:
+        try:
+            found = search_and_download_footage(
+                beat_id,
+                beat_text,
+                item_spec.get("terms") or [],
+                slug=None,
+                slot=0,
+                strategy=shot["strategy"],
+                entities=analysis.get("entities") or [],
+                allowed_sources=allowed_sources,
+                google_images_recency=google_images_recency,
+                subject=item_spec.get("subject") or "",
+            )
+        except Exception:
+            logger.exception(
+                "Falha buscando item de galeria (beat %d): %r", beat_id, item_spec.get("subject")
+            )
+            continue
+        if found.get("clip_path"):
+            items.append(found)
+    return items
+
+
 def _assemble_composition(
     beats: list[Beat],
     slug: str,
@@ -505,6 +700,10 @@ def _assemble_composition(
     # foto/foto/vídeo precisa ser contínuo do início ao fim, não reiniciar a
     # cada bloco de narração.
     distributor = PoolDistributor(slug, cfg) if media_mode == "own_media" else None
+    # idem pra transição/parallax (Fase 5) — só quem vê o vídeo inteiro
+    # consegue evitar repetir o mesmo tipo em sequência. Vale pros dois
+    # media_mode (ai_search e own_media).
+    effect_picker = _EffectPicker(cfg)
 
     composition_beats = []
     for position, beat in enumerate(beats):
@@ -557,8 +756,23 @@ def _assemble_composition(
         # Shots com estratégia MOTION_GRAPHIC/TEXT não buscam nada: viram card.
         shots = []
         for slot, shot in enumerate(analysis["shots"]):
+            gallery_items_spec = shot.get("gallery_items") if shot.get("effect", "none") != "none" else None
             if shot["strategy"] not in STRATEGIES_THAT_SEARCH:
                 found = {"clip_path": None, "relevance_score": None}
+            elif gallery_items_spec:
+                # Fase 5: Split Screen/Comparison Slider/Gallery Grid/
+                # Masonry — a IA decidiu que este shot precisa de várias
+                # mídias ao mesmo tempo (ver keyword_extractor.py), não uma
+                # busca normal.
+                gallery_items = _fetch_gallery_items(
+                    beat.id, beat.text, shot, gallery_items_spec, analysis,
+                    distributor, allowed_sources, google_images_recency,
+                )
+                found = (
+                    {"clip_path": None, "gallery_items": gallery_items, "gallery_effect": shot["effect"], "relevance_score": None}
+                    if len(gallery_items) >= 2
+                    else {"clip_path": None, "relevance_score": None}
+                )
             elif distributor is not None:
                 # modo de mídia própria: ignora terms/entities/identity —
                 # esses vêm da análise por IA (ainda roda, é o que decide
@@ -603,7 +817,10 @@ def _assemble_composition(
             else None
         )
         on_reuse = distributor.reuse_media if distributor is not None else None
-        scenes = _tile_scenes(visual_start, visual_end, shots, cfg, has_chart, chart_at, on_reuse)
+        on_gallery_reuse = distributor.reuse_gallery_item if distributor is not None else None
+        scenes = _tile_scenes(
+            visual_start, visual_end, shots, cfg, has_chart, chart_at, on_reuse, effect_picker, on_gallery_reuse
+        )
         chart_ranges = [
             (s["start_seconds"], s["end_seconds"]) for s in scenes if s["kind"] == "chart"
         ]

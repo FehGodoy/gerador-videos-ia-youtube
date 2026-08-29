@@ -198,6 +198,20 @@ class PoolDistributor:
             return items
         return []
 
+    def reuse_gallery_item(self, item: dict) -> dict:
+        """Chamada quando um shot de galeria reaparece dentro do beat — pega
+        o PRÓXIMO item pelo cursor de galeria (mesmo de next_gallery_items),
+        nunca o cursor principal. Bug real pego testando: usar reuse_media
+        (feito pra shot ÚNICO) aqui lia/avançava _photo_index — o cursor
+        PRINCIPAL, não o de galeria — desalinhando o ritmo foto/foto/vídeo
+        do resto do vídeo, exatamente o que next_gallery_items existe pra
+        evitar. Diferente de reuse_media pra vídeo (que corta um trecho novo
+        da MESMA fonte): aqui é mais simples e mais consistente só pedir o
+        próximo item do rodízio de galeria, sem tentar preservar a fonte
+        antiga do item recebido."""
+        pulled = self.next_gallery_items(1)
+        return pulled[0] if pulled else item
+
     def reuse_media(self, footage: dict) -> dict:
         """Chamada por _tile_scenes quando um shot do pool precisa reaparecer
         dentro do mesmo beat (o beat pede mais cortes de tela do que shots
