@@ -61,6 +61,46 @@
         }
       }
     },
+    "gallery": {
+      "type": "object",
+      "description": "Fase 5: efeito multi-mídia (2 a 6 itens ao mesmo tempo na tela) escolhido pelo diretor visual quando o trecho compara duas coisas ou lista vários itens/exemplos — decisão semântica, feita por keyword_extractor.py, não algorítmica.",
+      "required": ["effect", "items"],
+      "properties": {
+        "effect": {
+          "type": "string",
+          "enum": ["split_screen", "comparison_slider", "gallery_grid", "masonry"],
+          "description": "split_screen/comparison_slider usam exatamente 2 items; gallery_grid/masonry aceitam de 2 a 6."
+        },
+        "items": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 6,
+          "description": "Mesmo formato por item que 'footage' abaixo, sem relevance_score/ai_reasoning (nota individual não faz sentido dentro de uma colagem) e sem render_style (ParallaxPan não se aplica a um item de galeria).",
+          "items": {
+            "type": "object",
+            "required": ["clip_path", "media_type", "search_terms"],
+            "properties": {
+              "clip_path": { "type": "string" },
+              "source": {
+                "type": "string",
+                "enum": ["pexels", "pixabay", "wikimedia", "nasa", "youtube", "google_images", "manual", "fallback", "cache"]
+              },
+              "media_type": { "type": "string", "enum": ["video", "image"] },
+              "search_terms": { "type": "array", "items": { "type": "string" } },
+              "attribution": {
+                "type": "object",
+                "properties": {
+                  "author": { "type": "string" },
+                  "license": { "type": "string" },
+                  "page": { "type": "string" },
+                  "title": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "scene": {
       "type": "object",
       "required": ["start_seconds", "end_seconds", "kind", "clip_start_seconds", "footage"],
@@ -69,8 +109,13 @@
         "end_seconds": { "type": "number" },
         "kind": {
           "type": "string",
-          "enum": ["footage", "chart", "concept", "motion_graphic"],
-          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia; 'concept' é o card com a frase-chave, usado quando o diretor visual classificou o trecho como abstrato (estratégia TEXT) ou quando nenhuma mídia passou do threshold de relevância; 'motion_graphic' (Fase 4) renderiza Timeline/QuoteCard/RankingList a partir do campo 'motion_graphic' da cena."
+          "enum": ["footage", "chart", "concept", "motion_graphic", "gallery"],
+          "description": "'chart' renderiza o <AnimatedChart> do beat sobre o footage desfocado; 'footage' é o clipe em tela cheia; 'concept' é o card com a frase-chave, usado quando o diretor visual classificou o trecho como abstrato (estratégia TEXT) ou quando nenhuma mídia passou do threshold de relevância; 'motion_graphic' (Fase 4) renderiza Timeline/QuoteCard/RankingList a partir do campo 'motion_graphic' da cena; 'gallery' (Fase 5) renderiza um dos 4 efeitos multi-mídia (Split Screen/Comparison Slider/Gallery Grid/Masonry) a partir do campo 'gallery' da cena."
+        },
+        "transition_in": {
+          "type": "string",
+          "enum": ["fade", "whip_pan", "film_burn"],
+          "description": "Transição usada pro Remotion entrar nesta cena vindo da anterior. Ausente = 'fade' (comportamento de antes da Fase 5, compatível com composition.json já existentes). Decidido algoritmicamente em composition_builder.py, não pela IA — só quem monta o beat inteiro consegue evitar repetir o mesmo tipo em sequência."
         },
         "concept_text": {
           "type": "string",
@@ -84,6 +129,10 @@
         "motion_graphic": {
           "oneOf": [{ "$ref": "#/definitions/motion_graphic" }, { "type": "null" }],
           "description": "Presente quando kind='motion_graphic'."
+        },
+        "gallery": {
+          "oneOf": [{ "$ref": "#/definitions/gallery" }, { "type": "null" }],
+          "description": "Presente quando kind='gallery'."
         },
         "clip_start_seconds": {
           "type": "number",
@@ -107,6 +156,11 @@
               "type": "string",
               "enum": ["video", "image"],
               "description": "'image' usa <Img> com Ken Burns sutil no Remotion em vez de <OffthreadVideo>."
+            },
+            "render_style": {
+              "type": "string",
+              "enum": ["default", "parallax_pan"],
+              "description": "'parallax_pan' troca o Ken Burns/cover padrão pelo efeito ParallaxPan.tsx. Ausente = 'default' (comportamento de antes da Fase 5). Decidido algoritmicamente em composition_builder.py, não pela IA."
             },
             "search_terms": { "type": "array", "items": { "type": "string" } },
             "relevance_score": {
