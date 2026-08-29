@@ -1,32 +1,42 @@
 :root {
   color-scheme: dark;
 
-  --bg: #131010;
-  --bg-2: #1a1613;
-  --surface: #1c1815;
-  --surface-2: #251f1a;
-  --surface-3: #2e2721;
-  --border: #372e26;
-  --border-strong: #4a3f34;
+  /* Telecine bay: cold instrument black, not a cozy dark-SaaS brown. */
+  --bg: #08090b;
+  --bg-2: #0d1012;
+  --surface: #111417;
+  --surface-2: #171b1f;
+  --surface-3: #1f242a;
+  --border: #232830;
+  --border-strong: #363e48;
 
-  --text-primary: #f3ece0;
-  --text-secondary: #a99884;
-  --text-muted: #71655a;
+  --text-primary: #e6ebee;
+  --text-secondary: #8892a0;
+  --text-muted: #525a66;
 
-  --orange: #ff8c42;
-  --orange-dim: #c76a2e;
-  --orange-text: #1a0f04;
-  --teal: #4dd0c4;
-  --teal-dim: #2f9184;
-  --error: #ff5c5c;
-  --error-bg: #3a1616;
+  /* Tally-light convention borrowed from real broadcast gear: green =
+     ready/good signal (primary interactive), red = live/recording,
+     amber = caution. Not a single decorative accent — each color means
+     something specific everywhere it's used. */
+  --accent: #2ee6a3;
+  --accent-dim: #1f9e70;
+  --accent-text: #05130d;
+  --rec: #ff3b5c;
+  --rec-dim: #c22a46;
+  --warn: #ffb020;
+  /* cyan "signal good" tally, distinct from the green accent on purpose —
+     two real hues, not one accent recolored twice */
+  --ready: #35c9f0;
+  --ready-dim: #2493ad;
+  --error: #ff3b5c;
+  --error-bg: #2a1015;
 
-  --font-display: "Fraunces", "Iowan Old Style", ui-serif, serif;
-  --font-body: "Karla", -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Big Shoulders Display", "Arial Narrow", sans-serif;
+  --font-body: "Archivo", -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 
-  --radius: 8px;
-  --radius-lg: 4px;
+  --radius: 3px;
+  --radius-lg: 2px;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 16px;
@@ -46,8 +56,8 @@ html {
 body {
   font-family: var(--font-body);
   background:
-    radial-gradient(ellipse 900px 480px at 15% -10%, color-mix(in srgb, var(--orange) 7%, transparent), transparent),
-    radial-gradient(ellipse 700px 500px at 100% 20%, color-mix(in srgb, var(--teal) 5%, transparent), transparent),
+    radial-gradient(ellipse 800px 420px at 10% -10%, color-mix(in srgb, var(--accent) 6%, transparent), transparent),
+    radial-gradient(ellipse 600px 420px at 100% 15%, color-mix(in srgb, var(--rec) 4%, transparent), transparent),
     var(--bg);
   color: var(--text-primary);
   max-width: 860px;
@@ -68,48 +78,84 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* --- Masthead --- */
+/* Faint CRT/waveform-monitor scanlines, independent of .grain's own
+   opacity — ties the whole page back to "broadcast monitor" instead of
+   "dark dashboard." */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.4) 0px,
+    rgba(255, 255, 255, 0.4) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.05;
+}
+
+/* --- Masthead: styled like a VTR deck readout, not a generic "eyebrow +
+   hero title" SaaS header. The REC dot is an actual tally light (red =
+   live), and the timecode is decorative but real-format (HH:MM:SS:FF). --- */
 
 .masthead {
   margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
+  border-bottom: 2px solid var(--border);
 }
 
 .masthead-top {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  margin-bottom: var(--space-2);
+  gap: 10px;
+  margin-bottom: var(--space-3);
+  padding: 6px 10px;
+  width: fit-content;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
 }
 
 .rec-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--orange);
-  box-shadow: 0 0 0 0 color-mix(in srgb, var(--orange) 55%, transparent);
-  animation: pulse-rec 2.4s ease-in-out infinite;
+  background: var(--rec);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 55%, transparent);
+  animation: pulse-rec 1.6s ease-in-out infinite;
+  flex-shrink: 0;
 }
 
 @keyframes pulse-rec {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--orange) 45%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--orange) 0%, transparent); }
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 55%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--rec) 0%, transparent); }
 }
 
 .eyebrow {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.eyebrow::before {
+  content: "REC ";
+  color: var(--rec);
+  font-weight: 700;
 }
 
 h1 {
   font-family: var(--font-display);
-  font-optical-sizing: auto;
-  font-size: 40px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 46px;
+  font-weight: 800;
+  font-stretch: condensed;
+  text-transform: uppercase;
+  letter-spacing: 0.01em;
+  line-height: 0.98;
   margin: 0 0 var(--space-2);
   color: var(--text-primary);
 }
@@ -123,8 +169,11 @@ h1 {
 
 h2 {
   font-family: var(--font-display);
-  font-size: 21px;
-  font-weight: 600;
+  font-size: 24px;
+  font-weight: 700;
+  font-stretch: condensed;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
   margin: 0 0 var(--space-3);
   display: flex;
   align-items: center;
@@ -132,20 +181,32 @@ h2 {
   color: var(--text-primary);
 }
 
+/* Clapperboard slate, not a numbered SaaS-step badge: a diagonal hazard
+   stripe frame (film-can edge marking) around a solid centre panel holding
+   the scene number, like grease pencil on a physical slate. border-image
+   keeps the stripes confined to the frame without fighting the text for
+   paint order. */
 .slate {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 34px;
-  height: 26px;
-  padding: 0 6px;
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--orange);
+  min-width: 36px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--accent);
+  border: 4px solid;
+  border-image: repeating-linear-gradient(
+      -45deg,
+      var(--bg) 0px,
+      var(--bg) 4px,
+      var(--accent-dim) 4px,
+      var(--accent-dim) 8px
+    )
+    4;
   font-family: var(--font-mono);
   font-size: 13px;
-  font-weight: 600;
-  color: var(--orange);
+  font-weight: 700;
+  color: var(--accent-text);
   flex-shrink: 0;
 }
 
@@ -173,11 +234,11 @@ h2 {
 }
 
 .api-status-dot.ok {
-  background: var(--teal);
+  background: var(--ready);
 }
 
 .api-status-dot.low {
-  background: var(--orange);
+  background: var(--warn);
 }
 
 .api-status-dot.off {
@@ -223,7 +284,7 @@ h2 {
 }
 
 .api-key-feedback.ok {
-  color: var(--teal);
+  color: var(--ready);
 }
 
 .api-key-feedback.error {
@@ -239,7 +300,19 @@ h2 {
   padding: var(--space-4);
   margin-bottom: var(--space-4);
   position: relative;
-  box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.4);
+  /* inset top hairline instead of a floating drop-shadow card — reads like
+     a recessed panel on a hardware rack, not a SaaS card lifted off the page */
+  box-shadow: inset 0 1px 0 0 var(--border-strong), 0 1px 0 0 rgba(0, 0, 0, 0.5);
+}
+
+.panel::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: var(--space-4);
+  width: 28px;
+  height: 3px;
+  background: var(--border-strong);
 }
 
 /* --- Forms --- */
@@ -264,7 +337,7 @@ label {
 .speed-row input[type="range"] {
   flex: 1;
   max-width: 320px;
-  accent-color: var(--orange);
+  accent-color: var(--accent);
   height: 4px;
   cursor: pointer;
 }
@@ -273,7 +346,7 @@ label {
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 600;
-  color: var(--orange);
+  color: var(--accent);
   min-width: 3.5ch;
 }
 
@@ -311,8 +384,8 @@ select:focus,
 input[type="text"]:focus,
 button:focus-visible {
   outline: none;
-  border-color: var(--orange);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 22%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .row {
@@ -355,8 +428,19 @@ button:focus-visible {
 .sources-picker-head {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   margin-bottom: var(--space-2);
+}
+
+/* Sub-section labels read like control-panel legends (dense caps mono),
+   not another round of bold body text competing with the slate headings. */
+.sources-picker-head strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
 }
 
 .recency-row {
@@ -389,7 +473,7 @@ button:focus-visible {
   gap: 7px;
   padding: 8px 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--surface);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -422,12 +506,12 @@ button:focus-visible {
 }
 
 .source-chip:has(input:checked) {
-  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
-  border-color: var(--orange-dim);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: var(--accent-dim);
 }
 
 .source-chip:has(input:checked) .source-chip-dot {
-  background: var(--orange);
+  background: var(--accent);
 }
 
 .source-chip:has(input:checked) .source-chip-label {
@@ -435,7 +519,7 @@ button:focus-visible {
 }
 
 .source-chip:has(input:focus-visible) {
-  outline: 2px solid var(--orange);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -457,7 +541,7 @@ button:focus-visible {
   gap: 7px;
   padding: 8px 14px;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius);
   background: var(--surface);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -490,12 +574,12 @@ button:focus-visible {
 }
 
 .media-mode-chip:has(input:checked) {
-  background: color-mix(in srgb, var(--orange) 12%, var(--surface));
-  border-color: var(--orange-dim);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  border-color: var(--accent-dim);
 }
 
 .media-mode-chip:has(input:checked) .media-mode-dot {
-  background: var(--orange);
+  background: var(--accent);
 }
 
 .media-mode-chip:has(input:checked) .media-mode-label {
@@ -503,7 +587,7 @@ button:focus-visible {
 }
 
 .media-mode-chip:has(input:focus-visible) {
-  outline: 2px solid var(--orange);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -597,17 +681,17 @@ button:focus-visible {
 }
 
 .switch input:checked ~ .switch-track {
-  background: color-mix(in srgb, var(--orange) 30%, var(--surface-3));
-  border-color: var(--orange);
+  background: color-mix(in srgb, var(--accent) 30%, var(--surface-3));
+  border-color: var(--accent);
 }
 
 .switch input:checked ~ .switch-track .switch-thumb {
   transform: translateX(18px);
-  background: var(--orange);
+  background: var(--accent);
 }
 
 .switch input:focus-visible ~ .switch-track {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .switch-text {
@@ -636,8 +720,9 @@ button:focus-visible {
 
 button {
   font-family: var(--font-body);
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
   padding: 0 18px;
   height: 40px;
   border-radius: var(--radius);
@@ -653,8 +738,10 @@ button:hover:not(:disabled) {
   border-color: var(--border-strong);
 }
 
+/* Tactile hardware-switch press, not a generic scale-down tap */
 button:active:not(:disabled) {
-  transform: scale(0.97);
+  transform: translateY(1px);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4);
 }
 
 button:disabled {
@@ -663,14 +750,14 @@ button:disabled {
 }
 
 button.primary {
-  background: var(--orange);
-  color: var(--orange-text);
-  border-color: var(--orange);
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
 }
 
 button.primary:hover:not(:disabled) {
-  background: #ffa066;
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--orange) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 82%, white);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 button.primary.large {
@@ -735,17 +822,17 @@ button.danger-ghost:hover:not(:disabled) {
   gap: var(--space-2);
   background: var(--bg-2);
   border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--teal);
+  border-left: 3px solid var(--ready);
   border-radius: var(--radius);
   padding: 10px var(--space-3);
   font-size: 13px;
-  color: var(--teal);
+  color: var(--ready);
   margin-bottom: var(--space-3);
 }
 
 .locked-note svg {
   flex-shrink: 0;
-  color: var(--teal);
+  color: var(--ready);
 }
 
 .locked-note.visible {
@@ -811,7 +898,7 @@ button.danger-ghost:hover:not(:disabled) {
   position: absolute;
   width: 10px;
   height: 10px;
-  border: 1.5px solid var(--orange);
+  border: 1.5px solid var(--accent);
   opacity: 0;
   transition: opacity 180ms ease;
 }
@@ -873,7 +960,7 @@ button.danger-ghost:hover:not(:disabled) {
 
 .favorite-btn:hover:not(:disabled) {
   background: none;
-  color: var(--orange);
+  color: var(--accent);
 }
 
 .favorite-btn svg {
@@ -882,7 +969,7 @@ button.danger-ghost:hover:not(:disabled) {
 }
 
 .favorite-btn.favorited {
-  color: var(--orange);
+  color: var(--accent);
 }
 
 .voice-card audio {
@@ -950,7 +1037,7 @@ button.danger-ghost:hover:not(:disabled) {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 500;
-  color: var(--teal);
+  color: var(--ready);
   letter-spacing: 0.02em;
 }
 
@@ -1018,15 +1105,15 @@ button.danger-ghost:hover:not(:disabled) {
 }
 
 .stage-badge.running {
-  border-color: var(--orange);
-  color: var(--orange);
-  background: color-mix(in srgb, var(--orange) 12%, transparent);
+  border-color: var(--accent);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .stage-badge.done {
-  border-color: var(--teal);
-  color: var(--teal);
-  background: color-mix(in srgb, var(--teal) 12%, transparent);
+  border-color: var(--ready);
+  color: var(--ready);
+  background: color-mix(in srgb, var(--ready) 12%, transparent);
 }
 
 .render-progress-block {
@@ -1038,7 +1125,7 @@ button.danger-ghost:hover:not(:disabled) {
 progress {
   width: 100%;
   height: 6px;
-  accent-color: var(--orange);
+  accent-color: var(--accent);
   border: none;
   border-radius: 999px;
   overflow: hidden;
@@ -1049,7 +1136,7 @@ progress::-webkit-progress-bar {
 }
 
 progress::-webkit-progress-value {
-  background: linear-gradient(90deg, var(--teal), var(--orange));
+  background: linear-gradient(90deg, var(--ready), var(--accent));
   transition: width 200ms ease;
 }
 
@@ -1115,8 +1202,8 @@ progress::-webkit-progress-value {
 }
 
 .candidate-card.chosen {
-  border-color: var(--orange);
-  box-shadow: 0 0 0 1px var(--orange);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .candidate-card.loading {
@@ -1172,7 +1259,7 @@ progress::-webkit-progress-value {
   font-weight: 700;
   padding: 4px 8px;
   border-radius: var(--radius);
-  background: var(--teal);
+  background: var(--ready);
   color: #04201d;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1187,8 +1274,8 @@ progress::-webkit-progress-value {
   height: 26px;
   display: grid;
   place-items: center;
-  background: var(--orange);
-  color: var(--orange-text);
+  background: var(--accent);
+  color: var(--accent-text);
   border-radius: 50%;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
 }
@@ -1215,8 +1302,8 @@ progress::-webkit-progress-value {
 }
 
 .candidate-play:hover {
-  background: var(--orange);
-  color: var(--orange-text);
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .candidate-info {
@@ -1246,7 +1333,7 @@ progress::-webkit-progress-value {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--teal-dim);
+  background: var(--ready-dim);
   color: #04201d;
   font-family: var(--font-mono);
   font-size: 10px;
@@ -1276,16 +1363,16 @@ progress::-webkit-progress-value {
 }
 
 .candidate-upload-tile:hover:not(:disabled) {
-  border-color: var(--orange);
+  border-color: var(--accent);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--orange) 6%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .candidate-upload-tile.armed {
-  border-color: var(--teal);
+  border-color: var(--ready);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--teal) 10%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent);
+  background: color-mix(in srgb, var(--ready) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ready) 22%, transparent);
 }
 
 .candidate-upload-tile.expanded {
@@ -1331,7 +1418,7 @@ progress::-webkit-progress-value {
 
 .review-shot-note {
   font-size: 12px;
-  color: var(--teal);
+  color: var(--ready);
   opacity: 0;
   transform: translateY(-2px);
   transition: opacity 180ms ease, transform 180ms ease;
@@ -1380,13 +1467,13 @@ progress::-webkit-progress-value {
 }
 
 .candidate-play:hover {
-  background: var(--orange);
-  color: var(--orange-text);
+  background: var(--accent);
+  color: var(--accent-text);
 }
 
 .review-entities {
   font-size: 12px;
-  color: var(--teal);
+  color: var(--ready);
   font-family: var(--font-mono);
   margin-top: var(--space-1);
 }
@@ -1394,7 +1481,7 @@ progress::-webkit-progress-value {
 .review-concept {
   margin-top: var(--space-2);
   padding: 8px 12px;
-  border-left: 3px solid var(--orange);
+  border-left: 3px solid var(--accent);
   background: var(--surface-2);
   border-radius: 0 var(--radius) var(--radius) 0;
   font-size: 13px;
@@ -1418,10 +1505,10 @@ button.review-concept-upload {
 }
 
 button.review-concept-upload.armed {
-  border-color: var(--teal);
+  border-color: var(--ready);
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--teal) 10%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 22%, transparent);
+  background: color-mix(in srgb, var(--ready) 10%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ready) 22%, transparent);
 }
 
 /* --- Formulário de link do YouTube (recorte manual de trecho) --- */
@@ -1457,8 +1544,8 @@ button.review-concept-upload.armed {
 .youtube-form-input:focus,
 .youtube-form-input-sm:focus {
   outline: none;
-  border-color: var(--orange);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--orange) 22%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .youtube-form-range {
