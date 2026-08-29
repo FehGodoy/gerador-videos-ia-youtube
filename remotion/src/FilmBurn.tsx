@@ -1,5 +1,8 @@
 import React from "react";
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Poppins";
+
+const { fontFamily } = loadFont();
 
 /**
  * Efeito trazido do catálogo de templates da React Video Editor (MCP
@@ -27,10 +30,10 @@ export const FilmBurn: React.FC<{ children?: React.ReactNode }> = ({ children })
   const yShift3 = 50 + Math.cos(frame * 0.08 + 3) * 15;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827" }}>
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c" }}>
       {children ?? (
         <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-          <h2 style={{ color: "white", fontSize: 56, fontWeight: 400, margin: 0 }}>Film Burn</h2>
+          <h2 style={{ fontFamily, color: "white", fontSize: 56, fontWeight: 500, margin: 0 }}>Film Burn</h2>
         </AbsoluteFill>
       )}
       <AbsoluteFill

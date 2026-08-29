@@ -3,13 +3,17 @@ import { AbsoluteFill, Img, OffthreadVideo, spring, staticFile, useCurrentFrame,
 
 export type GalleryItem = { clipPath: string; mediaType?: "image" | "video" };
 
+// Paleta quente (laranja/âmbar/terracota), não o azul/roxo genérico do
+// template — mesma identidade de ConceptCard/Timeline/QuoteCard/RankingList
+// (ACCENT #ff8c42 sobre fundo marrom-escuro), pra não destoar no meio de um
+// vídeo real.
 const GRADIENTS = [
-  "linear-gradient(135deg, #3b82f6, #1d4ed8)",
-  "linear-gradient(135deg, #a855f7, #7c3aed)",
-  "linear-gradient(135deg, #4361ee, #3b82f6)",
-  "linear-gradient(135deg, #7209b7, #a855f7)",
-  "linear-gradient(135deg, #1d4ed8, #4361ee)",
-  "linear-gradient(135deg, #7c3aed, #7209b7)",
+  "linear-gradient(135deg, #ff8c42, #c76a2e)",
+  "linear-gradient(135deg, #d9a441, #a67c2e)",
+  "linear-gradient(135deg, #c76a2e, #8a4a2e)",
+  "linear-gradient(135deg, #e0954f, #ff8c42)",
+  "linear-gradient(135deg, #a67c2e, #5c3220)",
+  "linear-gradient(135deg, #8a4a2e, #5c3220)",
 ];
 const DELAYS = [0, 4, 8, 12, 16, 20];
 
@@ -29,7 +33,7 @@ export const GalleryGrid: React.FC<{ items?: GalleryItem[] }> = ({ items = [] })
   const { fps } = useVideoConfig();
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827", alignItems: "center", justifyContent: "center", padding: 32 }}>
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div
         style={{
           display: "grid",

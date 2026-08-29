@@ -1,5 +1,9 @@
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Poppins";
+
+const { fontFamily } = loadFont();
+const ACCENT = "#ff8c42";
 
 /**
  * Efeito trazido do catálogo de templates da React Video Editor (MCP
@@ -8,6 +12,12 @@ import { AbsoluteFill, Img, OffthreadVideo, interpolate, spring, staticFile, use
  * manual/futuro. Adaptado do original: aceita mídia real (clipPath) em vez
  * de gradiente fixo; sem clipPath, cai no gradiente + rótulo do template
  * original.
+ *
+ * Cores/fonte trocadas na integração: os gradientes originais eram azul/
+ * roxo genérico de template, sem nenhuma relação com o resto do vídeo —
+ * ConceptCard/Timeline/QuoteCard/RankingList (já em produção) usam Poppins
+ * + laranja #ff8c42 sobre fundo marrom-escuro; esse efeito precisa da MESMA
+ * identidade pra não destoar quando aparecer no meio de um vídeo real.
  *
  * Dois painéis entram deslizando de lados opostos e se encontram no centro
  * (spring), com uma linha divisória que aparece depois que eles assentam.
@@ -45,7 +55,7 @@ const Panel: React.FC<{
           justifyContent: "center",
         }}
       >
-        <h2 style={{ color: "white", fontSize: 56, fontWeight: 400, margin: 0 }}>{label}</h2>
+        <h2 style={{ fontFamily, color: "white", fontSize: 56, fontWeight: 500, margin: 0 }}>{label}</h2>
       </div>
     )}
   </div>
@@ -73,19 +83,19 @@ export const SplitScreen: React.FC<{
   });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827", flexDirection: "row" }}>
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", flexDirection: "row" }}>
       <Panel
         clipPath={leftClipPath}
         mediaType={leftMediaType}
         label={leftLabel}
-        gradient="linear-gradient(135deg, #1e3a5f, #1d4ed8)"
+        gradient={`linear-gradient(135deg, #5c3220, #241c16)`}
         translateX={leftTranslateX}
       />
       <Panel
         clipPath={rightClipPath}
         mediaType={rightMediaType}
         label={rightLabel}
-        gradient="linear-gradient(135deg, #5b21b6, #7c3aed)"
+        gradient={`linear-gradient(135deg, ${ACCENT}, #c76a2e)`}
         translateX={rightTranslateX}
       />
       <div

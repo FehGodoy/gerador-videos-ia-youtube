@@ -5,13 +5,15 @@ import type { GalleryItem } from "./GalleryGrid";
 // col: qual das 3 colunas; height: proporção do bloco dentro da coluna
 // (mesmo layout do template original, fixo — é o "jeito Pinterest" do
 // efeito, não faz sentido calcular alturas a partir da mídia real aqui).
+// Gradientes quentes (laranja/âmbar/terracota) — mesma identidade de
+// ConceptCard/Timeline/QuoteCard/RankingList, não o azul/roxo do template.
 const LAYOUT = [
-  { col: 0, height: "45%", gradient: "linear-gradient(135deg, #3b82f6, #1d4ed8)", delay: 0 },
-  { col: 0, height: "50%", gradient: "linear-gradient(135deg, #a855f7, #7c3aed)", delay: 6 },
-  { col: 1, height: "55%", gradient: "linear-gradient(135deg, #4361ee, #3b82f6)", delay: 3 },
-  { col: 1, height: "40%", gradient: "linear-gradient(135deg, #7209b7, #a855f7)", delay: 9 },
-  { col: 2, height: "40%", gradient: "linear-gradient(135deg, #1d4ed8, #4361ee)", delay: 5 },
-  { col: 2, height: "55%", gradient: "linear-gradient(135deg, #7c3aed, #7209b7)", delay: 11 },
+  { col: 0, height: "45%", gradient: "linear-gradient(135deg, #ff8c42, #c76a2e)", delay: 0 },
+  { col: 0, height: "50%", gradient: "linear-gradient(135deg, #d9a441, #a67c2e)", delay: 6 },
+  { col: 1, height: "55%", gradient: "linear-gradient(135deg, #c76a2e, #8a4a2e)", delay: 3 },
+  { col: 1, height: "40%", gradient: "linear-gradient(135deg, #e0954f, #ff8c42)", delay: 9 },
+  { col: 2, height: "40%", gradient: "linear-gradient(135deg, #a67c2e, #5c3220)", delay: 5 },
+  { col: 2, height: "55%", gradient: "linear-gradient(135deg, #8a4a2e, #5c3220)", delay: 11 },
 ];
 
 /**
@@ -32,7 +34,7 @@ export const MasonryGallery: React.FC<{ items?: GalleryItem[] }> = ({ items = []
   LAYOUT.forEach((block, i) => columns[block.col].push({ ...block, item: items[i] }));
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827", alignItems: "center", justifyContent: "center", padding: 32 }}>
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", alignItems: "center", justifyContent: "center", padding: 32 }}>
       <div style={{ display: "flex", gap: 16, width: "90%", height: "85%" }}>
         {columns.map((col, colIdx) => (
           <div key={colIdx} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>

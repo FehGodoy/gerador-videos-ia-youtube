@@ -1,5 +1,9 @@
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Poppins";
+
+const { fontFamily } = loadFont();
+const ACCENT = "#ff8c42";
 
 /**
  * Efeito trazido do catálogo de templates da React Video Editor (MCP
@@ -25,7 +29,7 @@ const Side: React.FC<{ clipPath?: string; mediaType?: "image" | "video"; label: 
     )
   ) : (
     <div style={{ width: "100%", height: "100%", background: gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <span style={{ color: "white", fontSize: 32, opacity: 0.85 }}>{label}</span>
+      <span style={{ fontFamily, color: "white", fontSize: 32, opacity: 0.85 }}>{label}</span>
     </div>
   );
 
@@ -46,13 +50,15 @@ export const ImageComparisonSlider: React.FC<{
   });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827", alignItems: "center", justifyContent: "center" }}>
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: "85%", height: "75%", borderRadius: 12, overflow: "hidden", position: "relative" }}>
         <div style={{ position: "absolute", inset: 0 }}>
-          <Side clipPath={afterClipPath} mediaType={afterMediaType} label={afterLabel} gradient="linear-gradient(135deg, #4361ee, #7209b7, #a855f7)" />
+          {/* "depois" vívido — mesmo laranja de ConceptCard/Timeline/QuoteCard/RankingList */}
+          <Side clipPath={afterClipPath} mediaType={afterMediaType} label={afterLabel} gradient={`linear-gradient(135deg, ${ACCENT}, #d9a441, #c76a2e)`} />
         </div>
         <div style={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - dividerPercent}% 0 0)` }}>
-          <Side clipPath={beforeClipPath} mediaType={beforeMediaType} label={beforeLabel} gradient="linear-gradient(135deg, #1e293b, #374151, #4b5563)" />
+          {/* "antes" dessaturado — tom terroso apagado, não cinza-azulado frio */}
+          <Side clipPath={beforeClipPath} mediaType={beforeMediaType} label={beforeLabel} gradient="linear-gradient(135deg, #241c16, #3a2f27, #4a3f34)" />
         </div>
         <div style={{ position: "absolute", top: 0, bottom: 0, left: `${dividerPercent}%`, width: 3, backgroundColor: "white", zIndex: 2 }}>
           <div
@@ -65,7 +71,7 @@ export const ImageComparisonSlider: React.FC<{
               height: 28,
               borderRadius: "50%",
               backgroundColor: "white",
-              border: "3px solid #3b82f6",
+              border: `3px solid ${ACCENT}`,
             }}
           />
         </div>

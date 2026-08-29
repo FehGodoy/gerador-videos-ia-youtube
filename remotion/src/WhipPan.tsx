@@ -1,5 +1,8 @@
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Poppins";
+
+const { fontFamily } = loadFont();
 
 /**
  * Efeito trazido do catálogo de templates da React Video Editor (MCP
@@ -29,7 +32,7 @@ const Scene: React.FC<{ clipPath?: string; mediaType?: "image" | "video"; label:
       )
     ) : (
       <div style={{ width: "100%", height: "100%", background: gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <h2 style={{ color: "white", fontSize: 56, fontWeight: 400, margin: 0 }}>{label}</h2>
+        <h2 style={{ fontFamily, color: "white", fontSize: 56, fontWeight: 500, margin: 0 }}>{label}</h2>
       </div>
     )}
   </div>
@@ -57,9 +60,9 @@ export const WhipPan: React.FC<{
   });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#111827" }}>
-      <Scene clipPath={fromClipPath} mediaType={fromMediaType} label={fromLabel} gradient="linear-gradient(135deg, #1e3a5f, #111827)" translateX={translateFrom} stretchX={stretchX} />
-      <Scene clipPath={toClipPath} mediaType={toMediaType} label={toLabel} gradient="linear-gradient(135deg, #3b1f5e, #111827)" translateX={translateTo} stretchX={stretchX} />
+    <AbsoluteFill style={{ backgroundColor: "#0f0d0c" }}>
+      <Scene clipPath={fromClipPath} mediaType={fromMediaType} label={fromLabel} gradient="linear-gradient(135deg, #5c3220, #241c16)" translateX={translateFrom} stretchX={stretchX} />
+      <Scene clipPath={toClipPath} mediaType={toMediaType} label={toLabel} gradient="linear-gradient(135deg, #ff8c42, #8a4a2e)" translateX={translateTo} stretchX={stretchX} />
     </AbsoluteFill>
   );
 };
