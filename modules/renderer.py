@@ -59,6 +59,15 @@ def stage_media_for_render(composition_path: Path, slug: str) -> Path:
             footage = scene.get("footage")
             if footage and footage.get("clip_path"):
                 referenced_paths.add(footage["clip_path"])
+            # Cena "gallery" (Split Screen/Comparison Slider/Gallery Grid/
+            # Masonry) não tem "footage" — a mídia real fica numa LISTA em
+            # gallery.items. Mesmo bug de antes (404 no primeiro frame) se
+            # esse braço faltasse aqui.
+            gallery = scene.get("gallery")
+            if gallery:
+                for item in gallery.get("items", []):
+                    if item.get("clip_path"):
+                        referenced_paths.add(item["clip_path"])
 
     missing = [p for p in sorted(referenced_paths) if not (PROJECT_ROOT / p).exists()]
     if missing:
