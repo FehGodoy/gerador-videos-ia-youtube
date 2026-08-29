@@ -22,6 +22,10 @@ export interface Footage {
     | "fallback"
     | "cache";
   media_type: "video" | "image";
+  // "parallax_pan" troca o Ken Burns/cover padrão do <FootageClip> pelo
+  // efeito <ParallaxPan>. Ausente = "default". Decidido algoritmicamente em
+  // composition_builder.py, não pela IA.
+  render_style?: "default" | "parallax_pan";
   search_terms: string[];
   // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
   // Não é renderizada — serve pra revisão e pro threshold de fallback.
@@ -30,6 +34,25 @@ export interface Footage {
   // Só em fontes que exigem crédito (Wikimedia). Não é renderizado na tela —
   // serve pra montar os créditos na descrição do vídeo.
   attribution?: { author: string; license: string; page: string; title: string };
+}
+
+// Item de uma cena "gallery" — mesmo formato que Footage, sem
+// relevance_score/ai_reasoning/render_style (nota individual e Ken
+// Burns/parallax não fazem sentido dentro de uma colagem).
+export interface GalleryMediaItem {
+  clip_path: string;
+  source?: Footage["source"];
+  media_type: "video" | "image";
+  search_terms: string[];
+  attribution?: { author: string; license: string; page: string; title: string };
+}
+
+// Fase 5: efeito multi-mídia (Split Screen/Comparison Slider/Gallery Grid/
+// Masonry) — decisão semântica do diretor visual (keyword_extractor.py),
+// diferente de transition_in/render_style que são algorítmicos.
+export interface GalleryData {
+  effect: "split_screen" | "comparison_slider" | "gallery_grid" | "masonry";
+  items: GalleryMediaItem[];
 }
 
 // Presente quando beat.type === "estatistico". Renderizado por <AnimatedChart>.
@@ -78,16 +101,22 @@ export interface Scene {
   // "concept" = nenhuma mídia passou do threshold de relevância, ou o diretor
   // classificou o trecho como abstrato; vira card com a frase-chave.
   // "motion_graphic" (Fase 4) = Timeline/QuoteCard/RankingList.
-  kind: "footage" | "chart" | "concept" | "motion_graphic";
+  // "gallery" (Fase 5) = Split Screen/Comparison Slider/Gallery Grid/Masonry.
+  kind: "footage" | "chart" | "concept" | "motion_graphic" | "gallery";
   visual_strategy?: "FOOTAGE" | "NEWS" | "IMAGE" | "MOTION_GRAPHIC" | "TEXT";
   // offset dentro do clipe (trimBefore), pra reuso do mesmo clipe não parecer loop
   clip_start_seconds: number;
+  // Transição usada pro Remotion entrar nesta cena vindo da anterior.
+  // Ausente = "fade" (comportamento de antes da Fase 5). Algorítmico, ver
+  // Footage.render_style acima pro mesmo princípio.
+  transition_in?: "fade" | "whip_pan" | "film_burn";
   // índice do shot que gerou esta cena — usado só pelo painel (revisão/troca
   // manual de mídia), não é lido por nenhum componente de render
   shot_slot?: number | null;
   footage: Footage | null;
   concept_text?: string;
   motion_graphic?: MotionGraphicData | null;
+  gallery?: GalleryData | null;
 }
 
 // Selo de informação sobreposto ao footage, no segundo em que o dado é falado.

@@ -1,8 +1,9 @@
 import React from "react";
 import { AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig } from "remotion";
-import { TransitionSeries, linearTiming } from "@remotion/transitions";
+import { TransitionSeries, linearTiming, filmBurn } from "@remotion/transitions";
+import type { TransitionPresentation } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
-import type { CompositionData } from "./types";
+import type { CompositionData, GalleryData, Scene } from "./types";
 import { FootageClip } from "./FootageClip";
 import { AnimatedChart } from "./AnimatedChart";
 import { HighlightOverlay } from "./HighlightOverlay";
@@ -10,8 +11,61 @@ import { ConceptCard } from "./ConceptCard";
 import { Timeline } from "./Timeline";
 import { QuoteCard } from "./QuoteCard";
 import { RankingList } from "./RankingList";
+import { ParallaxPan } from "./ParallaxPan";
+import { SplitScreen } from "./SplitScreen";
+import { ImageComparisonSlider } from "./ImageComparisonSlider";
+import { GalleryGrid } from "./GalleryGrid";
+import { MasonryGallery } from "./MasonryGallery";
+import { whipPan } from "./transitions/whipPan";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
+
+// scene.transition_in é decidido algoritmicamente em composition_builder.py
+// (não pela IA — ver o motivo em modules/composition_builder.py). Ausente
+// = "fade", mesmo comportamento de antes da Fase 5.
+//
+// Cada presentation (fade/whipPan/filmBurn) tem seu próprio tipo de props —
+// o cast abaixo é só pro TypeScript aceitar as 3 formas diferentes num
+// mesmo ponto de uso; <TransitionSeries.Transition> não se importa com o
+// tipo exato de PresentationProps em tempo de execução.
+function presentationFor(transitionIn: Scene["transition_in"]): TransitionPresentation<Record<string, unknown>> {
+  if (transitionIn === "whip_pan") return whipPan() as unknown as TransitionPresentation<Record<string, unknown>>;
+  if (transitionIn === "film_burn") return filmBurn({}) as unknown as TransitionPresentation<Record<string, unknown>>;
+  return fade() as unknown as TransitionPresentation<Record<string, unknown>>;
+}
+
+// Fase 5: Split Screen/Comparison Slider usam os 2 primeiros itens; Gallery
+// Grid/Masonry aceitam a lista inteira (2-6). Decisão de QUAL efeito usar é
+// da IA (keyword_extractor.py) — aqui só mapeia pros props de cada
+// componente já existente em remotion/src/.
+function renderGallery(gallery: GalleryData) {
+  const [first, second] = gallery.items;
+  switch (gallery.effect) {
+    case "split_screen":
+      return (
+        <SplitScreen
+          leftClipPath={first?.clip_path}
+          leftMediaType={first?.media_type}
+          rightClipPath={second?.clip_path}
+          rightMediaType={second?.media_type}
+        />
+      );
+    case "comparison_slider":
+      return (
+        <ImageComparisonSlider
+          beforeClipPath={first?.clip_path}
+          beforeMediaType={first?.media_type}
+          afterClipPath={second?.clip_path}
+          afterMediaType={second?.media_type}
+        />
+      );
+    case "masonry":
+      return <MasonryGallery items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))} />;
+    case "gallery_grid":
+    default:
+      return <GalleryGrid items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))} />;
+  }
+}
 
 /**
  * Componente raiz: achata as cenas de todos os beats numa única
@@ -51,7 +105,7 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
             <React.Fragment key={key}>
               {index > 0 && (
                 <TransitionSeries.Transition
-                  presentation={fade()}
+                  presentation={presentationFor(scene.transition_in)}
                   timing={linearTiming({ durationInFrames: TRANSITION_FRAMES })}
                 />
               )}
@@ -85,13 +139,23 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                     text={scene.concept_text}
                     durationInFrames={durationInFrames}
                   />
+                ) : scene.kind === "gallery" && scene.gallery ? (
+                  renderGallery(scene.gallery)
                 ) : scene.footage?.clip_path ? (
-                  <FootageClip
-                    clipPath={scene.footage.clip_path}
-                    mediaType={scene.footage.media_type}
-                    clipStartSeconds={scene.clip_start_seconds}
-                    durationInFrames={durationInFrames}
-                  />
+                  scene.footage.render_style === "parallax_pan" ? (
+                    <ParallaxPan
+                      clipPath={scene.footage.clip_path}
+                      mediaType={scene.footage.media_type}
+                      durationInFrames={durationInFrames}
+                    />
+                  ) : (
+                    <FootageClip
+                      clipPath={scene.footage.clip_path}
+                      mediaType={scene.footage.media_type}
+                      clipStartSeconds={scene.clip_start_seconds}
+                      durationInFrames={durationInFrames}
+                    />
+                  )
                 ) : (
                   <AbsoluteFill style={{ backgroundColor: "#111111" }} />
                 )}
