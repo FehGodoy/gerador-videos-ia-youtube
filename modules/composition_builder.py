@@ -25,6 +25,7 @@ import jsonschema
 from modules.captions import ensure_captions
 from modules.config import PROJECT_ROOT, load_config, output_dir
 from modules.footage_search import search_and_download_footage
+from modules.image_effects import get_blurred_background
 from modules.keyword_extractor import STRATEGIES_THAT_SEARCH, analyze_beat
 from modules.media_pool import PoolDistributor
 from modules.narration import build_narration
@@ -158,7 +159,7 @@ def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds:
     return max(_MIN_SCENE_SECONDS, min(scene_seconds, duration - _TRANSITION_MARGIN_SECONDS))
 
 
-def _scene_footage(footage: dict) -> dict | None:
+def _scene_footage(footage: dict, cfg: dict) -> dict | None:
     if not footage.get("clip_path"):
         return None
     scene_footage = {
@@ -173,10 +174,16 @@ def _scene_footage(footage: dict) -> dict | None:
         scene_footage["attribution"] = footage["attribution"]
     if footage.get("render_style"):
         scene_footage["render_style"] = footage["render_style"]
+    if footage["media_type"] == "image":
+        # Pré-computado uma vez aqui (build da composição), não a cada
+        # frame no Chromium — ver modules/image_effects.py pro porquê.
+        scene_footage["blurred_background_path"] = get_blurred_background(
+            scene_footage["clip_path"], cfg["video"]["width"], cfg["video"]["height"]
+        )
     return scene_footage
 
 
-def _scene_gallery(gallery: dict) -> dict | None:
+def _scene_gallery(gallery: dict, cfg: dict) -> dict | None:
     """Monta o campo scene.gallery (Fase 5: Split Screen/Comparison Slider/
     Gallery Grid/Masonry) — reaproveita _scene_footage por item (mesmo
     formato), só descarta os campos que não fazem sentido numa colagem
@@ -184,7 +191,7 @@ def _scene_gallery(gallery: dict) -> dict | None:
     render_style: Parallax Pan não se aplica a um item de galeria)."""
     items = []
     for item in gallery.get("items") or []:
-        scene_item = _scene_footage(item)
+        scene_item = _scene_footage(item, cfg)
         if scene_item is None:
             continue
         scene_item.pop("relevance_score", None)
@@ -336,7 +343,7 @@ def _tile_scenes(
                 "end_seconds": round(cursor + chart_seconds, 3),
                 "kind": "chart",
                 "clip_start_seconds": 0.0,
-                "footage": _scene_footage(fundo) if fundo else None,
+                "footage": _scene_footage(fundo, cfg) if fundo else None,
             }
         )
         cursor += chart_seconds
@@ -416,7 +423,7 @@ def _tile_scenes(
                 shots[shot_i] = footage
 
             if duration >= min_gallery_scene_seconds:
-                gallery_scene = _scene_gallery({"effect": footage.get("gallery_effect"), "items": gallery_items})
+                gallery_scene = _scene_gallery({"effect": footage.get("gallery_effect"), "items": gallery_items}, cfg)
                 if gallery_scene is not None:
                     append_scene(
                         {
@@ -491,7 +498,7 @@ def _tile_scenes(
             "kind": "footage" if clip_path else "concept",
             "clip_start_seconds": clip_start,
             "visual_strategy": footage.get("strategy", "FOOTAGE"),
-            "footage": _scene_footage(footage),
+            "footage": _scene_footage(footage, cfg),
             "shot_slot": footage.get("slot"),
         }
         if not clip_path:

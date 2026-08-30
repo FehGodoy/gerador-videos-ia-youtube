@@ -30,7 +30,8 @@ export const ParallaxPan: React.FC<{
   durationInFrames: number;
   direction?: Direction;
   scale?: number;
-}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2 }) => {
+  blurredBackgroundPath?: string;
+}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2, blurredBackgroundPath }) => {
   const frame = useCurrentFrame();
 
   const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
@@ -58,16 +59,23 @@ export const ParallaxPan: React.FC<{
         </>
       ) : (
         <>
+          {/* blurredBackgroundPath pré-computado em Python (modules/
+              image_effects.py) — ver o mesmo comentário em FootageClip.tsx.
+              Ausente = cai no blur ao vivo (composition.json antigo). */}
           <Img
-            src={staticFile(clipPath)}
-            style={{
-              position: "absolute",
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: "blur(60px)",
-              transform: "scale(1.15)",
-            }}
+            src={staticFile(blurredBackgroundPath ?? clipPath)}
+            style={
+              blurredBackgroundPath
+                ? { position: "absolute", width: "100%", height: "100%", objectFit: "cover" }
+                : {
+                    position: "absolute",
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    filter: "blur(60px)",
+                    transform: "scale(1.15)",
+                  }
+            }
           />
           <Img
             src={staticFile(clipPath)}

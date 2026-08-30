@@ -34,7 +34,8 @@ export const FootageClip: React.FC<{
   mediaType: "video" | "image";
   clipStartSeconds: number;
   durationInFrames: number;
-}> = ({ clipPath, mediaType, clipStartSeconds, durationInFrames }) => {
+  blurredBackgroundPath?: string;
+}> = ({ clipPath, mediaType, clipStartSeconds, durationInFrames, blurredBackgroundPath }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -46,20 +47,25 @@ export const FootageClip: React.FC<{
     return (
       <AbsoluteFill style={{ backgroundColor: "black" }}>
         {/* Fundo: a mesma foto, borrada e ampliada, preenchendo a tela
-            inteira — o scale(1.15) esconde a franja mais clara/escura que o
-            blur cria na borda do elemento (amostra fora do recorte como
-            transparente). Custo baixo: é a mesma imagem estática, sem
-            decodificar nada de novo (diferente de vídeo). */}
+            inteira. blurredBackgroundPath vem pré-computado do Python
+            (modules/image_effects.py) — já cortado (cover) e borrado, sem
+            filter/scale de compensação. Ausente (composition.json antigo)
+            = cai no blur ao vivo no Chromium, bem mais caro por frame
+            (ver comentário no topo de VideoComposition.tsx pro porquê). */}
         <Img
-          src={staticFile(clipPath)}
-          style={{
-            position: "absolute",
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-            filter: "blur(60px)",
-            transform: "scale(1.15)",
-          }}
+          src={staticFile(blurredBackgroundPath ?? clipPath)}
+          style={
+            blurredBackgroundPath
+              ? { position: "absolute", width: "100%", height: "100%", objectFit: "cover" }
+              : {
+                  position: "absolute",
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  filter: "blur(60px)",
+                  transform: "scale(1.15)",
+                }
+          }
         />
         {/* Foto real, proporção original, nunca cortada — o Ken Burns
             (zoom lento) fica só aqui, o fundo desfocado fica parado. */}

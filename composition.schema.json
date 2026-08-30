@@ -100,6 +100,10 @@
               },
               "media_type": { "type": "string", "enum": ["video", "image"] },
               "search_terms": { "type": "array", "items": { "type": "string" } },
+              "blurred_background_path": {
+                "type": "string",
+                "description": "Só quando media_type='image'. Versão já desfocada+cortada (cover), pré-computada em Python (modules/image_effects.py) pra evitar recalcular blur() a cada frame no Chromium."
+              },
               "attribution": {
                 "type": "object",
                 "properties": {
@@ -176,6 +180,10 @@
               "description": "'parallax_pan' troca o Ken Burns/cover padrão pelo efeito ParallaxPan.tsx. Ausente = 'default' (comportamento de antes da Fase 5). Decidido algoritmicamente em composition_builder.py, não pela IA."
             },
             "search_terms": { "type": "array", "items": { "type": "string" } },
+            "blurred_background_path": {
+              "type": "string",
+              "description": "Só quando media_type='image'. Versão já desfocada+cortada (cover), pré-computada em Python (modules/image_effects.py) pra evitar recalcular blur() a cada frame no Chromium — ver FootageClip.tsx/ParallaxPan.tsx."
+            },
             "relevance_score": {
               "type": ["integer", "null"],
               "description": "Nota 0-100 da IA de visão pra esta mídia nesta cena. Abaixo de ranking.alternative_threshold (config.yaml) a mídia é descartada e a cena vira 'concept'."

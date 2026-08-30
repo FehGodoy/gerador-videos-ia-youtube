@@ -116,6 +116,7 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                     chart={chart}
                     backgroundClipPath={scene.footage?.clip_path ?? null}
                     backgroundMediaType={scene.footage?.media_type ?? "video"}
+                    backgroundBlurredPath={scene.footage?.blurred_background_path ?? null}
                   />
                 ) : scene.kind === "motion_graphic" &&
                   scene.motion_graphic?.kind === "timeline" ? (
@@ -148,6 +149,7 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       durationInFrames={durationInFrames}
+                      blurredBackgroundPath={scene.footage.blurred_background_path}
                     />
                   ) : (
                     <FootageClip
@@ -155,6 +157,7 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       mediaType={scene.footage.media_type}
                       clipStartSeconds={scene.clip_start_seconds}
                       durationInFrames={durationInFrames}
+                      blurredBackgroundPath={scene.footage.blurred_background_path}
                     />
                   )
                 ) : (

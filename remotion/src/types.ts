@@ -27,6 +27,11 @@ export interface Footage {
   // composition_builder.py, não pela IA.
   render_style?: "default" | "parallax_pan";
   search_terms: string[];
+  // Só quando media_type="image". Versão já desfocada+cortada, pré-
+  // computada em Python (modules/image_effects.py) — evita recalcular
+  // blur() a cada frame no Chromium. Ausente = cai no blur ao vivo
+  // (compatibilidade com composition.json de antes desse campo existir).
+  blurred_background_path?: string;
   // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
   // Não é renderizada — serve pra revisão e pro threshold de fallback.
   relevance_score?: number | null;
@@ -44,6 +49,7 @@ export interface GalleryMediaItem {
   source?: Footage["source"];
   media_type: "video" | "image";
   search_terms: string[];
+  blurred_background_path?: string;
   attribution?: { author: string; license: string; page: string; title: string };
 }
 

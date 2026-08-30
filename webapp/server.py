@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from modules import footage_search, github_render, media_pool, settings as settings_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
+from modules.image_effects import get_blurred_background
 from modules.narration import synthesize_beat
 from modules.script_parser import Beat
 from webapp import channels as channels_module
@@ -350,6 +351,21 @@ def _apply_chosen_candidate(
     composition_path = output_dir(job.slug) / "composition.json"
     composition = json.loads(composition_path.read_text(encoding="utf-8"))
     relative_path = Path(clip_path).resolve().relative_to(PROJECT_ROOT).as_posix()
+    media_type = chosen.get("media_type", "video")
+    new_footage = {
+        "clip_path": relative_path,
+        "source": chosen["source"],
+        "media_type": media_type,
+        "search_terms": [],
+    }
+    if media_type == "image":
+        # Mesmo pré-cômputo de modules/composition_builder.py::_scene_footage
+        # — sem isso, uma cena editada manualmente na revisão cairia de
+        # volta no blur ao vivo no Chromium (ver modules/image_effects.py).
+        cfg = load_config()
+        new_footage["blurred_background_path"] = get_blurred_background(
+            relative_path, cfg["video"]["width"], cfg["video"]["height"]
+        )
     updated_scenes = 0
     for beat_entry in composition["beats"]:
         if beat_entry["id"] != beat_id:
@@ -359,9 +375,7 @@ def _apply_chosen_candidate(
                 continue
             scene["kind"] = "footage"
             scene["footage"] = {
-                "clip_path": relative_path,
-                "source": chosen["source"],
-                "media_type": chosen.get("media_type", "video"),
+                **new_footage,
                 "search_terms": (scene.get("footage") or {}).get("search_terms", []),
             }
             # o offset era calculado pra duração do clipe antigo (ou nem

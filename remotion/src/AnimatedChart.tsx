@@ -43,7 +43,8 @@ export const AnimatedChart: React.FC<{
   chart: ChartData;
   backgroundClipPath: string | null;
   backgroundMediaType: "video" | "image";
-}> = ({ chart, backgroundClipPath, backgroundMediaType }) => {
+  backgroundBlurredPath?: string | null;
+}> = ({ chart, backgroundClipPath, backgroundMediaType, backgroundBlurredPath }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -66,15 +67,30 @@ export const AnimatedChart: React.FC<{
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {backgroundClipPath && (
         backgroundMediaType === "image" ? (
+          // backgroundBlurredPath pré-computado em Python (modules/
+          // image_effects.py, radius=10 ~ blur(20px)) — brightness/
+          // saturate continuam ao vivo (baratos, não são convolução
+          // espacial). Ausente = cai no blur ao vivo (composition.json
+          // antigo); mantém scale(1.15) só nesse caso, pra esconder a
+          // franja de amostragem transparente do blur ao vivo.
           <Img
-            src={staticFile(backgroundClipPath)}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: "blur(20px) brightness(0.32) saturate(0.9)",
-              transform: "scale(1.12)",
-            }}
+            src={staticFile(backgroundBlurredPath ?? backgroundClipPath)}
+            style={
+              backgroundBlurredPath
+                ? {
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    filter: "brightness(0.32) saturate(0.9)",
+                  }
+                : {
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "cover",
+                    filter: "blur(20px) brightness(0.32) saturate(0.9)",
+                    transform: "scale(1.12)",
+                  }
+            }
           />
         ) : (
           <OffthreadVideo
