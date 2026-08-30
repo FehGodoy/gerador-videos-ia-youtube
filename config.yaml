@@ -104,10 +104,18 @@ effects:
   # isolado por beat e não tem como saber que efeito já foi usado no resto
   # do vídeo, só quem monta todos os beats consegue evitar repetir o mesmo
   # tipo em sequência ou bater uma frequência global.
+  #
+  # film_burn removido: investigando um render do GitHub Actions que nunca
+  # terminava (runners sem GPU), isolei que a transição film_burn nativa do
+  # Remotion (@remotion/transitions/filmBurn, código de terceiros) derrubava
+  # o render de ~18fps pra ~1,4fps sempre que aparecia — nada a ver com
+  # blur/Ken Burns/Parallax Pan, todos já descartados como causa antes desse.
+  # Composition.json antigos com film_burn salvo continuam renderizando
+  # normal (VideoComposition.tsx não mudou), só paramos de sortear ele daqui
+  # pra frente.
   transition_weights:
-    fade: 0.5
+    fade: 0.75
     whip_pan: 0.25
-    film_burn: 0.25
   # Chance de um shot de imagem/vídeo único (não galeria) usar Parallax Pan
   # em vez do Ken Burns/cover padrão. Decidida uma vez por SHOT (não por
   # cena) — um shot reaproveitado várias vezes no mesmo beat mantém o
