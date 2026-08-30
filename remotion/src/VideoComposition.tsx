@@ -156,7 +156,6 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       clipStartSeconds={scene.clip_start_seconds}
-                      durationInFrames={durationInFrames}
                       blurredBackgroundPath={scene.footage.blurred_background_path}
                     />
                   )

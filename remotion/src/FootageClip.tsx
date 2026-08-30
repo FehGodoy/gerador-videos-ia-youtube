@@ -3,9 +3,7 @@ import {
   AbsoluteFill,
   Img,
   OffthreadVideo,
-  interpolate,
   staticFile,
-  useCurrentFrame,
   useVideoConfig,
 } from "remotion";
 
@@ -13,10 +11,6 @@ import {
  * `clipPath` vem do composition.json como caminho relativo à raiz do
  * projeto (ex: "cache/footage/abcd1234.mp4"); staticFile() resolve isso via
  * o public dir configurado em remotion.config.ts.
- *
- * `mediaType === "image"` acontece quando a busca (ou a troca manual na
- * revisão) resolveu numa foto em vez de vídeo — sem Ken Burns a imagem
- * ficaria "morta" na tela, então aplica um zoom lento e contínuo.
  *
  * `clipStartSeconds` (trimBefore) existe porque um bloco de narração longo
  * reutiliza o mesmo clipe em várias cenas — começar cada reuso de um ponto
@@ -28,22 +22,24 @@ import {
  * mídia INTEIRA, sem cortar (objectFit "contain") — pra 16:9, contain e
  * cover dão exatamente o mesmo resultado, então não tem regressão pro caso
  * comum, só ganho pro caso de proporção diferente.
+ *
+ * Sem Ken Burns (zoom lento) na foto: era um `scale()` animado ao longo do
+ * shot inteiro, que força o Chromium a redimensionar a imagem em alta
+ * resolução a cada frame — investigando um render do GitHub Actions que
+ * nunca terminava (runners sem GPU), esse foi o segundo maior custo de
+ * render depois do blur do fundo (já resolvido, ver blurredBackgroundPath
+ * abaixo). Removido a pedido do usuário: mais rápido de renderizar em
+ * qualquer ambiente > zoom sutil.
  */
 export const FootageClip: React.FC<{
   clipPath: string;
   mediaType: "video" | "image";
   clipStartSeconds: number;
-  durationInFrames: number;
   blurredBackgroundPath?: string;
-}> = ({ clipPath, mediaType, clipStartSeconds, durationInFrames, blurredBackgroundPath }) => {
-  const frame = useCurrentFrame();
+}> = ({ clipPath, mediaType, clipStartSeconds, blurredBackgroundPath }) => {
   const { fps } = useVideoConfig();
 
   if (mediaType === "image") {
-    const scale = interpolate(frame, [0, durationInFrames], [1, 1.08], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    });
     return (
       <AbsoluteFill style={{ backgroundColor: "black" }}>
         {/* Fundo: a mesma foto, borrada e ampliada, preenchendo a tela
@@ -67,8 +63,8 @@ export const FootageClip: React.FC<{
                 }
           }
         />
-        {/* Foto real, proporção original, nunca cortada — o Ken Burns
-            (zoom lento) fica só aqui, o fundo desfocado fica parado. */}
+        {/* Foto real, proporção original, nunca cortada. Estática — sem
+            Ken Burns (ver comentário no topo do arquivo). */}
         <Img
           src={staticFile(clipPath)}
           style={{
@@ -76,7 +72,6 @@ export const FootageClip: React.FC<{
             width: "100%",
             height: "100%",
             objectFit: "contain",
-            transform: `scale(${scale})`,
           }}
         />
       </AbsoluteFill>
