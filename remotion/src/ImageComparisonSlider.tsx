@@ -1,25 +1,21 @@
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
+import { CARD_RADIUS, CARD_SHADOW, DECORATIVE_ACCENT, INK_COLOR } from "./theme";
 
-const { fontFamily } = loadFont();
-const ACCENT = "#ff8c42";
+const { fontFamily } = loadFont("normal", { weights: ["500"], subsets: ["latin", "latin-ext"] });
 
 /**
- * Efeito trazido do catálogo de templates da React Video Editor (MCP
- * reactvideoeditor) — ainda NÃO usado por nenhum shot do pipeline
- * automático, só disponível pra uso manual/futuro. Adaptado do original:
- * "antes"/"depois" aceitam mídia real; sem clipPath, cai no gradiente do
- * template original.
- *
- * Divisória vertical varre da esquerda pra direita revelando o "depois"
- * por baixo do "antes" (clipPath dos dois lados).
+ * Fase 5, effect="comparison_slider": divisória vertical varre da esquerda
+ * pra direita revelando o "depois" por baixo do "antes" (mesma foto, dois
+ * momentos, ou duas fotos comparadas) — decidido pela IA em
+ * keyword_extractor.py. Card único (cantos arredondados + sombra) sobre o
+ * papel compartilhado.
  */
-const Side: React.FC<{ clipPath?: string; mediaType?: "image" | "video"; label: string; gradient: string }> = ({
+const Side: React.FC<{ clipPath?: string; mediaType?: "image" | "video"; label: string }> = ({
   clipPath,
   mediaType = "image",
   label,
-  gradient,
 }) =>
   clipPath ? (
     mediaType === "video" ? (
@@ -28,8 +24,8 @@ const Side: React.FC<{ clipPath?: string; mediaType?: "image" | "video"; label: 
       <Img src={staticFile(clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
     )
   ) : (
-    <div style={{ width: "100%", height: "100%", background: gradient, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <span style={{ fontFamily, color: "white", fontSize: 32, opacity: 0.85 }}>{label}</span>
+    <div style={{ width: "100%", height: "100%", background: "rgba(26,21,18,0.06)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <span style={{ fontFamily, color: INK_COLOR, fontSize: 32, opacity: 0.75 }}>{label}</span>
     </div>
   );
 
@@ -50,15 +46,13 @@ export const ImageComparisonSlider: React.FC<{
   });
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: "85%", height: "75%", borderRadius: 12, overflow: "hidden", position: "relative" }}>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
+      <div style={{ width: "85%", height: "75%", borderRadius: CARD_RADIUS, overflow: "hidden", boxShadow: CARD_SHADOW, position: "relative" }}>
         <div style={{ position: "absolute", inset: 0 }}>
-          {/* "depois" vívido — mesmo laranja de ConceptCard/Timeline/QuoteCard/RankingList */}
-          <Side clipPath={afterClipPath} mediaType={afterMediaType} label={afterLabel} gradient={`linear-gradient(135deg, ${ACCENT}, #d9a441, #c76a2e)`} />
+          <Side clipPath={afterClipPath} mediaType={afterMediaType} label={afterLabel} />
         </div>
         <div style={{ position: "absolute", inset: 0, clipPath: `inset(0 ${100 - dividerPercent}% 0 0)` }}>
-          {/* "antes" dessaturado — tom terroso apagado, não cinza-azulado frio */}
-          <Side clipPath={beforeClipPath} mediaType={beforeMediaType} label={beforeLabel} gradient="linear-gradient(135deg, #241c16, #3a2f27, #4a3f34)" />
+          <Side clipPath={beforeClipPath} mediaType={beforeMediaType} label={beforeLabel} />
         </div>
         <div style={{ position: "absolute", top: 0, bottom: 0, left: `${dividerPercent}%`, width: 3, backgroundColor: "white", zIndex: 2 }}>
           <div
@@ -71,7 +65,7 @@ export const ImageComparisonSlider: React.FC<{
               height: 28,
               borderRadius: "50%",
               backgroundColor: "white",
-              border: `3px solid ${ACCENT}`,
+              border: `3px solid ${DECORATIVE_ACCENT}`,
             }}
           />
         </div>

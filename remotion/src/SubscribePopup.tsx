@@ -1,5 +1,8 @@
 import React from "react";
 import { useCurrentFrame, useVideoConfig, Img, interpolate, staticFile } from "remotion";
+import { loadFont } from "@remotion/google-fonts/Poppins";
+
+const { fontFamily: POPPINS } = loadFont("normal", { weights: ["500", "700"], subsets: ["latin", "latin-ext"] });
 
 /**
  * Copiado de D:\Videos\Youtube\video_editor_app\remotion\src\SubscribePopup.tsx
@@ -10,7 +13,9 @@ import { useCurrentFrame, useVideoConfig, Img, interpolate, staticFile } from "r
  * continua existindo só como composição standalone no Remotion Studio, pra
  * pré-visualizar a barra isolada sem rodar o pipeline inteiro.
  *
- * Único ajuste real na cópia: os `staticFile("like-ativado.png")` etc.
+ * Ajustes reais na cópia: fonte trocada de "Neue Haas Grotesk Display Pro"
+ * (original) pra Poppins, alinhando com o resto do vídeo. Também os
+ * `staticFile("like-ativado.png")` etc.
  * originais assumem que os ícones estão na raiz do public dir do Remotion.
  * Este projeto SOBRESCREVE o public dir (remotion.config.ts) pra apontar
  * pra raiz do repositório (ou pra pasta de staging do render, via
@@ -29,7 +34,7 @@ export type SubscribeBarProps = {
   offsetSec?: number; // atraso da 1ª aparição (default 0)
   subscribeText?: string;  // ex: "Iscriviti" (it) / "Suscríbete" (es)
   subscribedText?: string; // ex: "Iscritto" (it) / "Suscrito" (es)
-  fontFamily?: string; // default = Neue Haas Grotesk (fonte do canal, se diferente)
+  fontFamily?: string; // default = Poppins (fonte do canal, se diferente)
   dock?: "bottom-center" | "top-right"; // onde a barra descansa + de onde ela entra (default = "bottom-center")
   scale?: number; // escala geral da barra (default = 1)
   ctaColor?: string; // cor do botão "Iscriviti" não-inscrito (default = vermelho YouTube)
@@ -41,7 +46,7 @@ export type SubscribePopupProps = SubscribeBarProps & {
 
 export const SUBSCRIBE_POPUP_DURATION = 40 * 30;
 
-const FONT = "'Neue Haas Grotesk Display Pro', 'Helvetica Neue', Arial, sans-serif";
+const FONT = POPPINS;
 const ICON = (name: string) => staticFile(`assets/subscribe/${name}`);
 
 // Barra animada reutilizável (overlay) — usada no standalone e dentro de

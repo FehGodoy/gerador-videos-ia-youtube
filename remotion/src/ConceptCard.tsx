@@ -1,13 +1,13 @@
 import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
+import { DECORATIVE_ACCENT, INK_COLOR } from "./theme";
 
-const { fontFamily } = loadFont();
-
-const ACCENT = "#ff8c42";
+const { fontFamily } = loadFont("normal", { weights: ["600", "900"], subsets: ["latin", "latin-ext"] });
 
 /**
- * Card com a frase-chave do trecho, em tela cheia.
+ * Card com a frase-chave do trecho, sobre o papel compartilhado (sem fundo
+ * próprio).
  *
  * Entra em dois casos: quando o diretor visual classificou o shot como TEXT
  * (ideia abstrata, nenhuma imagem literal serve) e quando nenhuma mídia
@@ -15,7 +15,7 @@ const ACCENT = "#ff8c42";
  * material que só lembra o assunto é pior que assumir que não achamos nada.
  *
  * Sem footage atrás de propósito — se houvesse um clipe bom, não estaríamos
- * aqui. O movimento vem da tipografia e de um gradiente lento.
+ * aqui. O movimento vem só da tipografia.
  */
 export const ConceptCard: React.FC<{ text: string; durationInFrames: number }> = ({
   text,
@@ -29,15 +29,10 @@ export const ConceptCard: React.FC<{ text: string; durationInFrames: number }> =
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  // deriva lenta do fundo pra cena não ficar completamente estática
-  const drift = interpolate(frame, [0, durationInFrames], [0, 8], {
-    extrapolateRight: "clamp",
-  });
 
   return (
     <AbsoluteFill
       style={{
-        background: `radial-gradient(ellipse 1200px 700px at ${46 + drift}% ${38 - drift / 2}%, #241c16, #0f0d0c 70%)`,
         alignItems: "center",
         justifyContent: "center",
         padding: "0 180px",
@@ -55,7 +50,7 @@ export const ConceptCard: React.FC<{ text: string; durationInFrames: number }> =
           style={{
             width: 84,
             height: 5,
-            background: ACCENT,
+            background: DECORATIVE_ACCENT,
             borderRadius: 3,
             margin: "0 auto 34px",
             transform: `scaleX(${enter})`,
@@ -64,8 +59,8 @@ export const ConceptCard: React.FC<{ text: string; durationInFrames: number }> =
         <div
           style={{
             fontSize: 76,
-            fontWeight: 600,
-            color: "#f3ece0",
+            fontWeight: 900,
+            color: INK_COLOR,
             lineHeight: 1.22,
             letterSpacing: -1.5,
             maxWidth: 1400,

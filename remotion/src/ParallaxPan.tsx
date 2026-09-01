@@ -1,28 +1,23 @@
 import React from "react";
 import { AbsoluteFill, Easing, Img, OffthreadVideo, interpolate, staticFile, useCurrentFrame } from "remotion";
+import { CARD_RADIUS, CARD_SHADOW } from "./theme";
 
 type Direction = "left-right" | "right-left" | "top-bottom" | "bottom-top";
 
+const CARD_INSET = 90;
+
 /**
- * Efeito trazido do catálogo de templates da React Video Editor (MCP
- * reactvideoeditor) — ainda NÃO usado por nenhum shot do pipeline
- * automático, só disponível pra uso manual/futuro.
+ * Efeito de câmera (pan + leve zoom) sobre um shot único, ligado no
+ * pipeline via `render_style: "parallax_pan"` (decidido algoritmicamente
+ * em `composition_builder.py`).
  *
- * Reescrito na adaptação: o original usava `next/image` + `@keyframes` CSS
- * com `animation: ... infinite alternate` — não funciona aqui (nem o
- * next/image existe fora de um app Next.js, nem uma animação CSS por
- * tempo real é determinística o bastante pro Remotion renderizar o mesmo
- * frame duas vezes igual, exigido pro render server-side). Reescrito com
- * `interpolate` sobre `useCurrentFrame`, um passe só (sem "alternate" —
- * aqui a cena toca uma vez, não fica em loop) do início ao fim do shot.
- *
- * Corrigido depois de ligar no pipeline: a 1ª versão usava objectFit
- * "cover" puro, revertendo o fix de FootageClip.tsx (commit 8138fc3) que
- * evita cortar/dar zoom pesado em mídia com proporção diferente de 16:9.
- * Agora segue o mesmo padrão: imagem usa fundo desfocado (barato, é a
- * mesma imagem estática) + a foto real em "contain" sofrendo o pan; vídeo
- * usa fundo simples (sem desfoque de verdade, decodificar 2x custaria caro
- * no render) + o vídeo real em "contain".
+ * Diferente de `FootageClip.tsx` (que agora molda o card ao formato real
+ * da mídia, sem quadro fixo): aqui o card usa um quadro FIXO com
+ * `objectFit: "cover"` — o movimento de câmera implica ver uma janela
+ * móvel sobre uma imagem maior, então o corte de "cover" é esperado (não
+ * é um bug a evitar como seria numa exibição estática). Isso também
+ * elimina a necessidade de um fundo desfocado atrás: a mídia sempre
+ * preenche o quadro inteiro, não sobra vão pra preencher.
  */
 export const ParallaxPan: React.FC<{
   clipPath: string;
@@ -30,8 +25,7 @@ export const ParallaxPan: React.FC<{
   durationInFrames: number;
   direction?: Direction;
   scale?: number;
-  blurredBackgroundPath?: string;
-}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2, blurredBackgroundPath }) => {
+}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2 }) => {
   const frame = useCurrentFrame();
 
   const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
@@ -47,41 +41,26 @@ export const ParallaxPan: React.FC<{
   const panTransform = `translate${isVertical ? "Y" : "X"}(${shift}%) scale(${scale})`;
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "black", overflow: "hidden" }}>
+    <AbsoluteFill
+      style={{
+        inset: CARD_INSET,
+        borderRadius: CARD_RADIUS,
+        overflow: "hidden",
+        boxShadow: CARD_SHADOW,
+        backgroundColor: "#000",
+      }}
+    >
       {mediaType === "video" ? (
-        <>
-          <AbsoluteFill style={{ background: "radial-gradient(circle, #1c1c1c 0%, #000 100%)" }} />
-          <OffthreadVideo
-            src={staticFile(clipPath)}
-            muted
-            style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain", transform: panTransform }}
-          />
-        </>
+        <OffthreadVideo
+          src={staticFile(clipPath)}
+          muted
+          style={{ position: "absolute", width: "100%", height: "100%", objectFit: "cover", transform: panTransform }}
+        />
       ) : (
-        <>
-          {/* blurredBackgroundPath pré-computado em Python (modules/
-              image_effects.py) — ver o mesmo comentário em FootageClip.tsx.
-              Ausente = cai no blur ao vivo (composition.json antigo). */}
-          <Img
-            src={staticFile(blurredBackgroundPath ?? clipPath)}
-            style={
-              blurredBackgroundPath
-                ? { position: "absolute", width: "100%", height: "100%", objectFit: "cover" }
-                : {
-                    position: "absolute",
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    filter: "blur(60px)",
-                    transform: "scale(1.15)",
-                  }
-            }
-          />
-          <Img
-            src={staticFile(clipPath)}
-            style={{ position: "absolute", width: "100%", height: "100%", objectFit: "contain", transform: panTransform }}
-          />
-        </>
+        <Img
+          src={staticFile(clipPath)}
+          style={{ position: "absolute", width: "100%", height: "100%", objectFit: "cover", transform: panTransform }}
+        />
       )}
     </AbsoluteFill>
   );

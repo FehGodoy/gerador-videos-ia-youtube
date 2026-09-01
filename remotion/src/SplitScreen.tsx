@@ -1,41 +1,40 @@
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
+import { CARD_RADIUS, CARD_SHADOW, INK_COLOR } from "./theme";
 
-const { fontFamily } = loadFont();
-const ACCENT = "#ff8c42";
+const { fontFamily } = loadFont("normal", { weights: ["500"], subsets: ["latin", "latin-ext"] });
+
+const CARD_INSET = 90;
+const GAP = 40;
 
 /**
- * Efeito trazido do catálogo de templates da React Video Editor (MCP
- * reactvideoeditor) — ainda NÃO usado por nenhum shot do pipeline
- * automático (composition_builder decide isso), só disponível pra uso
- * manual/futuro. Adaptado do original: aceita mídia real (clipPath) em vez
- * de gradiente fixo; sem clipPath, cai no gradiente + rótulo do template
- * original.
+ * Fase 5, effect="split_screen": dois shots relacionados lado a lado —
+ * decidido pela IA em keyword_extractor.py quando o trecho compara ou
+ * contrasta duas coisas.
  *
- * Cores/fonte trocadas na integração: os gradientes originais eram azul/
- * roxo genérico de template, sem nenhuma relação com o resto do vídeo —
- * ConceptCard/Timeline/QuoteCard/RankingList (já em produção) usam Poppins
- * + laranja #ff8c42 sobre fundo marrom-escuro; esse efeito precisa da MESMA
- * identidade pra não destoar quando aparecer no meio de um vídeo real.
- *
- * Dois painéis entram deslizando de lados opostos e se encontram no centro
- * (spring), com uma linha divisória que aparece depois que eles assentam.
+ * Cada painel vira um card (cantos arredondados + sombra) sobre o papel
+ * compartilhado, com um espaço entre os dois em vez de tela cheia dividida
+ * por uma linha — a "linha divisória" fazia sentido quando os painéis
+ * cobriam a tela inteira, sem sentido mais com os dois já visualmente
+ * separados como cards.
  */
 const Panel: React.FC<{
   clipPath?: string;
   mediaType?: "image" | "video";
   label: string;
-  gradient: string;
   translateX: number;
-}> = ({ clipPath, mediaType = "image", label, gradient, translateX }) => (
+}> = ({ clipPath, mediaType = "image", label, translateX }) => (
   <div
     style={{
-      width: "50%",
+      flex: 1,
       height: "100%",
       overflow: "hidden",
+      borderRadius: CARD_RADIUS,
+      boxShadow: CARD_SHADOW,
       transform: `translateX(${translateX}%)`,
       position: "relative",
+      backgroundColor: "rgba(26,21,18,0.06)",
     }}
   >
     {clipPath ? (
@@ -45,17 +44,8 @@ const Panel: React.FC<{
         <Img src={staticFile(clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
       )
     ) : (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          background: gradient,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <h2 style={{ fontFamily, color: "white", fontSize: 56, fontWeight: 500, margin: 0 }}>{label}</h2>
+      <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <h2 style={{ fontFamily, color: INK_COLOR, fontSize: 48, fontWeight: 500, margin: 0 }}>{label}</h2>
       </div>
     )}
   </div>
@@ -74,42 +64,13 @@ export const SplitScreen: React.FC<{
 
   const leftSlide = spring({ frame, fps, config: { damping: 15, stiffness: 80 } });
   const rightSlide = spring({ frame: frame - 5, fps, config: { damping: 15, stiffness: 80 } });
-  const leftTranslateX = interpolate(leftSlide, [0, 1], [-100, 0]);
-  const rightTranslateX = interpolate(rightSlide, [0, 1], [100, 0]);
-
-  const dividerOpacity = interpolate(frame, [fps * 0.6, fps * 0.9], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const leftTranslateX = interpolate(leftSlide, [0, 1], [-30, 0]);
+  const rightTranslateX = interpolate(rightSlide, [0, 1], [30, 0]);
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", flexDirection: "row" }}>
-      <Panel
-        clipPath={leftClipPath}
-        mediaType={leftMediaType}
-        label={leftLabel}
-        gradient={`linear-gradient(135deg, #5c3220, #241c16)`}
-        translateX={leftTranslateX}
-      />
-      <Panel
-        clipPath={rightClipPath}
-        mediaType={rightMediaType}
-        label={rightLabel}
-        gradient={`linear-gradient(135deg, ${ACCENT}, #c76a2e)`}
-        translateX={rightTranslateX}
-      />
-      <div
-        style={{
-          position: "absolute",
-          top: "10%",
-          bottom: "10%",
-          left: "50%",
-          transform: "translateX(-50%)",
-          width: 2,
-          background: "linear-gradient(180deg, transparent, rgba(255,255,255,0.8), transparent)",
-          opacity: dividerOpacity,
-        }}
-      />
+    <AbsoluteFill style={{ inset: CARD_INSET, flexDirection: "row", gap: GAP }}>
+      <Panel clipPath={leftClipPath} mediaType={leftMediaType} label={leftLabel} translateX={leftTranslateX} />
+      <Panel clipPath={rightClipPath} mediaType={rightMediaType} label={rightLabel} translateX={rightTranslateX} />
     </AbsoluteFill>
   );
 };

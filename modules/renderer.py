@@ -55,7 +55,11 @@ def stage_media_for_render(composition_path: Path, slug: str) -> Path:
     staging_dir.mkdir(parents=True)
 
     composition = json.loads(composition_path.read_text(encoding="utf-8"))
-    referenced_paths = {composition["audio"]["path"]}
+    # Textura de fundo da identidade visual (VideoComposition.tsx) — pintada
+    # incondicionalmente em todo vídeo, não referenciada em nenhum campo do
+    # composition.json, então precisa entrar aqui hardcoded (mesmo padrão
+    # dos ícones fixos do subscribe abaixo) ou dá 404 no primeiro frame.
+    referenced_paths = {composition["audio"]["path"], "assets/texture/paper-grain.png"}
     if composition.get("music"):
         referenced_paths.add(composition["music"]["path"])
     # O footage fica em beat["scenes"][i]["footage"] — um beat vira várias

@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, Audio, Sequence, staticFile, useVideoConfig } from "remotion";
+import { AbsoluteFill, Audio, Img, Sequence, staticFile, useVideoConfig } from "remotion";
 import { TransitionSeries, linearTiming, filmBurn } from "@remotion/transitions";
 import type { TransitionPresentation } from "@remotion/transitions";
 import { fade } from "@remotion/transitions/fade";
@@ -18,6 +18,7 @@ import { GalleryGrid } from "./GalleryGrid";
 import { MasonryGallery } from "./MasonryGallery";
 import { whipPan } from "./transitions/whipPan";
 import { SubscribeBar } from "./SubscribePopup";
+import { PAPER_COLOR } from "./theme";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
 
@@ -91,7 +92,18 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
   );
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "black" }}>
+    <AbsoluteFill style={{ backgroundColor: PAPER_COLOR }}>
+      {/* Textura de papel única para o vídeo inteiro — PNG estático, sem
+          filter CSS nem regeneração por frame (mesma lição de performance
+          do blur/Ken Burns/film_burn já resolvidos nesta sessão: qualquer
+          efeito caro recalculado por frame é inviável sem GPU no CI). Os
+          componentes filhos (FootageClip, ConceptCard, galeria...) não
+          pintam mais fundo próprio — ficam transparentes e deixam esse
+          papel aparecer por trás, como cards flutuando sobre ele. */}
+      <Img
+        src={staticFile("assets/texture/paper-grain.png")}
+        style={{ position: "absolute", width: "100%", height: "100%", objectFit: "cover", opacity: 0.08 }}
+      />
       {data.audio.path && <Audio src={staticFile(data.audio.path)} />}
       <TransitionSeries>
         {scenes.map(({ scene, chart, key }, index) => {
@@ -149,18 +161,16 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       durationInFrames={durationInFrames}
-                      blurredBackgroundPath={scene.footage.blurred_background_path}
                     />
                   ) : (
                     <FootageClip
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       clipStartSeconds={scene.clip_start_seconds}
-                      blurredBackgroundPath={scene.footage.blurred_background_path}
                     />
                   )
                 ) : (
-                  <AbsoluteFill style={{ backgroundColor: "#111111" }} />
+                  <AbsoluteFill />
                 )}
               </TransitionSeries.Sequence>
             </React.Fragment>

@@ -10,8 +10,11 @@ import {
 } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Poppins";
 import type { ChartData } from "./types";
+import { CARD_RADIUS, CARD_SHADOW, INK_COLOR, RUST_ACCENT } from "./theme";
 
-const { fontFamily } = loadFont();
+const { fontFamily } = loadFont("normal", { weights: ["500", "700", "900"], subsets: ["latin", "latin-ext"] });
+
+const CARD_INSET = 90;
 
 // A contagem tem duração fixa e curta — antes ela era esticada pela duração
 // inteira do beat, e num bloco de 70s o número ficava subindo por 70s.
@@ -32,12 +35,12 @@ function formatValue(value: number, unidade: string): string {
 }
 
 /**
- * Usado quando beat.type === "estatistico" — em vez de footage em tela
- * cheia (<FootageClip>), destaca o dado numérico do trecho (número,
- * percentual, ano, índice) sobre um fundo desfocado do footage temático já
- * buscado pra esse beat. Fonte Poppins carregada via @remotion/google-fonts
- * (síncrono, evita flash de fonte errada no render headless do GitHub
- * Actions).
+ * Usado quando beat.type === "estatistico" — em vez de footage num card
+ * (<FootageClip>), destaca o dado numérico do trecho (número, percentual,
+ * ano, índice) sobre um fundo desfocado e escurecido do footage temático
+ * já buscado pra esse beat, confinado num card sobre o papel. Sem footage
+ * (raro), o número fica direto sobre o papel, sem card — nesse caso o
+ * texto vira escuro (não tem fundo escuro pra sustentar texto branco).
  */
 export const AnimatedChart: React.FC<{
   chart: ChartData;
@@ -62,49 +65,56 @@ export const AnimatedChart: React.FC<{
     : chart.valor_final;
 
   const arrow = chart.tipo === "queda" ? "▼" : "▲";
+  const onDarkCard = Boolean(backgroundClipPath);
+  const textColor = onDarkCard ? "white" : INK_COLOR;
+  const subTextColor = onDarkCard ? "rgba(255,255,255,0.68)" : "rgba(26,21,18,0.68)";
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "black" }}>
+    <AbsoluteFill>
       {backgroundClipPath && (
-        backgroundMediaType === "image" ? (
-          // backgroundBlurredPath pré-computado em Python (modules/
-          // image_effects.py, radius=10 ~ blur(20px)) — brightness/
-          // saturate continuam ao vivo (baratos, não são convolução
-          // espacial). Ausente = cai no blur ao vivo (composition.json
-          // antigo); mantém scale(1.15) só nesse caso, pra esconder a
-          // franja de amostragem transparente do blur ao vivo.
-          <Img
-            src={staticFile(backgroundBlurredPath ?? backgroundClipPath)}
-            style={
-              backgroundBlurredPath
-                ? {
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    filter: "brightness(0.32) saturate(0.9)",
-                  }
-                : {
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    filter: "blur(20px) brightness(0.32) saturate(0.9)",
-                    transform: "scale(1.12)",
-                  }
-            }
-          />
-        ) : (
-          <OffthreadVideo
-            src={staticFile(backgroundClipPath)}
-            muted
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "cover",
-              filter: "blur(20px) brightness(0.32) saturate(0.9)",
-              transform: "scale(1.12)",
-            }}
-          />
-        )
+        <AbsoluteFill
+          style={{ inset: CARD_INSET, borderRadius: CARD_RADIUS, overflow: "hidden", boxShadow: CARD_SHADOW }}
+        >
+          {backgroundMediaType === "image" ? (
+            // backgroundBlurredPath pré-computado em Python (modules/
+            // image_effects.py, radius=10 ~ blur(20px)) — brightness/
+            // saturate continuam ao vivo (baratos, não são convolução
+            // espacial). Ausente = cai no blur ao vivo (composition.json
+            // antigo); mantém scale(1.15) só nesse caso, pra esconder a
+            // franja de amostragem transparente do blur ao vivo.
+            <Img
+              src={staticFile(backgroundBlurredPath ?? backgroundClipPath)}
+              style={
+                backgroundBlurredPath
+                  ? {
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      filter: "brightness(0.32) saturate(0.9)",
+                    }
+                  : {
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      filter: "blur(20px) brightness(0.32) saturate(0.9)",
+                      transform: "scale(1.12)",
+                    }
+              }
+            />
+          ) : (
+            <OffthreadVideo
+              src={staticFile(backgroundClipPath)}
+              muted
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                filter: "blur(20px) brightness(0.32) saturate(0.9)",
+                transform: "scale(1.12)",
+              }}
+            />
+          )}
+        </AbsoluteFill>
       )}
       <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
         <div
@@ -113,7 +123,7 @@ export const AnimatedChart: React.FC<{
             opacity: entrance,
             transform: `scale(${0.92 + entrance * 0.08})`,
             textAlign: "center",
-            color: "white",
+            color: textColor,
             padding: "0 80px",
           }}
         >
@@ -122,14 +132,22 @@ export const AnimatedChart: React.FC<{
               style={{
                 fontSize: 30,
                 fontWeight: 500,
-                color: "rgba(255,255,255,0.68)",
+                color: subTextColor,
                 marginBottom: 10,
               }}
             >
               {arrow} de {formatValue(chart.valor_inicial as number, chart.unidade)} para
             </div>
           )}
-          <div style={{ fontSize: hasComparison ? 128 : 148, fontWeight: 700, lineHeight: 1, letterSpacing: -2 }}>
+          <div
+            style={{
+              fontSize: hasComparison ? 128 : 148,
+              fontWeight: 900,
+              lineHeight: 1,
+              letterSpacing: -2,
+              color: onDarkCard ? "white" : RUST_ACCENT,
+            }}
+          >
             {formatValue(displayValue, chart.unidade)}
           </div>
           <div
@@ -137,7 +155,7 @@ export const AnimatedChart: React.FC<{
               fontSize: 32,
               fontWeight: 500,
               marginTop: 22,
-              color: "rgba(255,255,255,0.85)",
+              color: subTextColor,
               maxWidth: 900,
             }}
           >

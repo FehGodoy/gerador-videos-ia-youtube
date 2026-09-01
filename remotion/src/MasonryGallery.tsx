@@ -1,70 +1,72 @@
 import React from "react";
-import { AbsoluteFill, Img, OffthreadVideo, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Img, OffthreadVideo, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
 import type { GalleryItem } from "./GalleryGrid";
+import { CARD_SHADOW } from "./theme";
 
-// col: qual das 3 colunas; height: proporção do bloco dentro da coluna
-// (mesmo layout do template original, fixo — é o "jeito Pinterest" do
-// efeito, não faz sentido calcular alturas a partir da mídia real aqui).
-// Gradientes quentes (laranja/âmbar/terracota) — mesma identidade de
-// ConceptCard/Timeline/QuoteCard/RankingList, não o azul/roxo do template.
+// Posições em % da área de colagem (não da tela inteira — ver `padding` no
+// AbsoluteFill abaixo), com sobreposição deliberada e rotação leve — o
+// "jeito colagem físico" vem daqui, não da mídia real. z-index cresce com
+// o índice: item mais tarde na lista fica por cima, como fotos empilhadas
+// numa mesa. Aceita 2-6 itens (mesmo limite do schema); com menos itens,
+// só os primeiros slots são usados — os dois primeiros sozinhos (item
+// grande + um sobrepondo) já formam uma colagem coerente.
 const LAYOUT = [
-  { col: 0, height: "45%", gradient: "linear-gradient(135deg, #ff8c42, #c76a2e)", delay: 0 },
-  { col: 0, height: "50%", gradient: "linear-gradient(135deg, #d9a441, #a67c2e)", delay: 6 },
-  { col: 1, height: "55%", gradient: "linear-gradient(135deg, #c76a2e, #8a4a2e)", delay: 3 },
-  { col: 1, height: "40%", gradient: "linear-gradient(135deg, #e0954f, #ff8c42)", delay: 9 },
-  { col: 2, height: "40%", gradient: "linear-gradient(135deg, #a67c2e, #5c3220)", delay: 5 },
-  { col: 2, height: "55%", gradient: "linear-gradient(135deg, #8a4a2e, #5c3220)", delay: 11 },
+  { left: 3, top: 6, width: 54, height: 62, rotate: -3 },
+  { left: 40, top: 40, width: 44, height: 52, rotate: 4 },
+  { left: 58, top: 4, width: 40, height: 44, rotate: -2 },
+  { left: 68, top: 50, width: 30, height: 38, rotate: 5 },
+  { left: 4, top: 66, width: 32, height: 30, rotate: 6 },
+  { left: 36, top: 2, width: 26, height: 32, rotate: -5 },
 ];
+const DELAYS = [0, 6, 3, 9, 5, 11];
 
 /**
- * Efeito trazido do catálogo de templates da React Video Editor (MCP
- * reactvideoeditor) — ainda NÃO usado por nenhum shot do pipeline
- * automático, só disponível pra uso manual/futuro. Adaptado do original:
- * cada bloco aceita uma mídia real (clipPath); bloco sem mídia cai no
- * gradiente do template original.
- *
- * 3 colunas com blocos de altura variável entrando em spring escalonado —
- * o efeito "Pinterest" vem das alturas fixas do LAYOUT, não da mídia.
+ * Fase 5, effect="masonry": 2-6 itens relacionados numa colagem sobreposta
+ * (não uma grade organizada — ver `GalleryGrid.tsx` pra essa) — decidido
+ * pela IA em keyword_extractor.py. Cada item vira um card (cantos
+ * arredondados + sombra) flutuando sobre o papel compartilhado, deslocado
+ * e levemente rotacionado em relação aos outros, dando a sensação de
+ * fotos empilhadas fisicamente numa mesa.
  */
 export const MasonryGallery: React.FC<{ items?: GalleryItem[] }> = ({ items = [] }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const columns: (typeof LAYOUT[number] & { item?: GalleryItem })[][] = [[], [], []];
-  LAYOUT.forEach((block, i) => columns[block.col].push({ ...block, item: items[i] }));
-
   return (
-    <AbsoluteFill style={{ backgroundColor: "#0f0d0c", alignItems: "center", justifyContent: "center", padding: 32 }}>
-      <div style={{ display: "flex", gap: 16, width: "90%", height: "85%" }}>
-        {columns.map((col, colIdx) => (
-          <div key={colIdx} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
-            {col.map((block, blockIdx) => {
-              const s = spring({ frame: Math.max(frame - block.delay, 0), fps, config: { damping: 12, stiffness: 100 } });
-              const scale = 0.8 + s * 0.2;
+    <AbsoluteFill style={{ padding: 90 }}>
+      <div style={{ position: "relative", width: "100%", height: "100%" }}>
+        {items.slice(0, LAYOUT.length).map((item, i) => {
+          const layout = LAYOUT[i];
+          const delay = DELAYS[i];
+          const s = spring({ frame: Math.max(frame - delay, 0), fps, config: { damping: 12, stiffness: 100 } });
+          const scale = 0.85 + s * 0.15;
+          const settle = interpolate(s, [0, 1], [layout.rotate * 1.6, layout.rotate]);
 
-              return (
-                <div
-                  key={blockIdx}
-                  style={{
-                    height: block.height,
-                    borderRadius: 10,
-                    overflow: "hidden",
-                    transform: `scale(${scale})`,
-                    opacity: s,
-                    background: block.item ? undefined : block.gradient,
-                  }}
-                >
-                  {block.item &&
-                    (block.item.mediaType === "video" ? (
-                      <OffthreadVideo src={staticFile(block.item.clipPath)} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ) : (
-                      <Img src={staticFile(block.item.clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    ))}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+          return (
+            <div
+              key={i}
+              style={{
+                position: "absolute",
+                left: `${layout.left}%`,
+                top: `${layout.top}%`,
+                width: `${layout.width}%`,
+                height: `${layout.height}%`,
+                zIndex: i + 1,
+                borderRadius: 20,
+                overflow: "hidden",
+                boxShadow: CARD_SHADOW,
+                opacity: s,
+                transform: `rotate(${settle}deg) scale(${scale})`,
+              }}
+            >
+              {item.mediaType === "video" ? (
+                <OffthreadVideo src={staticFile(item.clipPath)} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <Img src={staticFile(item.clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              )}
+            </div>
+          );
+        })}
       </div>
     </AbsoluteFill>
   );
