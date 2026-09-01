@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Callable
 
 import jsonschema
+from PIL import Image
 
 from modules.captions import ensure_captions
 from modules.config import PROJECT_ROOT, load_config, output_dir
@@ -71,6 +72,22 @@ _OFFSET_STEPS = 4
 # buraco na timeline.
 _MAX_SHOT_REUSES = 2
 
+
+def _reuse_cap(shot: dict) -> int:
+    """Quantas vezes este shot pode reaparecer no mesmo beat.
+
+    Card conceitual puro (sem clip_path, sem motion_graphic, sem
+    gallery_items) não tem como variar entre reaparições — reaparecer é
+    mostrar a MESMA frase de novo. Footage/motion_graphic/galeria TÊM como
+    variar (novo clip_start, novo item reaproveitado) e mantêm o teto
+    normal. Cuidado: um shot de galeria pode não ter clip_path no nível
+    raiz (a mídia vive em gallery_items) — checar só clip_path erraria a
+    galeria pro cap 1.
+    """
+    has_variation = bool(shot.get("clip_path")) or bool(shot.get("motion_graphic")) or bool(shot.get("gallery_items"))
+    return _MAX_SHOT_REUSES if has_variation else 1
+
+
 # Texto do botão da SubscribeBar (Inscrever-se/Inscrito), traduzido pro
 # idioma da narração — o componente original tinha italiano fixo
 # ("Iscriviti"/"Iscritto"), errado pra uma ferramenta multi-idioma. Mesmas
@@ -106,6 +123,8 @@ class _EffectPicker:
         self._transition_weights = list(weights.values())
         self._parallax_chance = effects_cfg.get("parallax_pan_chance", 0.0)
         self._last_transition: str | None = None
+        self._masonry_style_weights = effects_cfg.get("masonry_style_weights") or {"clean": 1.0}
+        self._grid_style_weights = effects_cfg.get("grid_style_weights") or {"grid": 1.0}
 
     def pick_transition(self) -> str:
         choice = random.choices(self._transition_options, weights=self._transition_weights, k=1)[0]
@@ -121,6 +140,21 @@ class _EffectPicker:
 
     def maybe_parallax(self) -> bool:
         return random.random() < self._parallax_chance
+
+    def pick_gallery_style(self, effect: str | None, item_count: int) -> str | None:
+        """Variante visual DENTRO do effect de galeria — ver config.yaml
+        (effects.masonry_style_weights/grid_style_weights)."""
+        if effect == "masonry":
+            options = list(self._masonry_style_weights)
+            weights = list(self._masonry_style_weights.values())
+            return random.choices(options, weights=weights, k=1)[0]
+        if effect == "gallery_grid":
+            if item_count < 3 or item_count > 5:
+                return "grid"
+            options = list(self._grid_style_weights)
+            weights = list(self._grid_style_weights.values())
+            return random.choices(options, weights=weights, k=1)[0]
+        return None
 
 
 def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds: float) -> float:
@@ -159,6 +193,19 @@ def _max_scene_seconds(footage: dict, scene_seconds: float, chart_scene_seconds:
     return max(_MIN_SCENE_SECONDS, min(scene_seconds, duration - _TRANSITION_MARGIN_SECONDS))
 
 
+def _image_dimensions(clip_path: str) -> tuple[int, int] | None:
+    """Lê só o header da imagem (não decodifica pixels) pra saber a
+    proporção real — FootageClip.tsx precisa disso pra montar o card do
+    tamanho certo (ver comentário lá: sem isso, uma foto pequena renderiza
+    no tamanho intrínseco dela, minúscula numa tela 1920x1080)."""
+    try:
+        with Image.open(PROJECT_ROOT / clip_path) as img:
+            return img.size
+    except Exception:
+        logger.warning("Não consegui ler dimensão de %s, card cai no fallback antigo", clip_path, exc_info=True)
+        return None
+
+
 def _scene_footage(footage: dict, cfg: dict) -> dict | None:
     if not footage.get("clip_path"):
         return None
@@ -180,6 +227,9 @@ def _scene_footage(footage: dict, cfg: dict) -> dict | None:
         scene_footage["blurred_background_path"] = get_blurred_background(
             scene_footage["clip_path"], cfg["video"]["width"], cfg["video"]["height"]
         )
+        dims = _image_dimensions(scene_footage["clip_path"])
+        if dims:
+            scene_footage["width"], scene_footage["height"] = dims
     return scene_footage
 
 
@@ -200,7 +250,10 @@ def _scene_gallery(gallery: dict, cfg: dict) -> dict | None:
         items.append(scene_item)
     if len(items) < 2:
         return None
-    return {"effect": gallery["effect"], "items": items[:6]}
+    result = {"effect": gallery["effect"], "items": items[:6]}
+    if gallery.get("style"):
+        result["style"] = gallery["style"]
+    return result
 
 
 def _tile_scenes(
@@ -330,13 +383,29 @@ def _tile_scenes(
     # começar (Fase 3); este decide SE aquele shot pode aparecer de novo.
     shot_reuse_count: dict[int, int] = {}
     index = 0
-
-    # o gráfico precisa de um clipe pra desfocar atrás; card conceitual não serve
-    com_midia = [s for s in shots if s.get("clip_path")]
+    # Cursor PRÓPRIO do gráfico sobre com_midia (lista menor que `shots`,
+    # que `index` acima indexa) — bug real pego testando: os dois
+    # compartilhavam `index`, e como com_midia costuma ser bem menor,
+    # dava volta (wraparound) cedo demais, reaproveitando uma foto que
+    # tinha acabado de aparecer em tela cheia segundos antes.
+    chart_index = 0
 
     def emit_chart() -> None:
-        nonlocal cursor, index
-        fundo = com_midia[index % len(com_midia)] if com_midia else None
+        nonlocal cursor, index, chart_index
+        # Recalculado aqui (não antes do loop): se on_reuse já trocou a
+        # foto de algum shot antes do gráfico aparecer no meio do beat,
+        # isso pega a troca — um snapshot tirado antes do loop não veria.
+        com_midia = [s for s in shots if s.get("clip_path")]
+        fundo = com_midia[chart_index % len(com_midia)] if com_midia else None
+        # Evita bater com o clipe da cena IMEDIATAMENTE anterior — achado
+        # testando: com poucos shots, o rodízio do loop principal pode
+        # coincidentemente já estar no mesmo shot que com_midia[chart_index]
+        # aponta, bem antes do gráfico disparar (não é o bug do índice
+        # compartilhado, é uma colisão diferente, mesma família).
+        if fundo and len(com_midia) > 1 and scenes:
+            anterior = (scenes[-1].get("footage") or {}).get("clip_path")
+            if anterior and anterior == fundo.get("clip_path"):
+                fundo = com_midia[(chart_index + 1) % len(com_midia)]
         append_scene(
             {
                 "start_seconds": round(cursor, 3),
@@ -347,8 +416,12 @@ def _tile_scenes(
             }
         )
         cursor += chart_seconds
-        # avança o rodízio: emendar o mesmo clipe em tela cheia logo depois de
-        # aparecer desfocado atrás do gráfico parece repetição
+        if len(com_midia) > 1:
+            chart_index += 1
+        # avança o rodízio do loop PRINCIPAL (não o do gráfico): emendar o
+        # mesmo shot em tela cheia logo depois de aparecer desfocado atrás
+        # do gráfico ainda parece repetição — essa proteção já funcionava
+        # e continua igual, só o cursor do próprio gráfico é que era o bug.
         if len(shots) > 1:
             index += 1
 
@@ -363,11 +436,21 @@ def _tile_scenes(
             chart_start = None
             continue
 
-        # Prefere um shot que ainda não bateu o teto de repetições. `pool` só
-        # cai pra lista inteira (permitindo 3ª+ repetição) se TODOS já
-        # bateram — ver comentário de _MAX_SHOT_REUSES.
-        under_cap = [i for i in range(len(shots)) if shot_reuse_count.get(i, 0) < _MAX_SHOT_REUSES]
-        pool = under_cap or list(range(len(shots)))
+        # Prefere um shot que ainda não bateu o teto de repetições.
+        under_cap = [i for i in range(len(shots)) if shot_reuse_count.get(i, 0) < _reuse_cap(shots[i])]
+        if under_cap:
+            pool = under_cap
+        else:
+            # Todos bateram o teto (beat mais longo que a variedade de
+            # shots aguenta sem repetir). Prefere qualquer shot que AINDA
+            # varia entre aparições (footage/motion_graphic/galeria — um
+            # reuso a mais muda o clip_start ou o item, então não é
+            # idêntico) — só cai pra reaproveitar um card conceitual puro
+            # (_reuse_cap == 1, nunca varia, seria a MESMA frase de novo)
+            # se não sobrar NENHUM shot com variação — beat 100%
+            # conceitual, sem outro conteúdo pra mostrar mesmo.
+            com_variacao = [i for i in range(len(shots)) if _reuse_cap(shots[i]) > 1]
+            pool = com_variacao or list(range(len(shots)))
         shot_i = pool[index % len(pool)]
         footage = shots[shot_i]
         shot_reuse_count[shot_i] = shot_reuse_count.get(shot_i, 0) + 1
@@ -422,8 +505,20 @@ def _tile_scenes(
                 footage = {**footage, "gallery_items": gallery_items}
                 shots[shot_i] = footage
 
+            if effect_picker and "gallery_style" not in footage:
+                # decidido uma vez por SHOT (não por cena) e cacheado no dict
+                # — mesmo padrão de render_style: um shot reaproveitado várias
+                # vezes no beat mantém o mesmo estilo em todas as aparições.
+                footage["gallery_style"] = effect_picker.pick_gallery_style(
+                    footage.get("gallery_effect"), len(gallery_items)
+                )
+                shots[shot_i] = footage
+
             if duration >= min_gallery_scene_seconds:
-                gallery_scene = _scene_gallery({"effect": footage.get("gallery_effect"), "items": gallery_items}, cfg)
+                gallery_scene = _scene_gallery(
+                    {"effect": footage.get("gallery_effect"), "items": gallery_items, "style": footage.get("gallery_style")},
+                    cfg,
+                )
                 if gallery_scene is not None:
                     append_scene(
                         {

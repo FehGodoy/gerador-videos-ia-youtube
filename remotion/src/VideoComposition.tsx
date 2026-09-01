@@ -62,10 +62,20 @@ function renderGallery(gallery: GalleryData) {
         />
       );
     case "masonry":
-      return <MasonryGallery items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))} />;
+      return (
+        <MasonryGallery
+          items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))}
+          style={gallery.style === "polaroid" ? "polaroid" : "clean"}
+        />
+      );
     case "gallery_grid":
     default:
-      return <GalleryGrid items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))} />;
+      return (
+        <GalleryGrid
+          items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))}
+          style={gallery.style === "spotlight" ? "spotlight" : "grid"}
+        />
+      );
   }
 }
 
@@ -167,6 +177,8 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       clipStartSeconds={scene.clip_start_seconds}
+                      width={scene.footage.width}
+                      height={scene.footage.height}
                     />
                   )
                 ) : (

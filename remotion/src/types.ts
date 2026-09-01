@@ -32,6 +32,12 @@ export interface Footage {
   // blur() a cada frame no Chromium. Ausente = cai no blur ao vivo
   // (compatibilidade com composition.json de antes desse campo existir).
   blurred_background_path?: string;
+  // Só quando media_type="image". Dimensão real do arquivo (Pillow, só
+  // header) — FootageClip.tsx usa pra montar o card do tamanho certo em
+  // vez do tamanho intrínseco da imagem (ver comentário lá). Ausente =
+  // cai no fallback antigo (maxWidth/maxHeight direto na img).
+  width?: number;
+  height?: number;
   // Nota 0-100 que a IA de visão deu a esta mídia (ver footage_ranker).
   // Não é renderizada — serve pra revisão e pro threshold de fallback.
   relevance_score?: number | null;
@@ -50,14 +56,19 @@ export interface GalleryMediaItem {
   media_type: "video" | "image";
   search_terms: string[];
   blurred_background_path?: string;
+  width?: number;
+  height?: number;
   attribution?: { author: string; license: string; page: string; title: string };
 }
 
 // Fase 5: efeito multi-mídia (Split Screen/Comparison Slider/Gallery Grid/
 // Masonry) — decisão semântica do diretor visual (keyword_extractor.py),
-// diferente de transition_in/render_style que são algorítmicos.
+// diferente de transition_in/render_style/style que são algorítmicos.
 export interface GalleryData {
   effect: "split_screen" | "comparison_slider" | "gallery_grid" | "masonry";
+  // Variante visual dentro do effect (clean/polaroid pra masonry;
+  // grid/spotlight pra gallery_grid) — ausente = variante padrão.
+  style?: "clean" | "polaroid" | "grid" | "spotlight";
   items: GalleryMediaItem[];
 }
 

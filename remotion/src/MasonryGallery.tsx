@@ -20,17 +20,29 @@ const LAYOUT = [
 ];
 const DELAYS = [0, 6, 3, 9, 5, 11];
 
+// "polaroid": moldura branca física (mais grossa embaixo, estilo
+// instantâneo), cantos quase retos, sombra mais dura e curta (objeto
+// pousado na mesa, não flutuando) e rotação mais espalhada — mesma
+// mecânica de posicionamento do "clean", só o tratamento visual do card
+// muda.
+const POLAROID_SHADOW = "0 10px 14px rgba(20,15,10,0.35), 0 2px 3px rgba(20,15,10,0.28)";
+const POLAROID_ROTATE_MULT = 1.8;
+
 /**
  * Fase 5, effect="masonry": 2-6 itens relacionados numa colagem sobreposta
  * (não uma grade organizada — ver `GalleryGrid.tsx` pra essa) — decidido
- * pela IA em keyword_extractor.py. Cada item vira um card (cantos
- * arredondados + sombra) flutuando sobre o papel compartilhado, deslocado
- * e levemente rotacionado em relação aos outros, dando a sensação de
- * fotos empilhadas fisicamente numa mesa.
+ * pela IA em keyword_extractor.py. `style` (algorítmico, ver
+ * modules/composition_builder.py::_EffectPicker) escolhe entre "clean"
+ * (card com sombra suave, cantos arredondados) e "polaroid" (moldura
+ * branca física, sombra dura, mais rotação).
  */
-export const MasonryGallery: React.FC<{ items?: GalleryItem[] }> = ({ items = [] }) => {
+export const MasonryGallery: React.FC<{ items?: GalleryItem[]; style?: "clean" | "polaroid" }> = ({
+  items = [],
+  style = "clean",
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
+  const polaroid = style === "polaroid";
 
   return (
     <AbsoluteFill style={{ padding: 90 }}>
@@ -40,7 +52,14 @@ export const MasonryGallery: React.FC<{ items?: GalleryItem[] }> = ({ items = []
           const delay = DELAYS[i];
           const s = spring({ frame: Math.max(frame - delay, 0), fps, config: { damping: 12, stiffness: 100 } });
           const scale = 0.85 + s * 0.15;
-          const settle = interpolate(s, [0, 1], [layout.rotate * 1.6, layout.rotate]);
+          const rotate = polaroid ? layout.rotate * POLAROID_ROTATE_MULT : layout.rotate;
+          const settle = interpolate(s, [0, 1], [rotate * 1.6, rotate]);
+          const media =
+            item.mediaType === "video" ? (
+              <OffthreadVideo src={staticFile(item.clipPath)} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            ) : (
+              <Img src={staticFile(item.clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            );
 
           return (
             <div
@@ -52,17 +71,17 @@ export const MasonryGallery: React.FC<{ items?: GalleryItem[] }> = ({ items = []
                 width: `${layout.width}%`,
                 height: `${layout.height}%`,
                 zIndex: i + 1,
-                borderRadius: 20,
-                overflow: "hidden",
-                boxShadow: CARD_SHADOW,
                 opacity: s,
                 transform: `rotate(${settle}deg) scale(${scale})`,
+                ...(polaroid
+                  ? { background: "#fdfcf9", padding: "14px 14px 46px", boxShadow: POLAROID_SHADOW, borderRadius: 4 }
+                  : { borderRadius: 20, overflow: "hidden", boxShadow: CARD_SHADOW }),
               }}
             >
-              {item.mediaType === "video" ? (
-                <OffthreadVideo src={staticFile(item.clipPath)} muted style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {polaroid ? (
+                <div style={{ width: "100%", height: "100%", overflow: "hidden", borderRadius: 4 }}>{media}</div>
               ) : (
-                <Img src={staticFile(item.clipPath)} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                media
               )}
             </div>
           );

@@ -84,6 +84,11 @@
           "enum": ["split_screen", "comparison_slider", "gallery_grid", "masonry"],
           "description": "split_screen/comparison_slider usam exatamente 2 items; gallery_grid/masonry aceitam de 2 a 6."
         },
+        "style": {
+          "type": "string",
+          "enum": ["clean", "polaroid", "grid", "spotlight"],
+          "description": "Variante visual dentro do effect (clean/polaroid pra masonry; grid/spotlight pra gallery_grid) — ausente = variante padrão (clean/grid). Decidido ALGORITMICAMENTE em composition_builder.py (_EffectPicker), não pela IA — mesmo princípio de render_style/transition_in."
+        },
         "items": {
           "type": "array",
           "minItems": 2,
@@ -104,6 +109,8 @@
                 "type": "string",
                 "description": "Só quando media_type='image'. Versão já desfocada+cortada (cover), pré-computada em Python (modules/image_effects.py) pra evitar recalcular blur() a cada frame no Chromium."
               },
+              "width": { "type": "integer", "description": "Só quando media_type='image'. Dimensão real do arquivo (Pillow, só header) — FootageClip.tsx usa pra montar o card do tamanho certo em vez do tamanho intrínseco da imagem." },
+              "height": { "type": "integer" },
               "attribution": {
                 "type": "object",
                 "properties": {
@@ -184,6 +191,8 @@
               "type": "string",
               "description": "Só quando media_type='image'. Versão já desfocada+cortada (cover), pré-computada em Python (modules/image_effects.py) pra evitar recalcular blur() a cada frame no Chromium — ver FootageClip.tsx/ParallaxPan.tsx."
             },
+            "width": { "type": "integer", "description": "Só quando media_type='image'. Dimensão real do arquivo (Pillow, só header) — FootageClip.tsx usa pra montar o card do tamanho certo em vez do tamanho intrínseco da imagem." },
+            "height": { "type": "integer" },
             "relevance_score": {
               "type": ["integer", "null"],
               "description": "Nota 0-100 da IA de visão pra esta mídia nesta cena. Abaixo de ranking.alternative_threshold (config.yaml) a mídia é descartada e a cena vira 'concept'."

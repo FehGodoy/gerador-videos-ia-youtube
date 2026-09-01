@@ -121,6 +121,22 @@ effects:
   # cena) — um shot reaproveitado várias vezes no mesmo beat mantém o
   # mesmo estilo em todas as aparições, não fica alternando.
   parallax_pan_chance: 0.3
+  # Variante visual DENTRO de cada effect de galeria (Fase 5) — qual efeito
+  # usar (split_screen/masonry/etc.) é decisão semântica da IA
+  # (keyword_extractor.py); qual VISUAL concreto dentro dele (clean vs
+  # polaroid, grid vs spotlight) é estilístico, mesmo princípio de
+  # transition_weights/parallax_pan_chance acima. Decidido uma vez por shot
+  # (mesmo padrão de render_style — reuso do shot no beat mantém o mesmo
+  # estilo, não fica alternando).
+  masonry_style_weights:
+    clean: 0.55
+    polaroid: 0.45
+  # "spotlight" só é sorteado com 3-5 itens (com 2 não sobra pra "cercar" o
+  # destaque; com 6 a coluna lateral fica apertada demais) — fora dessa
+  # faixa cai sempre em "grid", decidido em Python, não no TSX.
+  grid_style_weights:
+    grid: 0.6
+    spotlight: 0.4
 
 ranking:
   # Nota 0-100 que a IA de visão dá a cada candidato (ver modules/footage_ranker).
