@@ -24,13 +24,14 @@ import jsonschema
 from PIL import Image
 
 from modules.captions import ensure_captions
-from modules.config import PROJECT_ROOT, load_config, output_dir
+from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.footage_search import search_and_download_footage
 from modules.image_effects import get_blurred_background
 from modules.keyword_extractor import STRATEGIES_THAT_SEARCH, analyze_beat
 from modules.media_pool import PoolDistributor
 from modules.narration import build_narration
 from modules.script_parser import Beat, parse_script
+from modules.timeline import load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -254,6 +255,54 @@ def _scene_gallery(gallery: dict, cfg: dict) -> dict | None:
     if gallery.get("style"):
         result["style"] = gallery["style"]
     return result
+
+
+def _scenes_from_manifest(
+    manifest: list[dict],
+    slug: str,
+    beat_start_seconds: float,
+    cfg: dict,
+    effect_picker: "_EffectPicker | None",
+) -> list[dict]:
+    """1 cena por trecho do editor de timeline manual (modules/timeline.py,
+    modo de mídia própria) — sem shot-planning por IA nem PoolDistributor:
+    o usuário já decidiu exatamente qual mídia vai em cada trecho de ~3s,
+    então não há reuso pra variar nem threshold de relevância pra aplicar
+    (webapp/server.py::create_job já bloqueia a criação do job até todo
+    trecho ter mídia atribuída — o `if not media` abaixo é só defensivo).
+
+    `manifest[i]["start_seconds"]`/`["end_seconds"]` são relativos ao
+    início do BLOCO (mesmo referencial de `captions`, ver
+    timeline.chunk_captions) — offset pra timeline global aqui, mesmo
+    padrão que build_narration já aplica aos beats inteiros.
+    """
+    scenes = []
+    for slot in manifest:
+        media = slot.get("media")
+        scene_footage = None
+        if media:
+            clip_path = cache_dir("own_media", slug) / media["pool_filename"]
+            scene_footage = _scene_footage(
+                {
+                    "clip_path": str(clip_path),
+                    "source": "manual",
+                    "media_type": media["media_type"],
+                    "search_terms": [],
+                },
+                cfg,
+            )
+        scenes.append(
+            {
+                "start_seconds": round(beat_start_seconds + slot["start_seconds"], 3),
+                "end_seconds": round(beat_start_seconds + slot["end_seconds"], 3),
+                "kind": "footage",
+                "clip_start_seconds": (media or {}).get("clip_start_seconds") or 0.0,
+                "footage": scene_footage,
+                "shot_slot": slot["index"],
+                "transition_in": effect_picker.pick_transition() if effect_picker else "fade",
+            }
+        )
+    return scenes
 
 
 def _tile_scenes(
@@ -830,6 +879,41 @@ def _assemble_composition(
     composition_beats = []
     for position, beat in enumerate(beats):
         beat_timing = beats_by_id[beat.id]
+
+        # Editor de timeline manual (painel web, modo de mídia própria):
+        # o usuário já escolheu a mídia de cada trecho de ~3s antes de criar
+        # o job (ver modules/timeline.py) — pula shot-planning por IA e
+        # PoolDistributor inteiramente pra este beat, monta as cenas direto
+        # do manifesto. Beat de mídia própria SEM manifesto (CLI, ou job
+        # antigo de antes desta feature) cai no fluxo de sempre logo abaixo
+        # (PoolDistributor com rodízio automático), sem quebrar compat.
+        manifest = load_manifest(slug, beat.id) if media_mode == "own_media" else None
+        if manifest is not None:
+            if on_beat_progress is not None:
+                on_beat_progress(beat.id, "keywords", "done")
+                on_beat_progress(beat.id, "footage", "done")
+                on_beat_progress(beat.id, "captions", "running")
+            captions = ensure_captions(beat_timing, slug)
+            if on_beat_progress is not None:
+                on_beat_progress(beat.id, "captions", "done")
+            scenes = _scenes_from_manifest(
+                manifest, slug, beat_timing["start_seconds"], cfg, effect_picker
+            )
+            composition_beats.append(
+                {
+                    "id": beat.id,
+                    "text": beat.text,
+                    "start_seconds": beat_timing["start_seconds"],
+                    "end_seconds": beat_timing["end_seconds"],
+                    "type": "concreto",
+                    "entities": [],
+                    "chart": None,
+                    "scenes": scenes,
+                    "highlights": [],
+                    "captions": captions,
+                }
+            )
+            continue
 
         # A cena vai até o começo do PRÓXIMO beat (não até o fim da fala deste)
         # pra absorver o silêncio entre beats — sem isso sobrava um buraco

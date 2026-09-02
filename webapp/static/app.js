@@ -73,6 +73,8 @@ let selectedSources = new Set();
 let allSources = [];
 let mediaMode = "ai_search";
 let poolItemCount = 0;
+let blockSlots = {}; // blockId -> trechos da timeline manual (modules/timeline.py)
+let mediaPool = { photos: [], videos: [] }; // biblioteca do lote de mídia própria, pro seletor de anexar por trecho
 
 function icon(templateId) {
   const tpl = document.getElementById(templateId);
@@ -167,21 +169,34 @@ function setMediaMode(mode) {
   mediaMode = mode;
   sourcesPicker.classList.toggle("hidden", mode !== "ai_search");
   ownMediaPicker.classList.toggle("hidden", mode !== "own_media");
-  if (mode === "own_media") refreshPoolPreview();
+  if (mode === "own_media") {
+    refreshPoolPreview();
+    // bloco gerado enquanto o modo ainda era "busca por IA" não tinha por
+    // que gastar chamada de LLM em tradução/dica — pega essa dívida agora
+    // que a linha do tempo passa a aparecer de verdade.
+    for (const block of blocks) {
+      const slots = blockSlots[block.id];
+      if (slots && slots.length && !slots.some((s) => s.hint)) {
+        fetchSlotHints(block.id, selectedVoiceLanguage);
+      }
+    }
+  }
+  renderBlocksList();
   updateGenerateVideoButton();
 }
 
 function renderPoolThumbs(pool) {
+  mediaPool = pool;
   ownMediaList.innerHTML = "";
   const items = [
-    ...pool.photos.map((url) => ({ url, kind: "foto" })),
-    ...pool.videos.map((url) => ({ url, kind: "vídeo" })),
+    ...pool.photos.map((p) => ({ ...p, kind: "foto", mediaType: "image" })),
+    ...pool.videos.map((v) => ({ ...v, kind: "vídeo", mediaType: "video" })),
   ];
   for (const item of items) {
     const thumb = document.createElement("div");
     thumb.className = "own-media-thumb";
     const media =
-      item.kind === "foto"
+      item.mediaType === "image"
         ? Object.assign(document.createElement("img"), { src: item.url })
         : Object.assign(document.createElement("video"), { src: item.url, muted: true });
     const kindTag = document.createElement("span");
@@ -192,7 +207,7 @@ function renderPoolThumbs(pool) {
   }
   poolItemCount = items.length;
   ownMediaStatus.textContent = poolItemCount
-    ? `${pool.photos.length} foto(s), ${pool.videos.length} vídeo(s) prontos.`
+    ? `${pool.photos.length} foto(s), ${pool.videos.length} vídeo(s) na biblioteca.`
     : "Nenhum arquivo enviado ainda.";
   updateGenerateVideoButton();
 }
@@ -559,15 +574,33 @@ async function generateBlock() {
     }
     const result = await resp.json();
     blocks.push({ id: blockId, text, audioUrl: result.audio_url, duration: result.duration_seconds });
+    blockSlots[blockId] = result.slots || [];
     nextBlockId += 1;
     blockText.value = "";
     lockDraft();
     renderBlocksList();
+    if (mediaMode === "own_media") fetchSlotHints(blockId, selectedVoiceLanguage);
   } catch (err) {
     showError(err.message);
   } finally {
     generateBlockBtn.textContent = "Gerar narração deste bloco";
     updateGenerateBlockButton();
+  }
+}
+
+async function fetchSlotHints(blockId, language) {
+  try {
+    const resp = await fetch(`/api/narration-blocks/${draftSlug}/${blockId}/hints`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language: language || "pt" }),
+    });
+    if (!resp.ok) return;
+    const { slots } = await resp.json();
+    blockSlots[blockId] = slots;
+    renderBlocksList();
+  } catch {
+    // dica/tradução são só apoio visual — falha aqui não impede atribuir mídia
   }
 }
 
@@ -610,9 +643,291 @@ function renderBlocksList() {
     audio.src = block.audioUrl + `?t=${Date.now()}`;
 
     li.append(head, text, audio);
+    if (mediaMode === "own_media") li.appendChild(renderSlotStrip(block.id));
     blocksList.appendChild(li);
   });
   updateGenerateVideoButton();
+}
+
+// --- Editor de timeline manual (modo de mídia própria) ---
+
+function renderSlotStrip(blockId) {
+  const strip = document.createElement("div");
+  strip.className = "timeline-strip";
+  const slots = blockSlots[blockId] || [];
+  if (!slots.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "Fatiando a narração em trechos...";
+    strip.appendChild(empty);
+    return strip;
+  }
+  for (const slot of slots) strip.appendChild(renderSlotCard(blockId, slot));
+  return strip;
+}
+
+function renderSlotCard(blockId, slot) {
+  const card = document.createElement("div");
+  card.className = "timeline-slot-card";
+
+  const head = document.createElement("div");
+  head.className = "timeline-slot-head";
+  const badge = document.createElement("span");
+  badge.className = "timeline-slot-badge";
+  badge.textContent = `${slot.start_seconds.toFixed(1)}s–${slot.end_seconds.toFixed(1)}s`;
+  head.appendChild(badge);
+  card.appendChild(head);
+
+  const text = document.createElement("p");
+  text.className = "timeline-slot-text";
+  text.textContent = slot.text;
+  card.appendChild(text);
+
+  if (slot.translation_pt && slot.translation_pt !== slot.text) {
+    const translation = document.createElement("p");
+    translation.className = "timeline-slot-translation";
+    translation.textContent = slot.translation_pt;
+    card.appendChild(translation);
+  }
+
+  if (slot.hint) {
+    const hint = document.createElement("p");
+    hint.className = "timeline-slot-hint";
+    hint.textContent = `Dica: ${slot.hint}`;
+    card.appendChild(hint);
+  }
+
+  const attach = document.createElement("div");
+  attach.className = "timeline-slot-attach";
+  attach.appendChild(
+    slot.media ? renderAssignedMedia(blockId, slot) : renderAttachControl(blockId, slot)
+  );
+  card.appendChild(attach);
+
+  return card;
+}
+
+function renderAssignedMedia(blockId, slot) {
+  const wrap = document.createElement("div");
+  wrap.className = "timeline-slot-assigned";
+
+  const url = `/own_media_cache/${draftSlug}/${slot.media.pool_filename}`;
+  const media =
+    slot.media.media_type === "image"
+      ? Object.assign(document.createElement("img"), { src: url })
+      : Object.assign(document.createElement("video"), { src: url, muted: true });
+  wrap.appendChild(media);
+
+  if (slot.media.media_type === "video" && slot.media.clip_start_seconds != null) {
+    const time = document.createElement("span");
+    time.className = "timeline-slot-time";
+    time.textContent = `a partir de ${slot.media.clip_start_seconds.toFixed(1)}s`;
+    wrap.appendChild(time);
+  }
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "danger-ghost icon-btn timeline-slot-remove";
+  removeBtn.appendChild(icon("icon-trash"));
+  removeBtn.addEventListener("click", () => unassignSlot(blockId, slot));
+  wrap.appendChild(removeBtn);
+
+  return wrap;
+}
+
+function renderAttachControl(blockId, slot) {
+  const wrap = document.createElement("div");
+  wrap.className = "timeline-slot-attach-wrap";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost";
+  btn.textContent = "Anexar mídia";
+
+  const panel = document.createElement("div");
+  panel.className = "timeline-attach-panel hidden";
+
+  btn.addEventListener("click", () => {
+    const opening = panel.classList.contains("hidden");
+    panel.innerHTML = "";
+    if (opening) {
+      panel.appendChild(buildAttachPicker(blockId, slot, () => panel.classList.add("hidden")));
+    }
+    panel.classList.toggle("hidden", !opening);
+  });
+
+  wrap.append(btn, panel);
+  return wrap;
+}
+
+function buildAttachPicker(blockId, slot, onClose) {
+  const grid = document.createElement("div");
+  grid.className = "timeline-attach-grid";
+
+  const items = [
+    ...mediaPool.photos.map((p) => ({ ...p, mediaType: "image" })),
+    ...mediaPool.videos.map((v) => ({ ...v, mediaType: "video" })),
+  ];
+  if (!items.length) {
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "Envie fotos/vídeos na sua biblioteca (acima) antes de anexar.";
+    grid.appendChild(empty);
+    return grid;
+  }
+
+  for (const item of items) {
+    const thumb = document.createElement("div");
+    thumb.className = "timeline-attach-thumb";
+    thumb.title = item.filename;
+    const media =
+      item.mediaType === "image"
+        ? Object.assign(document.createElement("img"), { src: item.url })
+        : Object.assign(document.createElement("video"), { src: item.url, muted: true });
+    thumb.appendChild(media);
+    thumb.addEventListener("click", () => {
+      if (item.mediaType === "image") {
+        assignSlot(blockId, slot, item.filename, null);
+        onClose();
+      } else {
+        openClipStartPicker(item, slot, (startSeconds) => {
+          assignSlot(blockId, slot, item.filename, startSeconds);
+          onClose();
+        });
+      }
+    });
+    grid.appendChild(thumb);
+  }
+  return grid;
+}
+
+async function assignSlot(blockId, slot, poolFilename, clipStartSeconds) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pool_filename: poolFilename, clip_start_seconds: clipStartSeconds }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao anexar mídia (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function unassignSlot(blockId, slot) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}`, {
+      method: "DELETE",
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao remover mídia (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+// Popup de recorte: escolhe visualmente qual trecho (do tamanho do slot,
+// ~3s) de um vídeo da biblioteca vai pro trecho da narração. Não existe
+// componente de scrubber no projeto (o slider de velocidade é de um valor
+// só) — janela arrastável construída na mão sobre uma barra representando
+// a duração inteira do vídeo.
+function openClipStartPicker(item, slot, onConfirm) {
+  const slotDuration = Math.max(0.5, slot.end_seconds - slot.start_seconds);
+  const videoDuration = item.duration || slotDuration;
+  const maxStart = Math.max(0, videoDuration - slotDuration);
+  let start = 0;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "timeline-popup-backdrop";
+
+  const popup = document.createElement("div");
+  popup.className = "timeline-popup";
+  popup.addEventListener("click", (e) => e.stopPropagation());
+
+  const title = document.createElement("h3");
+  title.className = "timeline-popup-title";
+  title.textContent = `Escolha ${slotDuration.toFixed(1)}s deste vídeo`;
+
+  const video = document.createElement("video");
+  video.src = item.url;
+  video.muted = true;
+  video.className = "timeline-popup-video";
+
+  const track = document.createElement("div");
+  track.className = "clip-scrub-track";
+  const windowEl = document.createElement("div");
+  windowEl.className = "clip-scrub-window";
+  track.appendChild(windowEl);
+
+  function widthPct() {
+    return videoDuration > 0 ? Math.max(4, (slotDuration / videoDuration) * 100) : 100;
+  }
+  function updateWindow() {
+    const leftPct = videoDuration > 0 ? (start / videoDuration) * 100 : 0;
+    windowEl.style.left = `${leftPct}%`;
+    windowEl.style.width = `${widthPct()}%`;
+    video.currentTime = start;
+  }
+
+  function setStartFromClientX(clientX) {
+    const rect = track.getBoundingClientRect();
+    const ratio = rect.width > 0 ? Math.min(1, Math.max(0, (clientX - rect.left) / rect.width)) : 0;
+    start = Math.min(maxStart, Math.max(0, ratio * videoDuration));
+    updateWindow();
+  }
+
+  let dragging = false;
+  windowEl.addEventListener("pointerdown", (e) => {
+    dragging = true;
+    windowEl.setPointerCapture(e.pointerId);
+  });
+  windowEl.addEventListener("pointermove", (e) => {
+    if (dragging) setStartFromClientX(e.clientX);
+  });
+  windowEl.addEventListener("pointerup", () => {
+    dragging = false;
+  });
+  track.addEventListener("click", (e) => setStartFromClientX(e.clientX));
+
+  const actions = document.createElement("div");
+  actions.className = "timeline-popup-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost";
+  cancelBtn.textContent = "Cancelar";
+  const confirmBtn = document.createElement("button");
+  confirmBtn.type = "button";
+  confirmBtn.className = "primary";
+  confirmBtn.textContent = "Usar este trecho";
+  actions.append(cancelBtn, confirmBtn);
+
+  function close() {
+    document.body.removeChild(backdrop);
+  }
+  cancelBtn.addEventListener("click", close);
+  backdrop.addEventListener("click", close);
+  confirmBtn.addEventListener("click", () => {
+    close();
+    onConfirm(Math.round(start * 100) / 100);
+  });
+
+  popup.append(title, video, track, actions);
+  backdrop.appendChild(popup);
+  document.body.appendChild(backdrop);
+  updateWindow();
 }
 
 async function regenerateBlock(block) {
@@ -638,7 +953,9 @@ async function regenerateBlock(block) {
     const result = await resp.json();
     block.duration = result.duration_seconds;
     block.audioUrl = result.audio_url;
+    blockSlots[block.id] = result.slots || [];
     renderBlocksList();
+    if (mediaMode === "own_media") fetchSlotHints(block.id, selectedVoiceLanguage);
   } catch (err) {
     showError(err.message);
   }
@@ -646,6 +963,7 @@ async function regenerateBlock(block) {
 
 function removeBlock(blockId) {
   blocks = blocks.filter((b) => b.id !== blockId);
+  delete blockSlots[blockId];
   renderBlocksList();
   if (blocks.length === 0) unlockDraft();
 }
@@ -655,6 +973,8 @@ function resetDraft() {
   draftLocked = false;
   selectedVoiceId = null;
   blocks = [];
+  blockSlots = {};
+  mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";
   blocksList.innerHTML = "";

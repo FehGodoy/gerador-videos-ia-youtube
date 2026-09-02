@@ -23,6 +23,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from modules import footage_search, github_render, media_pool, settings as settings_module
+from modules import timeline as timeline_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
 from modules.image_effects import get_blurred_background
@@ -133,6 +134,15 @@ class YoutubeClipRequest(BaseModel):
     end_seconds: float
 
 
+class SlotHintsRequest(BaseModel):
+    language: str = "pt"
+
+
+class AssignSlotRequest(BaseModel):
+    pool_filename: str
+    clip_start_seconds: float | None = None
+
+
 class SerperKeyRequest(BaseModel):
     api_key: str
 
@@ -216,11 +226,33 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # Fatiamento em trechos de ~3s pro editor de timeline manual (ver
+    # modules/timeline.py) — geometria pura sobre os timestamps por palavra
+    # que a Cartesia já devolveu, sem custo nenhum, então roda sempre
+    # (mesmo que este rascunho acabe usando busca por IA em vez de mídia
+    # própria). Tradução/dica de IA ficam pra POST .../hints, chamado
+    # separado pelo painel — é chamada de LLM, não trava esta resposta.
+    slots = timeline_module.chunk_captions(result["captions"])
+    # "Regenerar" (force=True) chama esta mesma rota de novo — sem isso, a
+    # mídia que o usuário já tinha atribuído por trecho seria apagada só por
+    # reprocessar o áudio. Reaproveita por índice (best-effort: se a fala
+    # mudou de duração, o índice pode não bater exatamente com o trecho de
+    # antes, mas ainda é muito melhor que perder a atribuição sempre).
+    existing = timeline_module.load_manifest(req.slug, req.block_id)
+    if existing:
+        for i, old_slot in enumerate(existing):
+            if i < len(slots) and old_slot.get("media"):
+                slots[i]["media"] = old_slot["media"]
+                slots[i]["translation_pt"] = old_slot.get("translation_pt", "")
+                slots[i]["hint"] = old_slot.get("hint", "")
+    timeline_module.save_manifest(req.slug, req.block_id, slots)
+
     return {
         "block_id": req.block_id,
         "duration_seconds": result["duration_seconds"],
         "audio_url": f"/narration_cache/{req.slug}/beat_{req.block_id:03d}.wav",
         "captions": result["captions"],
+        "slots": slots,
     }
 
 
@@ -241,6 +273,24 @@ async def create_job(req: CreateJobRequest) -> dict:
         pool = media_pool.list_pool(req.slug)
         if not pool["photos"] and not pool["videos"]:
             raise HTTPException(status_code=400, detail="Envie ao menos uma foto ou vídeo antes de gerar.")
+        # Editor de timeline manual: bloqueia a criação do job até TODO
+        # trecho de todo bloco ter mídia atribuída — sem isso, o valor do
+        # controle manual (o usuário decide exatamente o que aparece onde)
+        # ficaria contradito por um preenchimento automático silencioso pro
+        # que sobrou (ver modules/composition_builder.py::_scenes_from_manifest,
+        # que consome esse manifesto direto, sem PoolDistributor).
+        missing_slots = 0
+        for b in req.blocks:
+            manifest = timeline_module.load_manifest(req.slug, b.id)
+            if manifest is None:
+                missing_slots += 1
+            else:
+                missing_slots += sum(1 for s in manifest if not s.get("media"))
+        if missing_slots:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Faltam {missing_slots} trecho(s) sem mídia atribuída na linha do tempo.",
+            )
 
     # Falha cedo: sem isso, um gh sem login só estourava lá na frente, depois
     # da revisão manual de footage inteira — e jogava esse trabalho fora.
@@ -570,15 +620,109 @@ async def get_media_pool(slug: str) -> dict:
 
 
 def _media_pool_summary(slug: str) -> dict:
+    """`filename` (não só a URL) é o que o editor de timeline manda de volta
+    em POST /api/timeline/.../{slot_index} pra dizer qual arquivo do lote
+    vai em cada trecho — e `duration` do vídeo poupa o popup de recorte de
+    precisar de um ffprobe extra (já é calculado aqui, era só descartado)."""
     pool = media_pool.list_pool(slug)
     return {
         "photos": [
-            f"/own_media_cache/{slug}/{p.name}" for p in pool["photos"]
+            {"filename": p.name, "url": f"/own_media_cache/{slug}/{p.name}"}
+            for p in pool["photos"]
         ],
         "videos": [
-            f"/own_media_cache/{slug}/{v.name}" for v in pool["videos"]
+            {
+                "filename": v.name,
+                "url": f"/own_media_cache/{slug}/{v.name}",
+                "duration": media_pool._probe_duration(v),
+            }
+            for v in pool["videos"]
         ],
     }
+
+
+@app.post("/api/narration-blocks/{slug}/{block_id}/hints")
+async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) -> dict:
+    """Tradução pra português + dica de mídia por trecho (ver
+    modules/timeline.py) — round-trip separado do POST /api/narration-blocks
+    porque é chamada de LLM (mais lenta); o painel já mostra a faixa de
+    trechos antes disso responder e só preenche tradução/dica quando chegar."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+
+    beat_text = " ".join(s["text"] for s in manifest)
+    hints = await asyncio.to_thread(
+        timeline_module.generate_slot_hints, manifest, beat_text, req.language, slug, block_id
+    )
+    for slot, hint in zip(manifest, hints):
+        slot["translation_pt"] = hint["translation_pt"]
+        slot["hint"] = hint["hint"]
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slots": manifest}
+
+
+@app.get("/api/timeline/{slug}/{block_id}")
+async def get_timeline_manifest(slug: str, block_id: int) -> dict:
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    return {"slots": manifest}
+
+
+def _find_pool_file(slug: str, filename: str) -> tuple[Path, str] | tuple[None, None]:
+    pool = media_pool.list_pool(slug)
+    for p in pool["photos"]:
+        if p.name == filename:
+            return p, "image"
+    for v in pool["videos"]:
+        if v.name == filename:
+            return v, "video"
+    return None, None
+
+
+@app.post("/api/timeline/{slug}/{block_id}/{slot_index}")
+async def assign_timeline_slot(slug: str, block_id: int, slot_index: int, req: AssignSlotRequest) -> dict:
+    """Atribui um arquivo já enviado (ver /api/media-pool/{slug}) a um
+    trecho específico do editor de timeline manual."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    file_path, media_type = _find_pool_file(slug, req.pool_filename)
+    if file_path is None:
+        raise HTTPException(status_code=400, detail="Arquivo não encontrado no seu lote de mídia.")
+
+    media: dict = {"pool_filename": req.pool_filename, "media_type": media_type}
+    if media_type == "video":
+        slot = manifest[slot_index]
+        slot_duration = slot["end_seconds"] - slot["start_seconds"]
+        duration = media_pool._probe_duration(file_path)
+        if duration is None:
+            raise HTTPException(status_code=400, detail="Não consegui medir a duração deste vídeo.")
+        start = req.clip_start_seconds or 0.0
+        if start < 0 or start > max(0.0, duration - slot_duration) + 0.01:
+            raise HTTPException(status_code=400, detail="Início do trecho fora da duração do vídeo.")
+        media["clip_start_seconds"] = round(start, 2)
+
+    manifest[slot_index]["media"] = media
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": manifest[slot_index]}
+
+
+@app.delete("/api/timeline/{slug}/{block_id}/{slot_index}")
+async def unassign_timeline_slot(slug: str, block_id: int, slot_index: int) -> dict:
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    manifest[slot_index]["media"] = None
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": manifest[slot_index]}
 
 
 @app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}/youtube")
