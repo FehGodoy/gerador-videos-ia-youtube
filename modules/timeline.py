@@ -29,7 +29,7 @@ DEFAULT_TARGET_SECONDS = 3.0
 
 # Sobe manualmente sempre que _HINTS_PROMPT_TEMPLATE ou _parse_hints mudarem
 # de formato — mesmo princípio de ANALYSIS_VERSION em keyword_extractor.py.
-TIMELINE_HINTS_VERSION = 1
+TIMELINE_HINTS_VERSION = 2
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -37,13 +37,17 @@ _HINTS_PROMPT_TEMPLATE = """Você ajuda um criador de vídeos documentários que
 (fotos/vídeos) a decidir o que colocar em cada trecho da narração. O roteiro abaixo está em \
 {language_name}. Responda com UM ÚNICO objeto JSON, sem markdown:
 
-{{"slots": [{{"index": 0, "translation_pt": "...", "hint": "..."}}, ...]}}
+{{"slots": [{{"index": 0, "translation_pt": "...", "hint": "...", "image_prompt": "..."}}, ...]}}
 
 Um item por trecho numerado abaixo, na mesma ordem, onde:
 - "translation_pt": tradução literal do trecho pra português do Brasil (se o roteiro já estiver \
 em português, repita o texto original sem alterar).
 - "hint": dica curta (até 12 palavras), em português, do tipo de foto ou vídeo que combina com \
 aquele trecho — só pra ajudar o usuário a escolher entre as mídias que ele já tem, não é busca.
+- "image_prompt": prompt curto e direto (até 20 palavras), em inglês, pronto pra colar num gerador \
+de imagem por IA (Midjourney, DALL-E, etc.) caso o usuário prefira gerar a imagem em vez de usar \
+uma mídia própria — descreva a cena visualmente (sujeito, cenário, enquadramento), sem falar sobre \
+o vídeo em si.
 
 Trechos:
 {numbered_slots}
@@ -88,6 +92,7 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 "end_seconds": round(end_seconds, 3),
                 "translation_pt": "",
                 "hint": "",
+                "image_prompt": "",
                 "media": None,
             }
         )
@@ -156,9 +161,11 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
             continue
         translation = item.get("translation_pt")
         hint = item.get("hint")
+        image_prompt = item.get("image_prompt")
         by_index[idx] = {
             "translation_pt": translation.strip() if isinstance(translation, str) else "",
             "hint": hint.strip() if isinstance(hint, str) else "",
+            "image_prompt": image_prompt.strip() if isinstance(image_prompt, str) else "",
         }
     if len(by_index) < n_slots:
         return None
@@ -208,7 +215,7 @@ def generate_slot_hints(
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
-        hints = [{"translation_pt": "", "hint": ""} for _ in slots]
+        hints = [{"translation_pt": "", "hint": "", "image_prompt": ""} for _ in slots]
 
     cache_path.write_text(
         json.dumps({"cache_key": cache_key, "hints": hints}, ensure_ascii=False, indent=2),

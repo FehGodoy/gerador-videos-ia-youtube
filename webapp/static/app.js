@@ -528,8 +528,36 @@ function selectVoice(voice) {
 
 // --- Blocos ---
 
+// Cobertura mínima de mídia nos trechos já narrados pra liberar colar o
+// próximo bloco de texto — "suficiente", não "tudo" (esse rigor de 100% já
+// existe em create_job, no fim do fluxo). Evita o usuário empilhar vários
+// blocos de texto sem nunca voltar pra anexar mídia nos anteriores.
+const MIN_NARRATED_MEDIA_COVERAGE = 0.5;
+
+function narratedSlotsCoverage() {
+  let total = 0;
+  let assigned = 0;
+  for (const block of blocks) {
+    const slots = blockSlots[block.id] || [];
+    total += slots.length;
+    assigned += slots.filter((s) => s.media).length;
+  }
+  return { total, assigned };
+}
+
+function hasEnoughNarratedMedia() {
+  if (mediaMode !== "own_media") return true;
+  const { total, assigned } = narratedSlotsCoverage();
+  if (total === 0) return true;
+  return assigned / total >= MIN_NARRATED_MEDIA_COVERAGE;
+}
+
 function updateGenerateBlockButton() {
-  generateBlockBtn.disabled = !selectedVoiceId || !blockText.value.trim();
+  const enoughMedia = hasEnoughNarratedMedia();
+  generateBlockBtn.disabled = !selectedVoiceId || !blockText.value.trim() || !enoughMedia;
+  generateBlockBtn.title = enoughMedia
+    ? ""
+    : "Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco.";
 }
 
 function lockDraft() {
@@ -550,6 +578,10 @@ async function generateBlock() {
   clearError();
   const text = blockText.value.trim();
   if (!text || !selectedVoiceId) return;
+  if (!hasEnoughNarratedMedia()) {
+    showError("Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco.");
+    return;
+  }
 
   generateBlockBtn.disabled = true;
   generateBlockBtn.textContent = "Gerando narração...";
@@ -647,6 +679,7 @@ function renderBlocksList() {
     blocksList.appendChild(li);
   });
   updateGenerateVideoButton();
+  updateGenerateBlockButton();
 }
 
 // --- Editor de timeline manual (modo de mídia própria) ---
@@ -695,6 +728,35 @@ function renderSlotCard(blockId, slot) {
     hint.className = "timeline-slot-hint";
     hint.textContent = `Dica: ${slot.hint}`;
     card.appendChild(hint);
+  }
+
+  if (slot.image_prompt) {
+    const promptWrap = document.createElement("div");
+    promptWrap.className = "timeline-slot-image-prompt";
+
+    const promptText = document.createElement("code");
+    promptText.className = "timeline-slot-image-prompt-text";
+    promptText.textContent = slot.image_prompt;
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "ghost icon-btn timeline-slot-copy-btn";
+    copyBtn.textContent = "Copiar";
+    copyBtn.title = "Copiar prompt de imagem pra colar num gerador de IA";
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(slot.image_prompt);
+        copyBtn.textContent = "Copiado!";
+        setTimeout(() => {
+          copyBtn.textContent = "Copiar";
+        }, 1500);
+      } catch {
+        // clipboard pode falhar sem permissão/fora de https — não bloqueia o usuário
+      }
+    });
+
+    promptWrap.append(promptText, copyBtn);
+    card.appendChild(promptWrap);
   }
 
   const attach = document.createElement("div");

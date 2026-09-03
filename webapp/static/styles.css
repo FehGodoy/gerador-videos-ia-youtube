@@ -1659,6 +1659,31 @@ button.review-concept-upload.armed {
   margin: 0;
 }
 
+.timeline-slot-image-prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.timeline-slot-image-prompt-text {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: normal;
+  word-break: break-word;
+}
+
+.timeline-slot-copy-btn {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
 .timeline-slot-attach {
   margin-top: 4px;
 }

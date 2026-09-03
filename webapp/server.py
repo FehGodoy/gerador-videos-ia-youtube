@@ -245,6 +245,7 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
                 slots[i]["media"] = old_slot["media"]
                 slots[i]["translation_pt"] = old_slot.get("translation_pt", "")
                 slots[i]["hint"] = old_slot.get("hint", "")
+                slots[i]["image_prompt"] = old_slot.get("image_prompt", "")
     timeline_module.save_manifest(req.slug, req.block_id, slots)
 
     return {
@@ -658,6 +659,7 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
     for slot, hint in zip(manifest, hints):
         slot["translation_pt"] = hint["translation_pt"]
         slot["hint"] = hint["hint"]
+        slot["image_prompt"] = hint["image_prompt"]
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slots": manifest}
 
