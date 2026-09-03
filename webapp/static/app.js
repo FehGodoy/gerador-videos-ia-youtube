@@ -74,6 +74,26 @@ let allSources = [];
 let mediaMode = "ai_search";
 let poolItemCount = 0;
 let blockSlots = {}; // blockId -> trechos da timeline manual (modules/timeline.py)
+
+// Espelha modules/timeline.py::EFFECT_CATALOG — mantido em sincronia manual
+// (é um catálogo pequeno e estável, não vale o round-trip de buscar do
+// servidor toda vez que um card de trecho é montado).
+const EFFECT_CATALOG = {
+  padrao: { label: "Padrão (mídia única)", min: 1, max: 1 },
+  parallax_pan: { label: "Parallax pan (mídia única)", min: 1, max: 1 },
+  split_screen: { label: "Split screen (2 lado a lado)", min: 2, max: 2 },
+  comparison_slider: { label: "Antes/depois", min: 2, max: 2 },
+  gallery_grid: { label: "Grade de galeria (2 a 6 mídias)", min: 2, max: 6 },
+  masonry: { label: "Colagem (2 a 6 mídias)", min: 2, max: 6 },
+};
+
+function slotEffectSpec(slot) {
+  return EFFECT_CATALOG[slot.effect] || EFFECT_CATALOG.padrao;
+}
+
+function slotMediaCount(slot) {
+  return (slot.media || []).filter(Boolean).length;
+}
 let mediaPool = { photos: [], videos: [] }; // biblioteca do lote de mídia própria, pro seletor de anexar por trecho
 
 function icon(templateId) {
@@ -539,8 +559,10 @@ function narratedSlotsCoverage() {
   let assigned = 0;
   for (const block of blocks) {
     const slots = blockSlots[block.id] || [];
-    total += slots.length;
-    assigned += slots.filter((s) => s.media).length;
+    for (const slot of slots) {
+      total += 1;
+      if (slotMediaCount(slot) >= slotEffectSpec(slot).min) assigned += 1;
+    }
   }
   return { total, assigned };
 }
@@ -759,31 +781,84 @@ function renderSlotCard(blockId, slot) {
     card.appendChild(promptWrap);
   }
 
+  card.appendChild(renderSlotEffectPicker(blockId, slot));
+
   const attach = document.createElement("div");
   attach.className = "timeline-slot-attach";
-  attach.appendChild(
-    slot.media ? renderAssignedMedia(blockId, slot) : renderAttachControl(blockId, slot)
-  );
+  const spec = slotEffectSpec(slot);
+  const mediaList = slot.media || [];
+  for (let i = 0; i < spec.max; i++) {
+    const item = mediaList[i];
+    attach.appendChild(
+      item ? renderAssignedMedia(blockId, slot, i, item) : renderAttachControl(blockId, slot, i)
+    );
+  }
   card.appendChild(attach);
 
   return card;
 }
 
-function renderAssignedMedia(blockId, slot) {
+// Select de efeito por trecho — a escolha do usuário sobre COMO essa mídia
+// (ou mídias, se for galeria) aparece na tela. Trocar de efeito não apaga
+// mídia já anexada em posições que ainda existem no novo efeito (ex.: de
+// "grade" pra "colagem", ambas 2-6 posições) — só quando encolhe o número
+// de posições disponíveis (ver set_timeline_slot_effect no server.py).
+function renderSlotEffectPicker(blockId, slot) {
+  const row = document.createElement("div");
+  row.className = "timeline-slot-effect";
+
+  const label = document.createElement("label");
+  label.textContent = "Efeito";
+
+  const select = document.createElement("select");
+  for (const [id, spec] of Object.entries(EFFECT_CATALOG)) {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = spec.label;
+    if ((slot.effect || "padrao") === id) opt.selected = true;
+    select.appendChild(opt);
+  }
+  select.addEventListener("change", () => setSlotEffect(blockId, slot, select.value));
+
+  row.append(label, select);
+  return row;
+}
+
+async function setSlotEffect(blockId, slot, effect) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/effect`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ effect }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao trocar efeito (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function renderAssignedMedia(blockId, slot, mediaIndex, media) {
   const wrap = document.createElement("div");
   wrap.className = "timeline-slot-assigned";
 
-  const url = `/own_media_cache/${draftSlug}/${slot.media.pool_filename}`;
-  const media =
-    slot.media.media_type === "image"
+  const url = `/own_media_cache/${draftSlug}/${media.pool_filename}`;
+  const el =
+    media.media_type === "image"
       ? Object.assign(document.createElement("img"), { src: url })
       : Object.assign(document.createElement("video"), { src: url, muted: true });
-  wrap.appendChild(media);
+  wrap.appendChild(el);
 
-  if (slot.media.media_type === "video" && slot.media.clip_start_seconds != null) {
+  if (media.media_type === "video" && media.clip_start_seconds != null) {
     const time = document.createElement("span");
     time.className = "timeline-slot-time";
-    time.textContent = `a partir de ${slot.media.clip_start_seconds.toFixed(1)}s`;
+    time.textContent = `a partir de ${media.clip_start_seconds.toFixed(1)}s`;
     wrap.appendChild(time);
   }
 
@@ -791,13 +866,13 @@ function renderAssignedMedia(blockId, slot) {
   removeBtn.type = "button";
   removeBtn.className = "danger-ghost icon-btn timeline-slot-remove";
   removeBtn.appendChild(icon("icon-trash"));
-  removeBtn.addEventListener("click", () => unassignSlot(blockId, slot));
+  removeBtn.addEventListener("click", () => unassignSlot(blockId, slot, mediaIndex));
   wrap.appendChild(removeBtn);
 
   return wrap;
 }
 
-function renderAttachControl(blockId, slot) {
+function renderAttachControl(blockId, slot, mediaIndex) {
   const wrap = document.createElement("div");
   wrap.className = "timeline-slot-attach-wrap";
 
@@ -813,7 +888,9 @@ function renderAttachControl(blockId, slot) {
     const opening = panel.classList.contains("hidden");
     panel.innerHTML = "";
     if (opening) {
-      panel.appendChild(buildAttachPicker(blockId, slot, () => panel.classList.add("hidden")));
+      panel.appendChild(
+        buildAttachPicker(blockId, slot, mediaIndex, () => panel.classList.add("hidden"))
+      );
     }
     panel.classList.toggle("hidden", !opening);
   });
@@ -822,7 +899,7 @@ function renderAttachControl(blockId, slot) {
   return wrap;
 }
 
-function buildAttachPicker(blockId, slot, onClose) {
+function buildAttachPicker(blockId, slot, mediaIndex, onClose) {
   const grid = document.createElement("div");
   grid.className = "timeline-attach-grid";
 
@@ -849,11 +926,11 @@ function buildAttachPicker(blockId, slot, onClose) {
     thumb.appendChild(media);
     thumb.addEventListener("click", () => {
       if (item.mediaType === "image") {
-        assignSlot(blockId, slot, item.filename, null);
+        assignSlot(blockId, slot, mediaIndex, item.filename, null);
         onClose();
       } else {
         openClipStartPicker(item, slot, (startSeconds) => {
-          assignSlot(blockId, slot, item.filename, startSeconds);
+          assignSlot(blockId, slot, mediaIndex, item.filename, startSeconds);
           onClose();
         });
       }
@@ -863,13 +940,17 @@ function buildAttachPicker(blockId, slot, onClose) {
   return grid;
 }
 
-async function assignSlot(blockId, slot, poolFilename, clipStartSeconds) {
+async function assignSlot(blockId, slot, mediaIndex, poolFilename, clipStartSeconds) {
   clearError();
   try {
     const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pool_filename: poolFilename, clip_start_seconds: clipStartSeconds }),
+      body: JSON.stringify({
+        pool_filename: poolFilename,
+        clip_start_seconds: clipStartSeconds,
+        media_index: mediaIndex,
+      }),
     });
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
@@ -883,12 +964,13 @@ async function assignSlot(blockId, slot, poolFilename, clipStartSeconds) {
   }
 }
 
-async function unassignSlot(blockId, slot) {
+async function unassignSlot(blockId, slot, mediaIndex) {
   clearError();
   try {
-    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}`, {
-      method: "DELETE",
-    });
+    const resp = await fetch(
+      `/api/timeline/${draftSlug}/${blockId}/${slot.index}?media_index=${mediaIndex}`,
+      { method: "DELETE" }
+    );
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Erro ao remover mídia (${resp.status})`);

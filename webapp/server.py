@@ -141,6 +141,11 @@ class SlotHintsRequest(BaseModel):
 class AssignSlotRequest(BaseModel):
     pool_filename: str
     clip_start_seconds: float | None = None
+    media_index: int = 0
+
+
+class SetSlotEffectRequest(BaseModel):
+    effect: str
 
 
 class SerperKeyRequest(BaseModel):
@@ -243,6 +248,7 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
         for i, old_slot in enumerate(existing):
             if i < len(slots) and old_slot.get("media"):
                 slots[i]["media"] = old_slot["media"]
+                slots[i]["effect"] = old_slot.get("effect", timeline_module.DEFAULT_EFFECT)
                 slots[i]["translation_pt"] = old_slot.get("translation_pt", "")
                 slots[i]["hint"] = old_slot.get("hint", "")
                 slots[i]["image_prompt"] = old_slot.get("image_prompt", "")
@@ -285,8 +291,12 @@ async def create_job(req: CreateJobRequest) -> dict:
             manifest = timeline_module.load_manifest(req.slug, b.id)
             if manifest is None:
                 missing_slots += 1
-            else:
-                missing_slots += sum(1 for s in manifest if not s.get("media"))
+                continue
+            for s in manifest:
+                min_media, _ = timeline_module.effect_media_bounds(s.get("effect", timeline_module.DEFAULT_EFFECT))
+                attached = sum(1 for m in (s.get("media") or []) if m)
+                if attached < min_media:
+                    missing_slots += 1
         if missing_slots:
             raise HTTPException(
                 status_code=400,
@@ -685,13 +695,20 @@ def _find_pool_file(slug: str, filename: str) -> tuple[Path, str] | tuple[None, 
 
 @app.post("/api/timeline/{slug}/{block_id}/{slot_index}")
 async def assign_timeline_slot(slug: str, block_id: int, slot_index: int, req: AssignSlotRequest) -> dict:
-    """Atribui um arquivo já enviado (ver /api/media-pool/{slug}) a um
-    trecho específico do editor de timeline manual."""
+    """Atribui um arquivo já enviado (ver /api/media-pool/{slug}) a uma
+    POSIÇÃO dentro de um trecho do editor de timeline manual — trecho com
+    efeito de galeria (split_screen etc.) tem mais de uma posição, ver
+    timeline_module.EFFECT_CATALOG."""
     manifest = timeline_module.load_manifest(slug, block_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
     if slot_index < 0 or slot_index >= len(manifest):
         raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    slot = manifest[slot_index]
+    _, max_media = timeline_module.effect_media_bounds(slot.get("effect", timeline_module.DEFAULT_EFFECT))
+    if req.media_index < 0 or req.media_index >= max_media:
+        raise HTTPException(status_code=400, detail="Posição de mídia inválida pra este efeito.")
 
     file_path, media_type = _find_pool_file(slug, req.pool_filename)
     if file_path is None:
@@ -699,7 +716,6 @@ async def assign_timeline_slot(slug: str, block_id: int, slot_index: int, req: A
 
     media: dict = {"pool_filename": req.pool_filename, "media_type": media_type}
     if media_type == "video":
-        slot = manifest[slot_index]
         slot_duration = slot["end_seconds"] - slot["start_seconds"]
         duration = media_pool._probe_duration(file_path)
         if duration is None:
@@ -709,22 +725,53 @@ async def assign_timeline_slot(slug: str, block_id: int, slot_index: int, req: A
             raise HTTPException(status_code=400, detail="Início do trecho fora da duração do vídeo.")
         media["clip_start_seconds"] = round(start, 2)
 
-    manifest[slot_index]["media"] = media
+    media_list = slot.setdefault("media", [])
+    while len(media_list) <= req.media_index:
+        media_list.append(None)
+    media_list[req.media_index] = media
     timeline_module.save_manifest(slug, block_id, manifest)
-    return {"slot": manifest[slot_index]}
+    return {"slot": slot}
 
 
 @app.delete("/api/timeline/{slug}/{block_id}/{slot_index}")
-async def unassign_timeline_slot(slug: str, block_id: int, slot_index: int) -> dict:
+async def unassign_timeline_slot(slug: str, block_id: int, slot_index: int, media_index: int = 0) -> dict:
     manifest = timeline_module.load_manifest(slug, block_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
     if slot_index < 0 or slot_index >= len(manifest):
         raise HTTPException(status_code=404, detail="Trecho não encontrado.")
 
-    manifest[slot_index]["media"] = None
+    slot = manifest[slot_index]
+    media_list = slot.get("media") or []
+    if 0 <= media_index < len(media_list):
+        media_list[media_index] = None
     timeline_module.save_manifest(slug, block_id, manifest)
-    return {"slot": manifest[slot_index]}
+    return {"slot": slot}
+
+
+@app.post("/api/timeline/{slug}/{block_id}/{slot_index}/effect")
+async def set_timeline_slot_effect(slug: str, block_id: int, slot_index: int, req: SetSlotEffectRequest) -> dict:
+    """Troca o efeito visual escolhido pelo usuário pra este trecho (ver
+    timeline_module.EFFECT_CATALOG). Mídia já anexada em posições que não
+    existem mais no novo efeito (ex.: trocar de "grade" com 4 fotos pra
+    "padrão", que só aceita 1) é descartada — só a atribuição no trecho,
+    não o arquivo em si, que continua na biblioteca do usuário."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+    if req.effect not in timeline_module.EFFECT_CATALOG:
+        raise HTTPException(status_code=400, detail="Efeito inválido.")
+
+    slot = manifest[slot_index]
+    slot["effect"] = req.effect
+    _, max_media = timeline_module.effect_media_bounds(req.effect)
+    media_list = slot.get("media") or []
+    if len(media_list) > max_media:
+        slot["media"] = media_list[:max_media]
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": slot}
 
 
 @app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}/youtube")

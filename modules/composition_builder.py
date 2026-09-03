@@ -31,7 +31,7 @@ from modules.keyword_extractor import STRATEGIES_THAT_SEARCH, analyze_beat
 from modules.media_pool import PoolDistributor
 from modules.narration import build_narration
 from modules.script_parser import Beat, parse_script
-from modules.timeline import load_manifest
+from modules.timeline import DEFAULT_EFFECT, GALLERY_EFFECTS, load_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,16 @@ def _scene_gallery(gallery: dict, cfg: dict) -> dict | None:
     return result
 
 
+def _manual_media_footage(item: dict, slug: str) -> dict:
+    clip_path = cache_dir("own_media", slug) / item["pool_filename"]
+    return {
+        "clip_path": str(clip_path),
+        "source": "manual",
+        "media_type": item["media_type"],
+        "search_terms": [],
+    }
+
+
 def _scenes_from_manifest(
     manifest: list[dict],
     slug: str,
@@ -266,10 +276,12 @@ def _scenes_from_manifest(
 ) -> list[dict]:
     """1 cena por trecho do editor de timeline manual (modules/timeline.py,
     modo de mídia própria) — sem shot-planning por IA nem PoolDistributor:
-    o usuário já decidiu exatamente qual mídia vai em cada trecho de ~3s,
-    então não há reuso pra variar nem threshold de relevância pra aplicar
-    (webapp/server.py::create_job já bloqueia a criação do job até todo
-    trecho ter mídia atribuída — o `if not media` abaixo é só defensivo).
+    o usuário já decidiu exatamente qual mídia (ou mídias, se escolheu um
+    efeito de galeria — ver timeline.EFFECT_CATALOG) e qual EFEITO vai em
+    cada trecho de ~3s, então não há reuso pra variar nem threshold de
+    relevância pra aplicar (webapp/server.py::create_job já bloqueia a
+    criação do job até todo trecho ter mídia suficiente pro efeito
+    escolhido — os fallbacks abaixo são só defensivos).
 
     `manifest[i]["start_seconds"]`/`["end_seconds"]` são relativos ao
     início do BLOCO (mesmo referencial de `captions`, ver
@@ -278,28 +290,56 @@ def _scenes_from_manifest(
     """
     scenes = []
     for slot in manifest:
-        media = slot.get("media")
-        scene_footage = None
-        if media:
-            clip_path = cache_dir("own_media", slug) / media["pool_filename"]
-            scene_footage = _scene_footage(
+        effect = slot.get("effect") or DEFAULT_EFFECT
+        media_items = [m for m in (slot.get("media") or []) if m]
+        start_seconds = round(beat_start_seconds + slot["start_seconds"], 3)
+        end_seconds = round(beat_start_seconds + slot["end_seconds"], 3)
+        transition_in = effect_picker.pick_transition() if effect_picker else "fade"
+
+        if effect in GALLERY_EFFECTS and len(media_items) >= 2:
+            gallery_scene = _scene_gallery(
                 {
-                    "clip_path": str(clip_path),
-                    "source": "manual",
-                    "media_type": media["media_type"],
-                    "search_terms": [],
+                    "effect": effect,
+                    "items": [_manual_media_footage(m, slug) for m in media_items],
+                    "style": None,
                 },
                 cfg,
             )
+            if gallery_scene is not None:
+                scenes.append(
+                    {
+                        "start_seconds": start_seconds,
+                        "end_seconds": end_seconds,
+                        "kind": "gallery",
+                        "clip_start_seconds": 0.0,
+                        "footage": None,
+                        "gallery": gallery_scene,
+                        "shot_slot": slot["index"],
+                        "transition_in": transition_in,
+                    }
+                )
+                continue
+
+        # padrão/parallax_pan, ou galeria pedida sem mídia suficiente ainda
+        # (defensivo — create_job já bloqueia isso antes de chegar aqui):
+        # cai pro primeiro item anexado como plano único.
+        media = media_items[0] if media_items else None
+        scene_footage = None
+        if media:
+            footage = _manual_media_footage(media, slug)
+            if effect == "parallax_pan":
+                footage["render_style"] = "parallax_pan"
+            scene_footage = _scene_footage(footage, cfg)
         scenes.append(
             {
-                "start_seconds": round(beat_start_seconds + slot["start_seconds"], 3),
-                "end_seconds": round(beat_start_seconds + slot["end_seconds"], 3),
+                "start_seconds": start_seconds,
+                "end_seconds": end_seconds,
                 "kind": "footage",
                 "clip_start_seconds": (media or {}).get("clip_start_seconds") or 0.0,
                 "footage": scene_footage,
+                "gallery": None,
                 "shot_slot": slot["index"],
-                "transition_in": effect_picker.pick_transition() if effect_picker else "fade",
+                "transition_in": transition_in,
             }
         )
     return scenes

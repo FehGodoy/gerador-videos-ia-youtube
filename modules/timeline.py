@@ -27,6 +27,31 @@ logger = logging.getLogger(__name__)
 # de palavra (nunca cortar uma palavra ao meio).
 DEFAULT_TARGET_SECONDS = 3.0
 
+# Efeitos que o usuário pode escolher manualmente por trecho, no editor de
+# timeline (modo mídia própria) — espelha os mesmos efeitos "de plano
+# único" e "de galeria" que o pipeline automático decide sozinho (ver
+# composition_builder.py::_EffectPicker e keyword_extractor.py), mas aqui
+# a escolha é sempre do usuário, trecho a trecho, sem sorteio nem IA.
+# min_media/max_media dizem quantos arquivos o trecho precisa ter anexado
+# pra esse efeito funcionar (split_screen/comparison_slider são sempre
+# exatamente 2; gallery_grid/masonry aceitam de 2 a 6, mesmo teto que
+# composition_builder.py::_scene_gallery já aplica pro modo automático).
+EFFECT_CATALOG: dict[str, dict] = {
+    "padrao": {"label": "Padrão (mídia única)", "min_media": 1, "max_media": 1},
+    "parallax_pan": {"label": "Parallax pan (mídia única)", "min_media": 1, "max_media": 1},
+    "split_screen": {"label": "Split screen (2 lado a lado)", "min_media": 2, "max_media": 2},
+    "comparison_slider": {"label": "Antes/depois", "min_media": 2, "max_media": 2},
+    "gallery_grid": {"label": "Grade de galeria (2 a 6 mídias)", "min_media": 2, "max_media": 6},
+    "masonry": {"label": "Colagem (2 a 6 mídias)", "min_media": 2, "max_media": 6},
+}
+DEFAULT_EFFECT = "padrao"
+GALLERY_EFFECTS = {"split_screen", "comparison_slider", "gallery_grid", "masonry"}
+
+
+def effect_media_bounds(effect: str) -> tuple[int, int]:
+    spec = EFFECT_CATALOG.get(effect, EFFECT_CATALOG[DEFAULT_EFFECT])
+    return spec["min_media"], spec["max_media"]
+
 # Sobe manualmente sempre que _HINTS_PROMPT_TEMPLATE ou _parse_hints mudarem
 # de formato — mesmo princípio de ANALYSIS_VERSION em keyword_extractor.py.
 TIMELINE_HINTS_VERSION = 2
@@ -70,11 +95,11 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
     é absorvido pelo ÚLTIMO trecho fechado em vez de virar um trechinho
     minúsculo sozinho.
 
-    Retorna [{"index", "text", "start_seconds", "end_seconds", "media": None}, ...]
-    com segundos relativos ao início do bloco (mesmo referencial de
-    `captions`) — o offset pra timeline global do vídeo é aplicado depois,
-    em composition_builder.py, mesmo padrão que build_narration já usa pra
-    beats inteiros.
+    Retorna [{"index", "text", "start_seconds", "end_seconds", "effect",
+    "media": []}, ...] com segundos relativos ao início do bloco (mesmo
+    referencial de `captions`) — o offset pra timeline global do vídeo é
+    aplicado depois, em composition_builder.py, mesmo padrão que
+    build_narration já usa pra beats inteiros.
     """
     if not captions:
         return []
@@ -93,7 +118,8 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 "translation_pt": "",
                 "hint": "",
                 "image_prompt": "",
-                "media": None,
+                "effect": DEFAULT_EFFECT,
+                "media": [],
             }
         )
 

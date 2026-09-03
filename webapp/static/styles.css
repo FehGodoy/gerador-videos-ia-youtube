@@ -1684,12 +1684,34 @@ button.review-concept-upload.armed {
   padding: 2px 8px;
 }
 
+.timeline-slot-effect {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+}
+
+.timeline-slot-effect label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.timeline-slot-effect select {
+  height: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
 .timeline-slot-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-top: 4px;
 }
 
 .timeline-slot-attach-wrap {
   position: relative;
+  flex: 0 0 auto;
 }
 
 .timeline-attach-panel {
@@ -1741,6 +1763,7 @@ button.review-concept-upload.armed {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex: 0 0 auto;
 }
 
 .timeline-slot-assigned img,
