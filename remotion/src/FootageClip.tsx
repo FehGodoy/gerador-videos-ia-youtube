@@ -2,7 +2,9 @@ import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo, staticFile, useVideoConfig } from "remotion";
 import { CARD_RADIUS, CARD_SHADOW } from "./theme";
 
-const CARD_INSET = 90;
+// Margem de cada lado como fração do frame — mídia ocupa até 90% da tela
+// (100% - 2*5%), sempre centralizada, em qualquer resolução de render.
+const CARD_MARGIN_RATIO = 0.05;
 
 /**
  * `clipPath` vem do composition.json como caminho relativo à raiz do
@@ -25,7 +27,8 @@ const CARD_INSET = 90;
  * `width`/`height` (dimensão REAL do arquivo, lida em Python via Pillow —
  * ver composition_builder.py::_image_dimensions) decidem o tamanho final
  * em pixels, calculado aqui como um "contain" manual dentro da área
- * disponível (1920x1080 menos CARD_INSET). Bug real pego testando com
+ * disponível (frame inteiro menos a margem de CARD_MARGIN_RATIO de cada
+ * lado — até 90% da tela). Bug real pego testando com
  * fotos antigas escaneadas do usuário (algumas com só ~250px de lado):
  * `maxWidth/maxHeight` sozinho num <img> NUNCA amplia além do tamanho
  * intrínseco, só encolhe — uma foto pequena renderizava minúscula, perdida
@@ -55,11 +58,11 @@ export const FootageClip: React.FC<{
   // pra servir de base; um <div> só com max-* e sem width/height não tem
   // base nenhuma pra calcular (colapsaria, filho com width:100% vira 0).
   if (mediaType === "image" && width && height) {
-    const availW = videoW - CARD_INSET * 2;
-    const availH = videoH - CARD_INSET * 2;
+    const availW = videoW * (1 - CARD_MARGIN_RATIO * 2);
+    const availH = videoH * (1 - CARD_MARGIN_RATIO * 2);
     const scale = Math.min(availW / width, availH / height);
     return (
-      <AbsoluteFill style={{ inset: CARD_INSET, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <AbsoluteFill style={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div
           style={{
             width: Math.round(width * scale),
@@ -83,7 +86,14 @@ export const FootageClip: React.FC<{
   };
 
   return (
-    <AbsoluteFill style={{ inset: CARD_INSET, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <AbsoluteFill
+      style={{
+        inset: `${CARD_MARGIN_RATIO * 100}%`,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
       {mediaType === "image" ? (
         <Img src={staticFile(clipPath)} style={fallbackStyle} />
       ) : (
