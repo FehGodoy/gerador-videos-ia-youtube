@@ -1625,6 +1625,14 @@ button.review-concept-upload.armed {
   border-radius: var(--radius);
   padding: var(--space-2) var(--space-3);
   background: var(--surface);
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.timeline-strip-collapsed-summary {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px dashed var(--border);
 }
 
 .timeline-slot-head {
@@ -1726,20 +1734,6 @@ button.review-concept-upload.armed {
 .timeline-slot-attach-wrap {
   position: relative;
   flex: 0 0 auto;
-}
-
-.timeline-attach-panel {
-  position: absolute;
-  z-index: 20;
-  top: calc(100% + 6px);
-  left: 0;
-  min-width: 260px;
-  max-width: 340px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--surface-3);
-  padding: var(--space-2);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .timeline-attach-grid {

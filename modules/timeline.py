@@ -1,12 +1,12 @@
 """
 Editor de timeline manual (modo de mídia própria, painel web): fatia a
-narração de um bloco em trechos de ~3s a partir dos timestamps por palavra
+narração de um bloco em trechos de ~4s a partir dos timestamps por palavra
 que a Cartesia já devolve (modules/narration.py), gera tradução + dica de
 IA por trecho, e guarda qual arquivo do lote de mídia própria (modules/
 media_pool.py) o usuário atribuiu a cada um.
 
 Separado de composition_builder.py (que fatia em CENAS pra render) porque o
-grão é diferente e a origem também: aqui é ~3s fixo, decidido no momento em
+grão é diferente e a origem também: aqui é ~4s fixo, decidido no momento em
 que o bloco é gerado no painel, antes de existir job nenhum; lá é por shot
 visual, decidido durante a montagem do composition.json.
 """
@@ -22,10 +22,10 @@ from modules.keyword_extractor import _LANGUAGE_NAMES, _call_anthropic, _call_op
 
 logger = logging.getLogger(__name__)
 
-# Alvo de duração de cada trecho — mesmo valor pedido pelo usuário ("a cada
-# 3 segundos"). Trechos reais variam um pouco pra sempre fechar em fronteira
-# de palavra (nunca cortar uma palavra ao meio).
-DEFAULT_TARGET_SECONDS = 3.0
+# Alvo de duração de cada trecho — mesmo valor pedido pelo usuário. Trechos
+# reais variam um pouco pra sempre fechar em fronteira de palavra (nunca
+# cortar uma palavra ao meio).
+DEFAULT_TARGET_SECONDS = 4.0
 
 # Efeitos que o usuário pode escolher manualmente por trecho, no editor de
 # timeline (modo mídia própria) — espelha os mesmos efeitos "de plano

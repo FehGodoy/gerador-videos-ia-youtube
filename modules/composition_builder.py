@@ -278,7 +278,7 @@ def _scenes_from_manifest(
     modo de mídia própria) — sem shot-planning por IA nem PoolDistributor:
     o usuário já decidiu exatamente qual mídia (ou mídias, se escolheu um
     efeito de galeria — ver timeline.EFFECT_CATALOG) e qual EFEITO vai em
-    cada trecho de ~3s, então não há reuso pra variar nem threshold de
+    cada trecho de ~4s, então não há reuso pra variar nem threshold de
     relevância pra aplicar (webapp/server.py::create_job já bloqueia a
     criação do job até todo trecho ter mídia suficiente pro efeito
     escolhido — os fallbacks abaixo são só defensivos).
@@ -921,7 +921,7 @@ def _assemble_composition(
         beat_timing = beats_by_id[beat.id]
 
         # Editor de timeline manual (painel web, modo de mídia própria):
-        # o usuário já escolheu a mídia de cada trecho de ~3s antes de criar
+        # o usuário já escolheu a mídia de cada trecho de ~4s antes de criar
         # o job (ver modules/timeline.py) — pula shot-planning por IA e
         # PoolDistributor inteiramente pra este beat, monta as cenas direto
         # do manifesto. Beat de mídia própria SEM manifesto (CLI, ou job

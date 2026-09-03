@@ -74,6 +74,7 @@ let allSources = [];
 let mediaMode = "ai_search";
 let poolItemCount = 0;
 let blockSlots = {}; // blockId -> trechos da timeline manual (modules/timeline.py)
+let collapsedBlocks = new Set(); // blockId -> trechos ocultos (bloco com muitos trechos deixa a página gigante)
 
 // Espelha modules/timeline.py::EFFECT_CATALOG — mantido em sincronia manual
 // (é um catálogo pequeno e estável, não vale o round-trip de buscar do
@@ -686,6 +687,22 @@ function renderBlocksList() {
     removeBtn.addEventListener("click", () => removeBlock(block.id));
 
     actions.append(regenBtn, removeBtn);
+
+    const slots = blockSlots[block.id] || [];
+    if (mediaMode === "own_media" && slots.length) {
+      const collapsed = collapsedBlocks.has(block.id);
+      const toggleBtn = document.createElement("button");
+      toggleBtn.className = "ghost icon-btn";
+      toggleBtn.appendChild(icon(collapsed ? "icon-chevron-down" : "icon-chevron-up"));
+      toggleBtn.append(collapsed ? `Mostrar trechos (${slots.length})` : "Ocultar trechos");
+      toggleBtn.addEventListener("click", () => {
+        if (collapsed) collapsedBlocks.delete(block.id);
+        else collapsedBlocks.add(block.id);
+        renderBlocksList();
+      });
+      actions.appendChild(toggleBtn);
+    }
+
     head.append(number, actions);
 
     const text = document.createElement("div");
@@ -697,7 +714,17 @@ function renderBlocksList() {
     audio.src = block.audioUrl + `?t=${Date.now()}`;
 
     li.append(head, text, audio);
-    if (mediaMode === "own_media") li.appendChild(renderSlotStrip(block.id));
+    if (mediaMode === "own_media") {
+      if (collapsedBlocks.has(block.id)) {
+        const filled = slots.filter((s) => slotMediaCount(s) >= slotEffectSpec(s).min).length;
+        const summary = document.createElement("p");
+        summary.className = "hint timeline-strip-collapsed-summary";
+        summary.textContent = `${slots.length} trecho(s) — ${filled} com mídia suficiente.`;
+        li.appendChild(summary);
+      } else {
+        li.appendChild(renderSlotStrip(block.id));
+      }
+    }
     blocksList.appendChild(li);
   });
   updateGenerateVideoButton();
@@ -915,23 +942,47 @@ function renderAttachControl(blockId, slot, mediaIndex) {
   btn.type = "button";
   btn.className = "ghost";
   btn.textContent = "Anexar mídia";
+  btn.addEventListener("click", () => openAttachPickerPopup(blockId, slot, mediaIndex));
 
-  const panel = document.createElement("div");
-  panel.className = "timeline-attach-panel hidden";
-
-  btn.addEventListener("click", () => {
-    const opening = panel.classList.contains("hidden");
-    panel.innerHTML = "";
-    if (opening) {
-      panel.appendChild(
-        buildAttachPicker(blockId, slot, mediaIndex, () => panel.classList.add("hidden"))
-      );
-    }
-    panel.classList.toggle("hidden", !opening);
-  });
-
-  wrap.append(btn, panel);
+  wrap.appendChild(btn);
   return wrap;
+}
+
+// Popup fixo no <body> (mesmo padrão de openClipStartPicker) em vez de um
+// painel posicionado dentro do card — o card do trecho agora tem altura
+// fixa com scroll (.timeline-slot-card), e um painel absoluto dentro dele
+// seria cortado pelo overflow em vez de flutuar por cima.
+function openAttachPickerPopup(blockId, slot, mediaIndex) {
+  const backdrop = document.createElement("div");
+  backdrop.className = "timeline-popup-backdrop";
+
+  const popup = document.createElement("div");
+  popup.className = "timeline-popup";
+  popup.addEventListener("click", (e) => e.stopPropagation());
+
+  const title = document.createElement("h3");
+  title.className = "timeline-popup-title";
+  title.textContent = "Escolha um arquivo da sua biblioteca";
+
+  function close() {
+    document.body.removeChild(backdrop);
+  }
+
+  const grid = buildAttachPicker(blockId, slot, mediaIndex, close);
+
+  const actions = document.createElement("div");
+  actions.className = "timeline-popup-actions";
+  const cancelBtn = document.createElement("button");
+  cancelBtn.type = "button";
+  cancelBtn.className = "ghost";
+  cancelBtn.textContent = "Cancelar";
+  cancelBtn.addEventListener("click", close);
+  actions.appendChild(cancelBtn);
+
+  popup.append(title, grid, actions);
+  backdrop.appendChild(popup);
+  backdrop.addEventListener("click", close);
+  document.body.appendChild(backdrop);
 }
 
 function buildAttachPicker(blockId, slot, mediaIndex, onClose) {
@@ -1019,7 +1070,7 @@ async function unassignSlot(blockId, slot, mediaIndex) {
 }
 
 // Popup de recorte: escolhe visualmente qual trecho (do tamanho do slot,
-// ~3s) de um vídeo da biblioteca vai pro trecho da narração. Não existe
+// ~4s) de um vídeo da biblioteca vai pro trecho da narração. Não existe
 // componente de scrubber no projeto (o slider de velocidade é de um valor
 // só) — janela arrastável construída na mão sobre uma barra representando
 // a duração inteira do vídeo.
@@ -1143,6 +1194,7 @@ async function regenerateBlock(block) {
 function removeBlock(blockId) {
   blocks = blocks.filter((b) => b.id !== blockId);
   delete blockSlots[blockId];
+  collapsedBlocks.delete(blockId);
   renderBlocksList();
   if (blocks.length === 0) unlockDraft();
 }
@@ -1153,6 +1205,7 @@ function resetDraft() {
   selectedVoiceId = null;
   blocks = [];
   blockSlots = {};
+  collapsedBlocks = new Set();
   mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";
