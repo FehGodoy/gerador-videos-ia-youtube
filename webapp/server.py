@@ -30,6 +30,7 @@ from modules.image_effects import get_blurred_background
 from modules.narration import synthesize_beat
 from modules.script_parser import Beat
 from webapp import channels as channels_module
+from webapp import folder_sync
 from webapp import voices as voices_module
 from webapp.job_runner import Job, job_manager
 
@@ -146,6 +147,10 @@ class AssignSlotRequest(BaseModel):
 
 class SetSlotEffectRequest(BaseModel):
     effect: str
+
+
+class WatchFolderRequest(BaseModel):
+    folder_path: str
 
 
 class SerperKeyRequest(BaseModel):
@@ -680,6 +685,35 @@ async def get_timeline_manifest(slug: str, block_id: int) -> dict:
     if manifest is None:
         raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
     return {"slots": manifest}
+
+
+# Registradas ANTES de /api/timeline/{slug}/{block_id}/{slot_index}: rotas
+# são casadas na ordem de declaração, e "watch-folder" bateria ali como um
+# slot_index inválido (422) se viesse depois — mesmo número de segmentos.
+@app.post("/api/timeline/{slug}/{block_id}/watch-folder")
+async def start_watch_folder(slug: str, block_id: int, req: WatchFolderRequest) -> dict:
+    """Liga o sincronizador automático (ver webapp/folder_sync.py) pra este
+    bloco: a cada arquivo novo na pasta informada, atribui ao próximo
+    trecho de mídia única ainda vazio, na ordem de chegada."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    folder = Path(req.folder_path).expanduser()
+    if not folder.is_dir():
+        raise HTTPException(status_code=400, detail="Pasta não encontrada nesse caminho.")
+    folder_sync.start(slug, block_id, folder)
+    return folder_sync.status(slug, block_id)
+
+
+@app.post("/api/timeline/{slug}/{block_id}/watch-folder/stop")
+async def stop_watch_folder(slug: str, block_id: int) -> dict:
+    folder_sync.stop(slug, block_id)
+    return folder_sync.status(slug, block_id)
+
+
+@app.get("/api/timeline/{slug}/{block_id}/watch-folder")
+async def get_watch_folder_status(slug: str, block_id: int) -> dict:
+    return folder_sync.status(slug, block_id)
 
 
 def _find_pool_file(slug: str, filename: str) -> tuple[Path, str] | tuple[None, None]:

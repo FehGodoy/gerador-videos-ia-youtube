@@ -75,6 +75,8 @@ let mediaMode = "ai_search";
 let poolItemCount = 0;
 let blockSlots = {}; // blockId -> trechos da timeline manual (modules/timeline.py)
 let collapsedBlocks = new Set(); // blockId -> trechos ocultos (bloco com muitos trechos deixa a página gigante)
+let folderSyncState = {}; // blockId -> status do sincronizador de pasta (ver webapp/folder_sync.py)
+let folderSyncTimers = {}; // blockId -> setInterval id do polling de status
 
 // Espelha modules/timeline.py::EFFECT_CATALOG — mantido em sincronia manual
 // (é um catálogo pequeno e estável, não vale o round-trip de buscar do
@@ -714,7 +716,7 @@ function renderBlocksList() {
     audio.src = block.audioUrl + `?t=${Date.now()}`;
 
     li.append(head, text, audio);
-    if (mediaMode === "own_media") {
+    if (mediaMode === "own_media" && slots.length) {
       if (collapsedBlocks.has(block.id)) {
         const filled = slots.filter((s) => slotMediaCount(s) >= slotEffectSpec(s).min).length;
         const summary = document.createElement("p");
@@ -724,6 +726,12 @@ function renderBlocksList() {
       } else {
         li.appendChild(renderSlotStrip(block.id));
       }
+      // Ações de bloco inteiro (não de um trecho só) ficam sempre visíveis,
+      // mesmo com os trechos colapsados — é exatamente quando um bloco tem
+      // trechos demais que essas ações mais importam.
+      li.appendChild(renderFolderSyncControl(block.id));
+      const prompts = slots.map((s) => s.image_prompt).filter(Boolean);
+      if (prompts.length) li.appendChild(renderCopyAllPromptsButton(prompts));
     }
     blocksList.appendChild(li);
   });
@@ -745,10 +753,6 @@ function renderSlotStrip(blockId) {
     return strip;
   }
   for (const slot of slots) strip.appendChild(renderSlotCard(blockId, slot));
-
-  const prompts = slots.map((s) => s.image_prompt).filter(Boolean);
-  if (prompts.length) strip.appendChild(renderCopyAllPromptsButton(prompts));
-
   return strip;
 }
 
@@ -780,6 +784,141 @@ function renderCopyAllPromptsButton(prompts) {
   });
 
   wrap.appendChild(btn);
+  return wrap;
+}
+
+// --- Sincronização automática de pasta (ver webapp/folder_sync.py) ---
+// A cada arquivo novo numa pasta local, o backend anexa ao próximo trecho
+// de mídia única ainda vazio, na ordem de chegada — só pra efeito de mídia
+// única (padrão/parallax pan); galeria continua manual.
+
+async function fetchFolderSyncStatus(blockId) {
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/watch-folder`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    folderSyncState[blockId] = data;
+    if (data.watching) {
+      const manifestResp = await fetch(`/api/timeline/${draftSlug}/${blockId}`);
+      if (manifestResp.ok) {
+        const { slots } = await manifestResp.json();
+        blockSlots[blockId] = slots;
+      }
+    }
+    renderBlocksList();
+  } catch {
+    // status é só cortesia visual — falha aqui não desliga a sincronização real
+  }
+}
+
+function startFolderSyncPolling(blockId) {
+  stopFolderSyncPolling(blockId);
+  folderSyncTimers[blockId] = setInterval(() => fetchFolderSyncStatus(blockId), 2000);
+}
+
+function stopFolderSyncPolling(blockId) {
+  if (folderSyncTimers[blockId]) {
+    clearInterval(folderSyncTimers[blockId]);
+    delete folderSyncTimers[blockId];
+  }
+}
+
+async function startFolderSync(blockId, folderPath) {
+  clearError();
+  if (!folderPath) {
+    showError("Informe o caminho da pasta.");
+    return;
+  }
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/watch-folder`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder_path: folderPath }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao sincronizar pasta (${resp.status})`);
+    }
+    folderSyncState[blockId] = await resp.json();
+    startFolderSyncPolling(blockId);
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function stopFolderSync(blockId) {
+  clearError();
+  stopFolderSyncPolling(blockId);
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/watch-folder/stop`, {
+      method: "POST",
+    });
+    folderSyncState[blockId] = resp.ok ? await resp.json() : { watching: false };
+  } catch {
+    folderSyncState[blockId] = { watching: false };
+  }
+  renderBlocksList();
+}
+
+function renderFolderSyncControl(blockId) {
+  const wrap = document.createElement("div");
+  wrap.className = "timeline-folder-sync";
+
+  const state = folderSyncState[blockId];
+
+  if (state && state.watching) {
+    const status = document.createElement("span");
+    status.className = "timeline-folder-sync-status";
+    status.textContent =
+      `Observando "${state.folder}" — ${state.consumed_count} arquivo(s) usado(s)` +
+      (state.all_filled ? " · trechos de mídia única já completos" : "");
+
+    const stopBtn = document.createElement("button");
+    stopBtn.type = "button";
+    stopBtn.className = "ghost";
+    stopBtn.textContent = "Parar sincronização";
+    stopBtn.addEventListener("click", () => stopFolderSync(blockId));
+
+    wrap.append(status, stopBtn);
+
+    if (state.last_error) {
+      const err = document.createElement("p");
+      err.className = "hint timeline-folder-sync-error";
+      err.textContent = `Erro no último arquivo: ${state.last_error}`;
+      wrap.appendChild(err);
+    }
+    return wrap;
+  }
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost";
+  btn.textContent = "Sincronizar pasta";
+
+  const panel = document.createElement("div");
+  panel.className = "timeline-folder-sync-panel hidden";
+
+  const hint = document.createElement("p");
+  hint.className = "hint";
+  hint.textContent =
+    'A cada arquivo novo nessa pasta, ele vai pro próximo trecho vazio (só efeitos de mídia única — split screen e galeria continuam manuais). Arquivo usado é movido pra uma subpasta "usados".';
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = "Caminho da pasta (ex.: C:\\Users\\você\\Downloads)";
+  input.className = "timeline-folder-sync-input";
+
+  const startBtn = document.createElement("button");
+  startBtn.type = "button";
+  startBtn.className = "ghost";
+  startBtn.textContent = "Iniciar";
+  startBtn.addEventListener("click", () => startFolderSync(blockId, input.value.trim()));
+
+  btn.addEventListener("click", () => panel.classList.toggle("hidden"));
+
+  panel.append(hint, input, startBtn);
+  wrap.append(btn, panel);
   return wrap;
 }
 
@@ -1192,6 +1331,9 @@ async function regenerateBlock(block) {
 }
 
 function removeBlock(blockId) {
+  if (folderSyncState[blockId] && folderSyncState[blockId].watching) stopFolderSync(blockId);
+  stopFolderSyncPolling(blockId);
+  delete folderSyncState[blockId];
   blocks = blocks.filter((b) => b.id !== blockId);
   delete blockSlots[blockId];
   collapsedBlocks.delete(blockId);
@@ -1200,6 +1342,11 @@ function removeBlock(blockId) {
 }
 
 function resetDraft() {
+  for (const [blockId, state] of Object.entries(folderSyncState)) {
+    if (state && state.watching) stopFolderSync(Number(blockId));
+    stopFolderSyncPolling(Number(blockId));
+  }
+  folderSyncState = {};
   draftSlug = null;
   draftLocked = false;
   selectedVoiceId = null;
