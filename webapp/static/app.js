@@ -739,7 +739,10 @@ function renderCopyAllPromptsButton(prompts) {
   btn.textContent = defaultLabel;
   btn.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(prompts.join("\n"));
+      // A ferramenta de destino do usuário exige uma linha em branco entre
+      // cada prompt (testado colando no painel dele) — "\n" simples juntava
+      // tudo grudado.
+      await navigator.clipboard.writeText(prompts.join("\n\n"));
       btn.textContent = "Copiado!";
       setTimeout(() => {
         btn.textContent = defaultLabel;
