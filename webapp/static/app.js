@@ -718,7 +718,39 @@ function renderSlotStrip(blockId) {
     return strip;
   }
   for (const slot of slots) strip.appendChild(renderSlotCard(blockId, slot));
+
+  const prompts = slots.map((s) => s.image_prompt).filter(Boolean);
+  if (prompts.length) strip.appendChild(renderCopyAllPromptsButton(prompts));
+
   return strip;
+}
+
+// Um prompt por linha, na mesma ordem dos trechos — pra colar de uma vez
+// só num gerador de imagem por IA que aceite lote (em vez de copiar trecho
+// por trecho pelo botão individual em cada card).
+function renderCopyAllPromptsButton(prompts) {
+  const wrap = document.createElement("div");
+  wrap.className = "timeline-copy-all-wrap";
+
+  const defaultLabel = `Copiar todos os prompts (${prompts.length})`;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost timeline-copy-all-btn";
+  btn.textContent = defaultLabel;
+  btn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(prompts.join("\n"));
+      btn.textContent = "Copiado!";
+      setTimeout(() => {
+        btn.textContent = defaultLabel;
+      }, 1500);
+    } catch {
+      // clipboard pode falhar sem permissão/fora de https — não bloqueia o usuário
+    }
+  });
+
+  wrap.appendChild(btn);
+  return wrap;
 }
 
 function renderSlotCard(blockId, slot) {

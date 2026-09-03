@@ -1659,6 +1659,20 @@ button.review-concept-upload.armed {
   margin: 0;
 }
 
+.timeline-copy-all-wrap {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.timeline-copy-all-btn {
+  font-size: 12px;
+  height: 32px;
+  padding: 0 12px;
+}
+
 .timeline-slot-image-prompt {
   display: flex;
   align-items: center;
