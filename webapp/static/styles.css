@@ -1635,6 +1635,40 @@ button.review-concept-upload.armed {
   border-top: 1px dashed var(--border);
 }
 
+.timeline-hints-loading {
+  color: var(--ready);
+  animation: hints-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes hints-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+.timeline-hints-retry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.timeline-hints-retry p {
+  margin: 0;
+  color: var(--warn);
+}
+
+.timeline-hints-retry button {
+  font-size: 11px;
+  height: 28px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
 .timeline-slot-head {
   display: flex;
   align-items: center;

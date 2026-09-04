@@ -77,6 +77,7 @@ let blockSlots = {}; // blockId -> trechos da timeline manual (modules/timeline.
 let collapsedBlocks = new Set(); // blockId -> trechos ocultos (bloco com muitos trechos deixa a página gigante)
 let folderSyncState = null; // status do sincronizador de pasta pro rascunho INTEIRO (ver webapp/folder_sync.py) — um só, não mais por bloco
 let folderSyncTimer = null; // setInterval id do polling de status
+let blockHintsLoading = new Set(); // blockId -> tradução/dica/prompt de imagem ainda sendo gerados (ver fetchSlotHints)
 
 // Espelha modules/timeline.py::EFFECT_CATALOG — mantido em sincronia manual
 // (é um catálogo pequeno e estável, não vale o round-trip de buscar do
@@ -654,6 +655,8 @@ async function generateBlock() {
 }
 
 async function fetchSlotHints(blockId, language) {
+  blockHintsLoading.add(blockId);
+  renderBlocksList();
   try {
     const resp = await fetch(`/api/narration-blocks/${draftSlug}/${blockId}/hints`, {
       method: "POST",
@@ -663,9 +666,11 @@ async function fetchSlotHints(blockId, language) {
     if (!resp.ok) return;
     const { slots } = await resp.json();
     blockSlots[blockId] = slots;
-    renderBlocksList();
   } catch {
     // dica/tradução são só apoio visual — falha aqui não impede atribuir mídia
+  } finally {
+    blockHintsLoading.delete(blockId);
+    renderBlocksList();
   }
 }
 
@@ -760,6 +765,31 @@ function renderSlotStrip(blockId) {
     strip.appendChild(empty);
     return strip;
   }
+
+  if (blockHintsLoading.has(blockId)) {
+    const loading = document.createElement("p");
+    loading.className = "hint timeline-hints-loading";
+    loading.textContent = "IA gerando tradução, dica e prompt de imagem por trecho...";
+    strip.appendChild(loading);
+  } else if (slots.every((s) => !s.translation_pt && !s.hint && !s.image_prompt)) {
+    // Todo trecho sem NENHUM dos 3 campos de IA depois do fetch já ter
+    // terminado — provável falha transitória da IA (ver comentário em
+    // modules/timeline.py::generate_slot_hints: uma falha não fica mais
+    // cacheada pra sempre, então tentar de novo aqui realmente funciona).
+    const retry = document.createElement("div");
+    retry.className = "timeline-hints-retry";
+    const retryText = document.createElement("span");
+    retryText.className = "hint";
+    retryText.textContent = "Tradução/dica/prompt de imagem não vieram (provável instabilidade da IA).";
+    const retryBtn = document.createElement("button");
+    retryBtn.type = "button";
+    retryBtn.className = "ghost";
+    retryBtn.textContent = "Gerar de novo";
+    retryBtn.addEventListener("click", () => fetchSlotHints(blockId, selectedVoiceLanguage));
+    retry.append(retryText, retryBtn);
+    strip.appendChild(retry);
+  }
+
   for (const slot of slots) strip.appendChild(renderSlotCard(blockId, slot));
   return strip;
 }
@@ -1425,6 +1455,7 @@ function removeBlock(blockId) {
   blocks = blocks.filter((b) => b.id !== blockId);
   delete blockSlots[blockId];
   collapsedBlocks.delete(blockId);
+  blockHintsLoading.delete(blockId);
   renderBlocksList();
   if (blocks.length === 0) unlockDraft();
 }
@@ -1439,6 +1470,7 @@ function resetDraft() {
   blocks = [];
   blockSlots = {};
   collapsedBlocks = new Set();
+  blockHintsLoading = new Set();
   mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";

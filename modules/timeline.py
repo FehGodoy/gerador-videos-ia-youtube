@@ -241,6 +241,15 @@ def generate_slot_hints(
     retry num JSON malformado). Nunca levanta exceção: dica/tradução são
     só apoio visual, uma falha aqui não pode travar o usuário de atribuir
     mídia — cai pra string vazia em cada item.
+
+    O fallback de string vazia NÃO é gravado no cache (bug real: gerar
+    vários blocos em sequência dispara uma chamada de LLM por bloco em
+    paralelo, sem fila nenhuma — um provider instável/limite de taxa
+    momentâneo derrubava só as últimas, e como o resultado vazio ficava
+    cacheado pra sempre, nem reabrir o bloco tentava de novo). Só o
+    resultado de uma resposta de verdade é persistido — uma falha
+    transitória pode ser tentada de novo depois (ver
+    webapp/static/app.js::fetchSlotHints, botão "Gerar de novo").
     """
     if not slots:
         return []
@@ -275,7 +284,7 @@ def generate_slot_hints(
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
-        hints = [
+        return [
             {"translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True}
             for _ in slots
         ]
