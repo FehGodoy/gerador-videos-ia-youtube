@@ -6,7 +6,9 @@
 
 // Fundo raiz, pintado uma vez em VideoComposition.tsx — os componentes
 // filhos não pintam mais fundo próprio, ficam transparentes por cima dele.
-export const PAPER_COLOR = "#faf6ef";
+// Branco puro (pedido explícito do usuário — era um bege/creme quente
+// antes, "#faf6ef").
+export const PAPER_COLOR = "#ffffff";
 
 // Texto principal (não preto puro — combina com o tom quente do papel).
 export const INK_COLOR = "#1a1512";
