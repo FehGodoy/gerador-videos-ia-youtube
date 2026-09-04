@@ -55,8 +55,12 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # Sobe manualmente sempre que _HINTS_PROMPT_TEMPLATE ou _parse_hints mudarem
 # de formato — mesmo princípio de ANALYSIS_VERSION em keyword_extractor.py.
 # 3 = ganhou needs_media (classifica trecho abstrato/transição como "vira
-# texto", sem precisar de mídia anexada).
-TIMELINE_HINTS_VERSION = 3
+# texto", sem precisar de mídia anexada). 4 = image_prompt passou a exigir
+# que texto visível NA IMAGEM (infográfico, linha do tempo etc.) fique no
+# idioma do roteiro — antes vazava pra português por padrão mesmo em vídeo
+# em outro idioma (bug real reportado pelo usuário, com print de um
+# infográfico da Toyota Camry em inglês que saiu com texto em português).
+TIMELINE_HINTS_VERSION = 4
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -75,7 +79,11 @@ aquele trecho — só pra ajudar o usuário a escolher entre as mídias que ele 
 - "image_prompt": prompt curto e direto (até 20 palavras), em inglês, pronto pra colar num gerador \
 de imagem por IA (Midjourney, DALL-E, etc.) caso o usuário prefira gerar a imagem em vez de usar \
 uma mídia própria — descreva a cena visualmente (sujeito, cenário, enquadramento), sem falar sobre \
-o vídeo em si.
+o vídeo em si. Regra crítica quando a cena pedir QUALQUER texto visível na própria imagem \
+(infográfico, linha do tempo, gráfico, placa, capa, letreiro, legenda): esse texto tem que estar \
+em {language_name} — o idioma do ROTEIRO/vídeo, não português por padrão — e o prompt precisa \
+citar as palavras exatas entre aspas (ex.: "with the timeline labeled '1982', '1987', '1992' in \
+{language_name}"), nunca deixar a IA de imagem escolher o idioma sozinha.
 - "needs_media": false SOMENTE quando o trecho é abstrato/transição — uma reflexão, uma frase-ponte, \
 uma pergunta retórica — sem NADA concreto e específico pra mostrar; esse trecho vira um card de \
 texto na tela em vez de pedir foto/vídeo. Na dúvida, ou quando há qualquer coisa filmável/fotografável \
