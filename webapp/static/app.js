@@ -17,6 +17,7 @@ const voicesGrid = document.getElementById("voices-grid");
 const voiceLockedNote = document.getElementById("voice-locked-note");
 const blockText = document.getElementById("block-text");
 const generateBlockBtn = document.getElementById("generate-block-btn");
+const generateBlockHint = document.getElementById("generate-block-hint");
 const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
@@ -589,9 +590,15 @@ function hasEnoughNarratedMedia() {
 function updateGenerateBlockButton() {
   const enoughMedia = hasEnoughNarratedMedia();
   generateBlockBtn.disabled = !selectedVoiceId || !blockText.value.trim() || !enoughMedia;
-  generateBlockBtn.title = enoughMedia
+  const reason = enoughMedia
     ? ""
-    : "Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco.";
+    : "Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco (ou ligue a sincronização de pasta).";
+  generateBlockBtn.title = reason;
+  // Só o motivo "falta mídia" precisa ficar visível sem precisar passar o
+  // mouse — sem voz selecionada/texto vazio já é óbvio olhando o resto do
+  // formulário, mas 0% de cobertura num bloco de 14 trechos não é.
+  generateBlockHint.textContent = reason;
+  generateBlockHint.classList.toggle("hidden", !reason);
 }
 
 function lockDraft() {

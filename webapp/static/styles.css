@@ -822,6 +822,10 @@ button.danger-ghost:hover:not(:disabled) {
   letter-spacing: 0.02em;
 }
 
+.hint.warn-hint {
+  color: var(--warn);
+}
+
 /* --- Locked note --- */
 
 .locked-note {
