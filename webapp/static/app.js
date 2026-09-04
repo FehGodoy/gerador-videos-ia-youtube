@@ -17,7 +17,6 @@ const voicesGrid = document.getElementById("voices-grid");
 const voiceLockedNote = document.getElementById("voice-locked-note");
 const blockText = document.getElementById("block-text");
 const generateBlockBtn = document.getElementById("generate-block-btn");
-const generateBlockHint = document.getElementById("generate-block-hint");
 const blocksList = document.getElementById("blocks-list");
 const generateVideoBtn = document.getElementById("generate-video-btn");
 const remoteRenderToggle = document.getElementById("remote-render-toggle");
@@ -553,52 +552,12 @@ function selectVoice(voice) {
 
 // --- Blocos ---
 
-// Cobertura mínima de mídia nos trechos já narrados pra liberar colar o
-// próximo bloco de texto — "suficiente", não "tudo" (esse rigor de 100% já
-// existe em create_job, no fim do fluxo). Evita o usuário empilhar vários
-// blocos de texto sem nunca voltar pra anexar mídia nos anteriores.
-const MIN_NARRATED_MEDIA_COVERAGE = 0.5;
-
-function narratedSlotsCoverage() {
-  let total = 0;
-  let assigned = 0;
-  for (const block of blocks) {
-    const slots = blockSlots[block.id] || [];
-    for (const slot of slots) {
-      // trecho que a IA (ou o usuário, via override) marcou como "vira
-      // texto" não exige mídia — não conta contra a cobertura.
-      if (slot.needs_media === false) continue;
-      total += 1;
-      if (slotMediaCount(slot) >= slotEffectSpec(slot).min) assigned += 1;
-    }
-  }
-  return { total, assigned };
-}
-
-function hasEnoughNarratedMedia() {
-  if (mediaMode !== "own_media") return true;
-  // Sincronizador de pasta ativo já cobre o risco que essa trava existe
-  // pra evitar (esquecer de voltar e preencher) — pedido explícito do
-  // usuário pra poder gerar vários blocos em sequência e deixar o
-  // sincronizador preencher tudo depois, sem travar entre um e outro.
-  if (folderSyncState && folderSyncState.watching) return true;
-  const { total, assigned } = narratedSlotsCoverage();
-  if (total === 0) return true;
-  return assigned / total >= MIN_NARRATED_MEDIA_COVERAGE;
-}
-
+// A trava de cobertura mínima de mídia pra liberar colar o próximo bloco
+// foi removida a pedido do usuário — colar vários blocos em sequência sem
+// atribuir mídia entre eles agora é permitido sempre (o rigor de 100% pra
+// gerar o vídeo de fato continua em create_job, no fim do fluxo).
 function updateGenerateBlockButton() {
-  const enoughMedia = hasEnoughNarratedMedia();
-  generateBlockBtn.disabled = !selectedVoiceId || !blockText.value.trim() || !enoughMedia;
-  const reason = enoughMedia
-    ? ""
-    : "Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco (ou ligue a sincronização de pasta).";
-  generateBlockBtn.title = reason;
-  // Só o motivo "falta mídia" precisa ficar visível sem precisar passar o
-  // mouse — sem voz selecionada/texto vazio já é óbvio olhando o resto do
-  // formulário, mas 0% de cobertura num bloco de 14 trechos não é.
-  generateBlockHint.textContent = reason;
-  generateBlockHint.classList.toggle("hidden", !reason);
+  generateBlockBtn.disabled = !selectedVoiceId || !blockText.value.trim();
 }
 
 function lockDraft() {
@@ -619,10 +578,6 @@ async function generateBlock() {
   clearError();
   const text = blockText.value.trim();
   if (!text || !selectedVoiceId) return;
-  if (!hasEnoughNarratedMedia()) {
-    showError("Anexe mídia a pelo menos metade dos trechos já narrados antes de colar o próximo bloco.");
-    return;
-  }
 
   generateBlockBtn.disabled = true;
   generateBlockBtn.textContent = "Gerando narração...";
@@ -755,6 +710,7 @@ function renderBlocksList() {
     blocksList.appendChild(li);
   });
   renderDraftFolderSync();
+  renderDraftCopyAllPrompts();
   updateGenerateVideoButton();
   updateGenerateBlockButton();
 }
@@ -804,11 +760,11 @@ function renderSlotStrip(blockId) {
 // Um prompt por linha, na mesma ordem dos trechos — pra colar de uma vez
 // só num gerador de imagem por IA que aceite lote (em vez de copiar trecho
 // por trecho pelo botão individual em cada card).
-function renderCopyAllPromptsButton(prompts) {
+function renderCopyAllPromptsButton(prompts, label) {
   const wrap = document.createElement("div");
   wrap.className = "timeline-copy-all-wrap";
 
-  const defaultLabel = `Copiar todos os prompts (${prompts.length})`;
+  const defaultLabel = label || `Copiar todos os prompts (${prompts.length})`;
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "ghost timeline-copy-all-btn";
@@ -830,6 +786,29 @@ function renderCopyAllPromptsButton(prompts) {
 
   wrap.appendChild(btn);
   return wrap;
+}
+
+// Mesma ideia do botão por bloco acima, mas juntando os prompts de TODOS os
+// blocos do rascunho, na ordem — renderizado uma vez só (mesmo padrão de
+// renderDraftFolderSync), não por bloco.
+function renderDraftCopyAllPrompts() {
+  const container = document.getElementById("draft-copy-all-prompts");
+  if (!container) return;
+  container.innerHTML = "";
+  if (mediaMode !== "own_media") return;
+
+  const prompts = [];
+  for (const block of blocks) {
+    const slots = blockSlots[block.id] || [];
+    for (const slot of slots) {
+      if (slot.image_prompt) prompts.push(slot.image_prompt);
+    }
+  }
+  if (!prompts.length) return;
+
+  container.appendChild(
+    renderCopyAllPromptsButton(prompts, `Copiar todos os prompts do rascunho (${prompts.length})`)
+  );
 }
 
 // --- Sincronização automática de pasta pro rascunho inteiro (ver
