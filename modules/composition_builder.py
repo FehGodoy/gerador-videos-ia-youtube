@@ -296,6 +296,25 @@ def _scenes_from_manifest(
         end_seconds = round(beat_start_seconds + slot["end_seconds"], 3)
         transition_in = effect_picker.pick_transition() if effect_picker else "fade"
 
+        # Trecho que a IA (ou o usuário, via override) marcou como "não
+        # precisa de mídia" — vira card de texto com a própria fala do
+        # trecho, igual ao modo automático quando a estratégia é TEXT.
+        if slot.get("needs_media") is False:
+            scenes.append(
+                {
+                    "start_seconds": start_seconds,
+                    "end_seconds": end_seconds,
+                    "kind": "concept",
+                    "clip_start_seconds": 0.0,
+                    "footage": None,
+                    "gallery": None,
+                    "concept_text": slot.get("text", ""),
+                    "shot_slot": slot["index"],
+                    "transition_in": transition_in,
+                }
+            )
+            continue
+
         if effect in GALLERY_EFFECTS and len(media_items) >= 2:
             gallery_scene = _scene_gallery(
                 {
@@ -342,6 +361,50 @@ def _scenes_from_manifest(
                 "transition_in": transition_in,
             }
         )
+    return scenes
+
+
+def _insert_chart_scene(scenes: list[dict], chart: dict, captions: list[dict]) -> list[dict]:
+    """Substitui, no lugar, a cena que cobre o instante em que o dado do
+    gráfico é FALADO (mesma âncora do modo automático, `_find_spoken_at`)
+    por uma cena `kind: "chart"`, reaproveitando o footage que já estava
+    naquela cena como fundo desfocado atrás do gráfico.
+
+    Simplificação consciente pro editor manual: a duração do gráfico vira
+    a duração do próprio trecho que ele substituiu (~4s, a grade fixa do
+    editor), não `chart_scene_seconds` do config — encaixar uma duração
+    diferente exigiria fundir/encolher trechos vizinhos, como `_tile_scenes`
+    faz pra clipe de duração variável; não se aplica à grade fixa aqui.
+    Sem cena nenhuma (beat vazio), não faz nada.
+    """
+    if not scenes:
+        return scenes
+    chart_at = _find_spoken_at(chart.get("trigger"), captions)
+    target_start = chart_at if chart_at is not None else scenes[0]["start_seconds"]
+
+    target_index = next(
+        (i for i, s in enumerate(scenes) if s["start_seconds"] <= target_start < s["end_seconds"]),
+        None,
+    )
+    if target_index is None:
+        # instante fora de qualquer cena (ex.: arredondamento na borda do
+        # beat) — cai na cena mais próxima em vez de não mostrar gráfico.
+        target_index = min(
+            range(len(scenes)), key=lambda i: abs(scenes[i]["start_seconds"] - target_start)
+        )
+
+    target = scenes[target_index]
+    background = target.get("footage") if target["kind"] == "footage" else None
+    scenes[target_index] = {
+        "start_seconds": target["start_seconds"],
+        "end_seconds": target["end_seconds"],
+        "kind": "chart",
+        "clip_start_seconds": 0.0,
+        "footage": background,
+        "gallery": None,
+        "shot_slot": target.get("shot_slot"),
+        "transition_in": target["transition_in"],
+    }
     return scenes
 
 
@@ -920,15 +983,48 @@ def _assemble_composition(
     for position, beat in enumerate(beats):
         beat_timing = beats_by_id[beat.id]
 
+        # A cena vai até o começo do PRÓXIMO beat (não até o fim da fala deste)
+        # pra absorver o silêncio entre beats — sem isso sobrava um buraco
+        # preto entre blocos e a transição não teria onde sobrepor. Usado
+        # pelos dois branches abaixo (manifesto manual e busca por IA).
+        next_beat = beats[position + 1] if position + 1 < len(beats) else None
+        visual_end = (
+            beats_by_id[next_beat.id]["start_seconds"]
+            if next_beat
+            else narration["duration_seconds"]
+        )
+        visual_start = beat_timing["start_seconds"]
+        visual_duration = max(0.1, visual_end - visual_start)
+        n_highlights = min(
+            cfg["highlights"]["max_per_beat"],
+            round(visual_duration / cfg["highlights"]["seconds_per_highlight"]),
+        )
+
         # Editor de timeline manual (painel web, modo de mídia própria):
         # o usuário já escolheu a mídia de cada trecho de ~4s antes de criar
         # o job (ver modules/timeline.py) — pula shot-planning por IA e
         # PoolDistributor inteiramente pra este beat, monta as cenas direto
-        # do manifesto. Beat de mídia própria SEM manifesto (CLI, ou job
-        # antigo de antes desta feature) cai no fluxo de sempre logo abaixo
-        # (PoolDistributor com rodízio automático), sem quebrar compat.
+        # do manifesto. `analyze_beat` AINDA roda (chamado com n_shots=1,
+        # já que os shots dele são descartados aqui) só pelo que não depende
+        # de busca de footage: type/chart/highlights/entities — sem isso,
+        # selo de destaque, gráfico e card de texto puro (trecho marcado
+        # needs_media=false) não apareceriam nesse modo. Beat de mídia
+        # própria SEM manifesto (CLI, ou job antigo de antes desta feature)
+        # cai no fluxo de sempre logo abaixo (PoolDistributor com rodízio
+        # automático), sem quebrar compat.
         manifest = load_manifest(slug, beat.id) if media_mode == "own_media" else None
         if manifest is not None:
+            if on_beat_progress is not None:
+                on_beat_progress(beat.id, "keywords", "running")
+            analysis = analyze_beat(
+                beat,
+                slug,
+                n_shots=1,
+                language=language or cfg["narration"]["language"],
+                n_highlights=n_highlights,
+                prev_text=beats[position - 1].text if position > 0 else None,
+                next_text=next_beat.text if next_beat else None,
+            )
             if on_beat_progress is not None:
                 on_beat_progress(beat.id, "keywords", "done")
                 on_beat_progress(beat.id, "footage", "done")
@@ -939,33 +1035,29 @@ def _assemble_composition(
             scenes = _scenes_from_manifest(
                 manifest, slug, beat_timing["start_seconds"], cfg, effect_picker
             )
+            has_chart = analysis["type"] == "estatistico" and analysis["chart"] is not None
+            if has_chart:
+                scenes = _insert_chart_scene(scenes, analysis["chart"], captions)
+            chart_ranges = [
+                (s["start_seconds"], s["end_seconds"]) for s in scenes if s["kind"] == "chart"
+            ]
             composition_beats.append(
                 {
                     "id": beat.id,
                     "text": beat.text,
                     "start_seconds": beat_timing["start_seconds"],
                     "end_seconds": beat_timing["end_seconds"],
-                    "type": "concreto",
-                    "entities": [],
-                    "chart": None,
+                    "type": analysis["type"],
+                    "entities": analysis.get("entities", []),
+                    "chart": analysis["chart"],
                     "scenes": scenes,
-                    "highlights": [],
+                    "highlights": _anchor_highlights(
+                        analysis.get("highlights", []), captions, chart_ranges, cfg
+                    ),
                     "captions": captions,
                 }
             )
             continue
-
-        # A cena vai até o começo do PRÓXIMO beat (não até o fim da fala deste)
-        # pra absorver o silêncio entre beats — sem isso sobrava um buraco
-        # preto entre blocos e a transição não teria onde sobrepor.
-        next_beat = beats[position + 1] if position + 1 < len(beats) else None
-        visual_end = (
-            beats_by_id[next_beat.id]["start_seconds"]
-            if next_beat
-            else narration["duration_seconds"]
-        )
-        visual_start = beat_timing["start_seconds"]
-        visual_duration = max(0.1, visual_end - visual_start)
 
         # quanto mais longo o bloco, mais ideias visuais distintas ele precisa
         n_shots = max(
@@ -974,11 +1066,6 @@ def _assemble_composition(
                 footage_cfg["max_shots_per_beat"],
                 round(visual_duration / footage_cfg["seconds_per_shot"]),
             ),
-        )
-
-        n_highlights = min(
-            cfg["highlights"]["max_per_beat"],
-            round(visual_duration / cfg["highlights"]["seconds_per_highlight"]),
         )
 
         if on_beat_progress is not None:

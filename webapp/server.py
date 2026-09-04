@@ -149,6 +149,10 @@ class SetSlotEffectRequest(BaseModel):
     effect: str
 
 
+class SetSlotNeedsMediaRequest(BaseModel):
+    needs_media: bool
+
+
 class WatchFolderRequest(BaseModel):
     folder_path: str
 
@@ -251,12 +255,20 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
     existing = timeline_module.load_manifest(req.slug, req.block_id)
     if existing:
         for i, old_slot in enumerate(existing):
-            if i < len(slots) and old_slot.get("media"):
+            if i >= len(slots):
+                continue
+            if old_slot.get("media"):
                 slots[i]["media"] = old_slot["media"]
                 slots[i]["effect"] = old_slot.get("effect", timeline_module.DEFAULT_EFFECT)
                 slots[i]["translation_pt"] = old_slot.get("translation_pt", "")
                 slots[i]["hint"] = old_slot.get("hint", "")
                 slots[i]["image_prompt"] = old_slot.get("image_prompt", "")
+            # independente de ter mídia: uma escolha explícita do usuário
+            # sobre precisar ou não de mídia não pode ser apagada só por
+            # reprocessar o áudio (ver POST .../needs-media).
+            if old_slot.get("needs_media_overridden"):
+                slots[i]["needs_media"] = old_slot.get("needs_media", True)
+                slots[i]["needs_media_overridden"] = True
     timeline_module.save_manifest(req.slug, req.block_id, slots)
 
     return {
@@ -298,6 +310,10 @@ async def create_job(req: CreateJobRequest) -> dict:
                 missing_slots += 1
                 continue
             for s in manifest:
+                if s.get("needs_media") is False:
+                    # a IA (ou o usuário, via override) decidiu que este
+                    # trecho vira texto/gráfico — não exige anexo.
+                    continue
                 min_media, _ = timeline_module.effect_media_bounds(s.get("effect", timeline_module.DEFAULT_EFFECT))
                 attached = sum(1 for m in (s.get("media") or []) if m)
                 if attached < min_media:
@@ -675,6 +691,11 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
         slot["translation_pt"] = hint["translation_pt"]
         slot["hint"] = hint["hint"]
         slot["image_prompt"] = hint["image_prompt"]
+        # Só aplica a classificação da IA se o usuário ainda não decidiu
+        # manualmente (ver POST .../needs-media) — sem isso, gerar de novo
+        # (ex.: "Regenerar" o bloco) apagaria uma escolha explícita.
+        if not slot.get("needs_media_overridden"):
+            slot["needs_media"] = hint["needs_media"]
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slots": manifest}
 
@@ -804,6 +825,29 @@ async def set_timeline_slot_effect(slug: str, block_id: int, slot_index: int, re
     media_list = slot.get("media") or []
     if len(media_list) > max_media:
         slot["media"] = media_list[:max_media]
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": slot}
+
+
+@app.post("/api/timeline/{slug}/{block_id}/{slot_index}/needs-media")
+async def set_timeline_slot_needs_media(
+    slug: str, block_id: int, slot_index: int, req: SetSlotNeedsMediaRequest
+) -> dict:
+    """Override manual da classificação da IA (ver
+    modules/timeline.py::generate_slot_hints, campo needs_media) — o
+    usuário sempre pode discordar, tanto pra dizer "isso aqui não precisa
+    de mídia, deixa virar texto" quanto o contrário. Marca
+    needs_media_overridden pra essa escolha sobreviver a um "Regenerar"
+    do bloco (ver POST /api/narration-blocks/.../hints)."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    slot = manifest[slot_index]
+    slot["needs_media"] = req.needs_media
+    slot["needs_media_overridden"] = True
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
 

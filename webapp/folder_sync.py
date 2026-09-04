@@ -61,6 +61,10 @@ def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
     trechos de mídia única. None quando não sobra vaga preenchível
     automaticamente (trechos completos ou só sobrou efeito de galeria)."""
     for slot in manifest:
+        if slot.get("needs_media") is False:
+            # a IA (ou o usuário, via override) decidiu que este trecho
+            # vira texto/gráfico — não é vaga pra preencher.
+            continue
         effect = slot.get("effect") or timeline_module.DEFAULT_EFFECT
         if effect in timeline_module.GALLERY_EFFECTS:
             continue

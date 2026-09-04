@@ -1775,6 +1775,42 @@ button.review-concept-upload.armed {
   margin-top: 4px;
 }
 
+/* Trecho marcado pela IA (ou pelo usuário, via override) como "vira texto
+   na tela" — sem seletor de efeito nem grade de anexar mídia. */
+.timeline-slot-text-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px dashed var(--ready);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--ready) 10%, transparent);
+}
+
+.timeline-slot-text-notice p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ready);
+}
+
+.timeline-slot-text-notice button {
+  font-size: 11px;
+  height: 28px;
+  padding: 0 10px;
+  flex-shrink: 0;
+}
+
+.timeline-slot-no-media-btn {
+  margin-top: 6px;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 10px;
+  align-self: flex-start;
+}
+
 .timeline-slot-attach-wrap {
   position: relative;
   flex: 0 0 auto;

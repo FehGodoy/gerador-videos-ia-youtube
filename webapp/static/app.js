@@ -563,6 +563,9 @@ function narratedSlotsCoverage() {
   for (const block of blocks) {
     const slots = blockSlots[block.id] || [];
     for (const slot of slots) {
+      // trecho que a IA (ou o usuário, via override) marcou como "vira
+      // texto" não exige mídia — não conta contra a cobertura.
+      if (slot.needs_media === false) continue;
       total += 1;
       if (slotMediaCount(slot) >= slotEffectSpec(slot).min) assigned += 1;
     }
@@ -982,6 +985,23 @@ function renderSlotCard(blockId, slot) {
     card.appendChild(promptWrap);
   }
 
+  if (slot.needs_media === false) {
+    // A IA (ou o usuário, via override anterior) decidiu que este trecho
+    // vira texto na tela — não pede efeito nem mídia nenhuma.
+    const notice = document.createElement("div");
+    notice.className = "timeline-slot-text-notice";
+    const noticeText = document.createElement("p");
+    noticeText.textContent = "Vira texto na tela, sem precisar de mídia.";
+    const overrideBtn = document.createElement("button");
+    overrideBtn.type = "button";
+    overrideBtn.className = "ghost";
+    overrideBtn.textContent = "Usar mídia aqui mesmo assim";
+    overrideBtn.addEventListener("click", () => setSlotNeedsMedia(blockId, slot, true));
+    notice.append(noticeText, overrideBtn);
+    card.appendChild(notice);
+    return card;
+  }
+
   card.appendChild(renderSlotEffectPicker(blockId, slot));
 
   const attach = document.createElement("div");
@@ -996,7 +1016,37 @@ function renderSlotCard(blockId, slot) {
   }
   card.appendChild(attach);
 
+  const noMediaBtn = document.createElement("button");
+  noMediaBtn.type = "button";
+  noMediaBtn.className = "ghost timeline-slot-no-media-btn";
+  noMediaBtn.textContent = "Isso não precisa de mídia";
+  noMediaBtn.title = "Marcar como texto na tela em vez de anexar mídia";
+  noMediaBtn.addEventListener("click", () => setSlotNeedsMedia(blockId, slot, false));
+  card.appendChild(noMediaBtn);
+
   return card;
+}
+
+// Override manual da classificação da IA (needs_media) — o usuário sempre
+// pode discordar, nos dois sentidos (ver POST .../needs-media no server.py).
+async function setSlotNeedsMedia(blockId, slot, needsMedia) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/needs-media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ needs_media: needsMedia }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao atualizar trecho (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 // Select de efeito por trecho — a escolha do usuário sobre COMO essa mídia

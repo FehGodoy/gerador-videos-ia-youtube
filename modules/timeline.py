@@ -54,7 +54,9 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 
 # Sobe manualmente sempre que _HINTS_PROMPT_TEMPLATE ou _parse_hints mudarem
 # de formato — mesmo princípio de ANALYSIS_VERSION em keyword_extractor.py.
-TIMELINE_HINTS_VERSION = 2
+# 3 = ganhou needs_media (classifica trecho abstrato/transição como "vira
+# texto", sem precisar de mídia anexada).
+TIMELINE_HINTS_VERSION = 3
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -62,7 +64,8 @@ _HINTS_PROMPT_TEMPLATE = """Você ajuda um criador de vídeos documentários que
 (fotos/vídeos) a decidir o que colocar em cada trecho da narração. O roteiro abaixo está em \
 {language_name}. Responda com UM ÚNICO objeto JSON, sem markdown:
 
-{{"slots": [{{"index": 0, "translation_pt": "...", "hint": "...", "image_prompt": "..."}}, ...]}}
+{{"slots": [{{"index": 0, "translation_pt": "...", "hint": "...", "image_prompt": "...", \
+"needs_media": true}}, ...]}}
 
 Um item por trecho numerado abaixo, na mesma ordem, onde:
 - "translation_pt": tradução literal do trecho pra português do Brasil (se o roteiro já estiver \
@@ -73,6 +76,10 @@ aquele trecho — só pra ajudar o usuário a escolher entre as mídias que ele 
 de imagem por IA (Midjourney, DALL-E, etc.) caso o usuário prefira gerar a imagem em vez de usar \
 uma mídia própria — descreva a cena visualmente (sujeito, cenário, enquadramento), sem falar sobre \
 o vídeo em si.
+- "needs_media": false SOMENTE quando o trecho é abstrato/transição — uma reflexão, uma frase-ponte, \
+uma pergunta retórica — sem NADA concreto e específico pra mostrar; esse trecho vira um card de \
+texto na tela em vez de pedir foto/vídeo. Na dúvida, ou quando há qualquer coisa filmável/fotografável \
+(pessoa, lugar, objeto, ação, evento), responda true.
 
 Trechos:
 {numbered_slots}
@@ -118,6 +125,12 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 "translation_pt": "",
                 "hint": "",
                 "image_prompt": "",
+                "needs_media": True,
+                # True quando o usuário já respondeu explicitamente (botão
+                # "usar mídia aqui mesmo assim"/"isso não precisa de
+                # mídia") — trava esse campo contra a próxima resposta da
+                # IA (ver webapp/server.py::generate_block_hints).
+                "needs_media_overridden": False,
                 "effect": DEFAULT_EFFECT,
                 "media": [],
             }
@@ -188,10 +201,15 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
         translation = item.get("translation_pt")
         hint = item.get("hint")
         image_prompt = item.get("image_prompt")
+        needs_media = item.get("needs_media")
         by_index[idx] = {
             "translation_pt": translation.strip() if isinstance(translation, str) else "",
             "hint": hint.strip() if isinstance(hint, str) else "",
             "image_prompt": image_prompt.strip() if isinstance(image_prompt, str) else "",
+            # ausente/tipo errado -> True (comportamento de hoje: pede
+            # mídia) — nunca deixa um trecho sem exigência por causa de
+            # resposta incompleta da IA.
+            "needs_media": needs_media if isinstance(needs_media, bool) else True,
         }
     if len(by_index) < n_slots:
         return None
@@ -241,7 +259,10 @@ def generate_slot_hints(
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
-        hints = [{"translation_pt": "", "hint": "", "image_prompt": ""} for _ in slots]
+        hints = [
+            {"translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True}
+            for _ in slots
+        ]
 
     cache_path.write_text(
         json.dumps({"cache_key": cache_key, "hints": hints}, ensure_ascii=False, indent=2),
