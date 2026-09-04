@@ -171,6 +171,14 @@ def load_manifest(slug: str, beat_id: int) -> list[dict] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def delete_manifest(slug: str, beat_id: int) -> None:
+    """Apaga o manifesto de um bloco removido no painel — sem isso, o
+    sincronizador de pasta do rascunho inteiro (webapp/folder_sync.py)
+    continuaria descobrindo o arquivo em disco e oferecendo vaga pra um
+    bloco que o usuário já achava excluído."""
+    _manifest_path(slug, beat_id).unlink(missing_ok=True)
+
+
 def _hints_cache_path(slug: str, beat_id: int) -> Path:
     return cache_dir("timeline", slug) / f"beat_{beat_id:03d}_hints.json"
 

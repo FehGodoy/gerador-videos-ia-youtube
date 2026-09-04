@@ -3,8 +3,17 @@ Sincronização automática de pasta pro editor de timeline manual: observa
 uma pasta local (poll simples, sem dependência nova tipo watchdog — não
 precisa ser instantâneo, o usuário está baixando arquivo um a um) e, a
 cada arquivo novo que aparecer, atribui na ORDEM de chegada (mtime) ao
-próximo trecho vazio do bloco, reaproveitando o mesmo upload que o botão
-manual usa (modules/media_pool.py::save_pool_upload).
+próximo trecho vazio do RASCUNHO INTEIRO (todo bloco já fatiado, do
+primeiro pro último), reaproveitando o mesmo upload que o botão manual usa
+(modules/media_pool.py::save_pool_upload).
+
+Um watch por SLUG (não mais por bloco) — pedido explícito do usuário:
+gerar vários áudios de uma vez e deixar um sincronizador só preencher tudo
+em sequência, avançando de bloco em bloco sozinho, sem precisar desligar e
+religar apontando pro próximo. O bloco "atual" nunca é escolhido à mão:
+é sempre o primeiro (na ordem dos ids) que ainda tiver vaga — inclusive
+um bloco gerado DEPOIS do watch já estar ligado entra na fila sozinho, só
+por o manifesto dele passar a existir em disco (ver _list_block_ids).
 
 Só preenche trechos com efeito de MÍDIA ÚNICA (padrão/parallax_pan) —
 efeito de galeria (2+ posições, ex. split_screen) fica de fora por
@@ -25,6 +34,7 @@ from pathlib import Path
 
 from modules import media_pool
 from modules import timeline as timeline_module
+from modules.config import cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +46,19 @@ _VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 @dataclass
 class _Watch:
     slug: str
-    block_id: int
     folder: Path
     consumed: list[str] = field(default_factory=list)
+    # Último bloco em que uma vaga foi (ou está sendo) oferecida — só pro
+    # status mostrar onde o preenchimento está agora; não é usado pra
+    # decidir a próxima vaga (isso é sempre recalculado do zero varrendo
+    # os blocos em ordem, ver _next_empty_position_in_draft).
+    current_block_id: int | None = None
     last_error: str | None = None
     task: asyncio.Task | None = None
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
-_watches: dict[tuple[str, int], _Watch] = {}
+_watches: dict[str, _Watch] = {}
 
 
 def _media_ext_type(path: Path) -> str | None:
@@ -57,9 +71,10 @@ def _media_ext_type(path: Path) -> str | None:
 
 
 def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
-    """(índice do trecho, posição de mídia) da próxima vaga livre — só em
-    trechos de mídia única. None quando não sobra vaga preenchível
-    automaticamente (trechos completos ou só sobrou efeito de galeria)."""
+    """(índice do trecho, posição de mídia) da próxima vaga livre DENTRO
+    DE UM MANIFESTO — só em trechos de mídia única. None quando não sobra
+    vaga preenchível automaticamente (trechos completos, só sobrou efeito
+    de galeria, ou trecho marcado needs_media=false pela IA/usuário)."""
     for slot in manifest:
         if slot.get("needs_media") is False:
             # a IA (ou o usuário, via override) decidiu que este trecho
@@ -77,11 +92,40 @@ def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
     return None
 
 
-async def _poll_once(watch: _Watch) -> None:
-    manifest = timeline_module.load_manifest(watch.slug, watch.block_id)
-    if manifest is None:
-        return
+def _list_block_ids(slug: str) -> list[int]:
+    """Ids dos blocos que já têm manifesto (foram fatiados), em ordem
+    crescente — descobertos pelos arquivos beat_NNN.json em
+    cache_dir("timeline", slug), não por uma lista mandada pelo painel:
+    assim um bloco gerado DEPOIS do watch já estar ligado entra sozinho na
+    fila no próximo poll, só por o arquivo passar a existir."""
+    ids = []
+    for path in cache_dir("timeline", slug).glob("beat_*.json"):
+        if path.stem.endswith("_hints"):
+            continue
+        try:
+            ids.append(int(path.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return sorted(ids)
 
+
+def _next_empty_position_in_draft(slug: str) -> tuple[int, int, int] | None:
+    """(block_id, índice do trecho, posição de mídia) da próxima vaga
+    livre no RASCUNHO INTEIRO — varre os blocos em ordem crescente e para
+    no primeiro que ainda tiver vaga, então o bloco 1 esgota antes do 2
+    começar a receber, sem precisar de nenhum estado de progresso: é só
+    escolher sempre o primeiro bloco com vaga a cada chamada."""
+    for block_id in _list_block_ids(slug):
+        manifest = timeline_module.load_manifest(slug, block_id)
+        if manifest is None:
+            continue
+        position = _next_empty_position(manifest)
+        if position is not None:
+            return block_id, position[0], position[1]
+    return None
+
+
+async def _poll_once(watch: _Watch) -> None:
     candidates = sorted(
         (p for p in watch.folder.iterdir() if p.is_file() and _media_ext_type(p)),
         key=lambda p: p.stat().st_mtime,
@@ -90,14 +134,15 @@ async def _poll_once(watch: _Watch) -> None:
         return
 
     used_dir = watch.folder / "usados"
-    changed = False
 
     for path in candidates:
-        position = _next_empty_position(manifest)
+        position = _next_empty_position_in_draft(watch.slug)
         if position is None:
-            break  # nada mais pra preencher automaticamente neste bloco
+            break  # nada mais pra preencher automaticamente no rascunho (ou nada gerado ainda)
 
-        slot_index, media_index = position
+        block_id, slot_index, media_index = position
+        manifest = timeline_module.load_manifest(watch.slug, block_id)
+
         media_type = _media_ext_type(path)
         data = path.read_bytes()
         saved = await asyncio.to_thread(media_pool.save_pool_upload, watch.slug, path.name, data)
@@ -114,14 +159,15 @@ async def _poll_once(watch: _Watch) -> None:
         while len(media_list) <= media_index:
             media_list.append(None)
         media_list[media_index] = media
+        # salva a cada arquivo (não só no fim do poll): um poll pode
+        # atravessar a fronteira de dois blocos diferentes, cada um com
+        # seu próprio manifesto em disco.
+        timeline_module.save_manifest(watch.slug, block_id, manifest)
 
+        watch.current_block_id = block_id
         used_dir.mkdir(exist_ok=True)
         path.rename(used_dir / path.name)
         watch.consumed.append(path.name)
-        changed = True
-
-    if changed:
-        timeline_module.save_manifest(watch.slug, watch.block_id, manifest)
 
 
 async def _run(watch: _Watch) -> None:
@@ -131,41 +177,46 @@ async def _run(watch: _Watch) -> None:
             watch.last_error = None
         except Exception as e:
             watch.last_error = str(e)
-            logger.exception(
-                "Sincronizador de pasta falhou (slug=%s, block=%s)", watch.slug, watch.block_id
-            )
+            logger.exception("Sincronizador de pasta falhou (slug=%s)", watch.slug)
         try:
             await asyncio.wait_for(watch.stop_event.wait(), timeout=POLL_INTERVAL_SECONDS)
         except asyncio.TimeoutError:
             pass
 
 
-def start(slug: str, block_id: int, folder: Path) -> None:
-    stop(slug, block_id)  # troca a pasta observada anterior pra este bloco, se houver
-    watch = _Watch(slug=slug, block_id=block_id, folder=folder)
+def start(slug: str, folder: Path) -> None:
+    stop(slug)  # troca a pasta observada anterior pra este rascunho, se houver
+    watch = _Watch(slug=slug, folder=folder)
     watch.task = asyncio.create_task(_run(watch))
-    _watches[(slug, block_id)] = watch
+    _watches[slug] = watch
 
 
-def stop(slug: str, block_id: int) -> None:
-    watch = _watches.pop((slug, block_id), None)
+def stop(slug: str) -> None:
+    watch = _watches.pop(slug, None)
     if watch is not None:
         # só sinaliza — nunca cancela a task à força, pra não interromper
         # um _poll_once no meio de mover/salvar um arquivo.
         watch.stop_event.set()
 
 
-def status(slug: str, block_id: int) -> dict:
-    watch = _watches.get((slug, block_id))
+def status(slug: str) -> dict:
+    watch = _watches.get(slug)
     if watch is None:
-        return {"watching": False, "folder": None, "consumed_count": 0, "last_error": None, "all_filled": None}
+        return {
+            "watching": False,
+            "folder": None,
+            "consumed_count": 0,
+            "last_error": None,
+            "all_filled": None,
+            "current_block_id": None,
+        }
 
-    manifest = timeline_module.load_manifest(slug, block_id)
-    all_filled = _next_empty_position(manifest) is None if manifest is not None else None
+    all_filled = _next_empty_position_in_draft(slug) is None
     return {
         "watching": True,
         "folder": str(watch.folder),
         "consumed_count": len(watch.consumed),
         "last_error": watch.last_error,
         "all_filled": all_filled,
+        "current_block_id": watch.current_block_id,
     }

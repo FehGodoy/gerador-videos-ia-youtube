@@ -700,6 +700,39 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
     return {"slots": manifest}
 
 
+# Registradas ANTES de /api/timeline/{slug}/{block_id}: rotas são casadas
+# na ordem de declaração (mesma forma de rota, 2 segmentos depois de
+# /api/timeline/), e "watch-folder" bateria ali como um block_id inválido
+# (422) se viesse depois. Um watch por SLUG (não mais por bloco, ver
+# webapp/folder_sync.py) — pedido do usuário: gerar vários áudios de uma
+# vez e deixar um sincronizador só preencher tudo em sequência, avançando
+# de bloco em bloco sozinho.
+@app.post("/api/timeline/{slug}/watch-folder")
+async def start_watch_folder(slug: str, req: WatchFolderRequest) -> dict:
+    """Liga o sincronizador automático (ver webapp/folder_sync.py) pro
+    RASCUNHO INTEIRO: a cada arquivo novo na pasta informada, atribui ao
+    próximo trecho de mídia única ainda vazio, no primeiro bloco que
+    tiver vaga (bloco 1 esgota antes do 2 começar a receber). Não exige
+    nenhum bloco já fatiado — pode ligar antes do primeiro áudio existir
+    e esperar."""
+    folder = Path(req.folder_path).expanduser()
+    if not folder.is_dir():
+        raise HTTPException(status_code=400, detail="Pasta não encontrada nesse caminho.")
+    folder_sync.start(slug, folder)
+    return folder_sync.status(slug)
+
+
+@app.post("/api/timeline/{slug}/watch-folder/stop")
+async def stop_watch_folder(slug: str) -> dict:
+    folder_sync.stop(slug)
+    return folder_sync.status(slug)
+
+
+@app.get("/api/timeline/{slug}/watch-folder")
+async def get_watch_folder_status(slug: str) -> dict:
+    return folder_sync.status(slug)
+
+
 @app.get("/api/timeline/{slug}/{block_id}")
 async def get_timeline_manifest(slug: str, block_id: int) -> dict:
     manifest = timeline_module.load_manifest(slug, block_id)
@@ -708,33 +741,14 @@ async def get_timeline_manifest(slug: str, block_id: int) -> dict:
     return {"slots": manifest}
 
 
-# Registradas ANTES de /api/timeline/{slug}/{block_id}/{slot_index}: rotas
-# são casadas na ordem de declaração, e "watch-folder" bateria ali como um
-# slot_index inválido (422) se viesse depois — mesmo número de segmentos.
-@app.post("/api/timeline/{slug}/{block_id}/watch-folder")
-async def start_watch_folder(slug: str, block_id: int, req: WatchFolderRequest) -> dict:
-    """Liga o sincronizador automático (ver webapp/folder_sync.py) pra este
-    bloco: a cada arquivo novo na pasta informada, atribui ao próximo
-    trecho de mídia única ainda vazio, na ordem de chegada."""
-    manifest = timeline_module.load_manifest(slug, block_id)
-    if manifest is None:
-        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
-    folder = Path(req.folder_path).expanduser()
-    if not folder.is_dir():
-        raise HTTPException(status_code=400, detail="Pasta não encontrada nesse caminho.")
-    folder_sync.start(slug, block_id, folder)
-    return folder_sync.status(slug, block_id)
-
-
-@app.post("/api/timeline/{slug}/{block_id}/watch-folder/stop")
-async def stop_watch_folder(slug: str, block_id: int) -> dict:
-    folder_sync.stop(slug, block_id)
-    return folder_sync.status(slug, block_id)
-
-
-@app.get("/api/timeline/{slug}/{block_id}/watch-folder")
-async def get_watch_folder_status(slug: str, block_id: int) -> dict:
-    return folder_sync.status(slug, block_id)
+@app.delete("/api/timeline/{slug}/{block_id}")
+async def delete_timeline_manifest(slug: str, block_id: int) -> dict:
+    """Remove um bloco do painel: apaga o manifesto em disco também — sem
+    isso, o sincronizador de pasta do rascunho inteiro continuaria
+    descobrindo o arquivo e oferecendo vaga pra um bloco que o usuário já
+    achava excluído (ver webapp/folder_sync.py::_list_block_ids)."""
+    timeline_module.delete_manifest(slug, block_id)
+    return {"deleted": True}
 
 
 def _find_pool_file(slug: str, filename: str) -> tuple[Path, str] | tuple[None, None]:
