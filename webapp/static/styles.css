@@ -1884,6 +1884,7 @@ button.review-concept-upload.armed {
 .timeline-slot-assigned {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   flex: 0 0 auto;
 }
@@ -1908,6 +1909,13 @@ button.review-concept-upload.armed {
   height: 28px;
   padding: 0 8px;
   font-size: 11px;
+}
+
+.timeline-slot-shift {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 /* --- Popup de recorte de trecho de vídeo --- */

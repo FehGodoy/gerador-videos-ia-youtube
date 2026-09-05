@@ -187,6 +187,92 @@ def delete_manifest(slug: str, beat_id: int) -> None:
     _manifest_path(slug, beat_id).unlink(missing_ok=True)
 
 
+def list_block_ids(slug: str) -> list[int]:
+    """Ids dos blocos que já têm manifesto (foram fatiados), em ordem
+    crescente — descobertos pelos arquivos beat_NNN.json em disco, não por
+    uma lista mandada pelo painel. Usado tanto pelo sincronizador de pasta
+    (webapp/folder_sync.py, pra saber a ordem de preenchimento do rascunho
+    inteiro) quanto por shift_media_from abaixo."""
+    ids = []
+    for path in cache_dir("timeline", slug).glob("beat_*.json"):
+        if path.stem.endswith("_hints"):
+            continue
+        try:
+            ids.append(int(path.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return sorted(ids)
+
+
+def is_single_media_slot(slot: dict) -> bool:
+    """True quando o trecho é elegível pro preenchimento automático de
+    mídia única (padrão/parallax_pan) — mesmo critério de
+    folder_sync._next_empty_position: trecho marcado needs_media=false
+    (IA ou usuário decidiu que vira texto) e efeito de galeria (2+
+    posições, decidido sempre à mão) nunca entram nessa conta."""
+    if slot.get("needs_media") is False:
+        return False
+    effect = slot.get("effect") or DEFAULT_EFFECT
+    return effect not in GALLERY_EFFECTS
+
+
+def shift_media_from(slug: str, from_block_id: int, from_slot_index: int) -> dict:
+    """Corrige o desalinhamento causado por um download que falhou no meio
+    da sincronização automática de pasta (webapp/folder_sync.py): ela só
+    enxerga arquivos chegando numa pasta, nunca sabe que um download
+    falhou, então quando isso acontece o próximo download bem-sucedido cai
+    no trecho ERRADO (o que devia ter recebido o arquivo que falhou) — e
+    tudo que vem depois fica uma posição adiantado.
+
+    A partir do trecho indicado (o primeiro com a mídia errada, na visão
+    de quem está revisando), empurra a mídia de cada trecho ELEGÍVEL
+    seguinte (`is_single_media_slot`, mesmo filtro do sincronizador — vale
+    através de vários blocos, na mesma ordem que o sincronizador usa,
+    ver list_block_ids) uma posição pra trás, fechando o buraco. O ÚLTIMO
+    trecho da cadeia fica sem mídia, pronto pra receber o próximo download.
+
+    Retorna {"shifted": int, "cleared": {"block_id", "slot_index"} | None}
+    — "shifted" é quantos trechos mudaram de mídia; "cleared" é onde ficou
+    a vaga nova (None só quando não sobrou nenhum trecho elegível depois
+    do ponto indicado).
+    """
+    chain: list[dict] = []
+    manifests: dict[int, list[dict]] = {}
+    started = False
+    for block_id in list_block_ids(slug):
+        manifest = load_manifest(slug, block_id)
+        if manifest is None:
+            continue
+        manifests[block_id] = manifest
+        for slot in manifest:
+            if block_id == from_block_id and slot["index"] == from_slot_index:
+                started = True
+            if not started or not is_single_media_slot(slot):
+                continue
+            chain.append((block_id, slot))
+
+    if not chain:
+        return {"shifted": 0, "cleared": None}
+
+    shifted = 0
+    for i in range(len(chain) - 1):
+        _, slot_current = chain[i]
+        _, slot_next = chain[i + 1]
+        slot_current["media"] = list(slot_next.get("media") or [])
+        shifted += 1
+
+    last_block_id, last_slot = chain[-1]
+    last_slot["media"] = []
+
+    for block_id, manifest in manifests.items():
+        save_manifest(slug, block_id, manifest)
+
+    return {
+        "shifted": shifted,
+        "cleared": {"block_id": last_block_id, "slot_index": last_slot["index"]},
+    }
+
+
 def _hints_cache_path(slug: str, beat_id: int) -> Path:
     return cache_dir("timeline", slug) / f"beat_{beat_id:03d}_hints.json"
 

@@ -153,6 +153,11 @@ class SetSlotNeedsMediaRequest(BaseModel):
     needs_media: bool
 
 
+class ShiftMediaRequest(BaseModel):
+    block_id: int
+    slot_index: int
+
+
 class WatchFolderRequest(BaseModel):
     folder_path: str
 
@@ -733,6 +738,22 @@ async def get_watch_folder_status(slug: str) -> dict:
     return folder_sync.status(slug)
 
 
+@app.post("/api/timeline/{slug}/shift-media")
+async def shift_timeline_media(slug: str, req: ShiftMediaRequest) -> dict:
+    """Corrige o desalinhamento clássico da sincronização de pasta: um
+    download que falhou no navegador não deixa rastro nenhum aqui, então o
+    próximo download bem-sucedido cai no trecho anterior ao que devia (ver
+    modules/timeline.py::shift_media_from). Chamado a partir do trecho que
+    está com a mídia ERRADA — empurra a mídia de cada trecho elegível
+    seguinte uma posição pra trás, através de quantos blocos precisar."""
+    manifest = timeline_module.load_manifest(slug, req.block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco não encontrado.")
+    if req.slot_index < 0 or req.slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+    return timeline_module.shift_media_from(slug, req.block_id, req.slot_index)
+
+
 @app.get("/api/timeline/{slug}/{block_id}")
 async def get_timeline_manifest(slug: str, block_id: int) -> dict:
     manifest = timeline_module.load_manifest(slug, block_id)
@@ -746,7 +767,7 @@ async def delete_timeline_manifest(slug: str, block_id: int) -> dict:
     """Remove um bloco do painel: apaga o manifesto em disco também — sem
     isso, o sincronizador de pasta do rascunho inteiro continuaria
     descobrindo o arquivo e oferecendo vaga pra um bloco que o usuário já
-    achava excluído (ver webapp/folder_sync.py::_list_block_ids)."""
+    achava excluído (ver modules/timeline.py::list_block_ids)."""
     timeline_module.delete_manifest(slug, block_id)
     return {"deleted": True}
 

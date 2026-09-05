@@ -34,7 +34,6 @@ from pathlib import Path
 
 from modules import media_pool
 from modules import timeline as timeline_module
-from modules.config import cache_dir
 
 logger = logging.getLogger(__name__)
 
@@ -76,14 +75,9 @@ def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
     vaga preenchível automaticamente (trechos completos, só sobrou efeito
     de galeria, ou trecho marcado needs_media=false pela IA/usuário)."""
     for slot in manifest:
-        if slot.get("needs_media") is False:
-            # a IA (ou o usuário, via override) decidiu que este trecho
-            # vira texto/gráfico — não é vaga pra preencher.
+        if not timeline_module.is_single_media_slot(slot):
             continue
-        effect = slot.get("effect") or timeline_module.DEFAULT_EFFECT
-        if effect in timeline_module.GALLERY_EFFECTS:
-            continue
-        _, max_media = timeline_module.effect_media_bounds(effect)
+        _, max_media = timeline_module.effect_media_bounds(slot.get("effect") or timeline_module.DEFAULT_EFFECT)
         media_list = slot.get("media") or []
         for i in range(max_media):
             item = media_list[i] if i < len(media_list) else None
@@ -92,30 +86,13 @@ def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
     return None
 
 
-def _list_block_ids(slug: str) -> list[int]:
-    """Ids dos blocos que já têm manifesto (foram fatiados), em ordem
-    crescente — descobertos pelos arquivos beat_NNN.json em
-    cache_dir("timeline", slug), não por uma lista mandada pelo painel:
-    assim um bloco gerado DEPOIS do watch já estar ligado entra sozinho na
-    fila no próximo poll, só por o arquivo passar a existir."""
-    ids = []
-    for path in cache_dir("timeline", slug).glob("beat_*.json"):
-        if path.stem.endswith("_hints"):
-            continue
-        try:
-            ids.append(int(path.stem.split("_")[1]))
-        except (IndexError, ValueError):
-            continue
-    return sorted(ids)
-
-
 def _next_empty_position_in_draft(slug: str) -> tuple[int, int, int] | None:
     """(block_id, índice do trecho, posição de mídia) da próxima vaga
     livre no RASCUNHO INTEIRO — varre os blocos em ordem crescente e para
     no primeiro que ainda tiver vaga, então o bloco 1 esgota antes do 2
     começar a receber, sem precisar de nenhum estado de progresso: é só
     escolher sempre o primeiro bloco com vaga a cada chamada."""
-    for block_id in _list_block_ids(slug):
+    for block_id in timeline_module.list_block_ids(slug):
         manifest = timeline_module.load_manifest(slug, block_id)
         if manifest is None:
             continue

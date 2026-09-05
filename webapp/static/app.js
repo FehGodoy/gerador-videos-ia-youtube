@@ -1166,7 +1166,56 @@ function renderAssignedMedia(blockId, slot, mediaIndex, media) {
   removeBtn.addEventListener("click", () => unassignSlot(blockId, slot, mediaIndex));
   wrap.appendChild(removeBtn);
 
+  // Corrige o desalinhamento clássico da sincronização de pasta (um
+  // download que falhou empurra tudo uma posição pra frente) — só faz
+  // sentido em trecho de mídia única elegível pro sincronizador (mesmo
+  // critério de modules/timeline.py::is_single_media_slot); galeria nunca
+  // é preenchida automaticamente, não participa desse desalinhamento.
+  if (slotEffectSpec(slot).max === 1 && slot.needs_media !== false) {
+    const shiftBtn = document.createElement("button");
+    shiftBtn.type = "button";
+    shiftBtn.className = "ghost icon-btn timeline-slot-shift";
+    shiftBtn.title = "Essa mídia é a do próximo trecho? Puxa a mídia de cada trecho seguinte uma posição pra trás.";
+    shiftBtn.textContent = "Realinhar a partir daqui";
+    shiftBtn.addEventListener("click", () => shiftMediaFrom(blockId, slot));
+    wrap.appendChild(shiftBtn);
+  }
+
   return wrap;
+}
+
+async function shiftMediaFrom(blockId, slot) {
+  clearError();
+  const ok = window.confirm(
+    "Isso vai puxar a mídia de cada trecho seguinte (deste bloco em diante) uma posição pra trás, " +
+    "fechando a vaga aqui. O último trecho da cadeia fica sem mídia. Confirma?"
+  );
+  if (!ok) return;
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/shift-media`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ block_id: blockId, slot_index: slot.index }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao realinhar (${resp.status})`);
+    }
+    await resp.json();
+    // Rebusca o manifesto de cada bloco que pode ter mudado, do bloco
+    // atual em diante — a cadeia pode atravessar vários blocos.
+    const affected = blocks.map((b) => b.id).filter((id) => id >= blockId);
+    for (const id of affected) {
+      const manifestResp = await fetch(`/api/timeline/${draftSlug}/${id}`);
+      if (manifestResp.ok) {
+        const { slots } = await manifestResp.json();
+        blockSlots[id] = slots;
+      }
+    }
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 function renderAttachControl(blockId, slot, mediaIndex) {
