@@ -745,6 +745,7 @@ function renderBlocksList() {
   });
   renderDraftFolderSync();
   renderDraftCopyAllPrompts();
+  renderDraftFillScreenControl();
   updateGenerateVideoButton();
   updateGenerateBlockButton();
 }
@@ -843,6 +844,71 @@ function renderDraftCopyAllPrompts() {
   container.appendChild(
     renderCopyAllPromptsButton(prompts, `Copiar todos os prompts do rascunho (${prompts.length})`)
   );
+}
+
+// Atalho pedido pelo usuário: ligar/desligar "preencher tela toda" trecho
+// por trecho era cansativo com muitos blocos — aplica em TODO trecho
+// elegível de TODOS os blocos de uma vez (POST .../fill-screen, mesmo
+// endpoint de lote usado aqui). O checkbox por trecho continua existindo
+// pra ajustar uma exceção pontual depois desse atalho.
+function renderDraftFillScreenControl() {
+  const container = document.getElementById("draft-fill-screen");
+  if (!container) return;
+  container.innerHTML = "";
+  if (mediaMode !== "own_media") return;
+
+  const hasEligibleSlot = blocks.some((b) =>
+    (blockSlots[b.id] || []).some((s) => s.needs_media !== false)
+  );
+  if (!hasEligibleSlot) return;
+
+  const row = document.createElement("div");
+  row.className = "timeline-fill-screen-all-row";
+
+  const label = document.createElement("span");
+  label.className = "hint";
+  label.textContent = "Preencher tela toda:";
+
+  const onBtn = document.createElement("button");
+  onBtn.type = "button";
+  onBtn.className = "ghost";
+  onBtn.textContent = "Ligar em todos os trechos";
+  onBtn.addEventListener("click", () => setAllSlotsFillScreen(true));
+
+  const offBtn = document.createElement("button");
+  offBtn.type = "button";
+  offBtn.className = "ghost";
+  offBtn.textContent = "Desligar em todos os trechos";
+  offBtn.addEventListener("click", () => setAllSlotsFillScreen(false));
+
+  row.append(label, onBtn, offBtn);
+  container.appendChild(row);
+}
+
+async function setAllSlotsFillScreen(fillScreen) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/fill-screen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fill_screen: fillScreen }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao atualizar os trechos (${resp.status})`);
+    }
+    // Rebusca o manifesto de cada bloco (o lote pode ter mudado qualquer um deles).
+    for (const block of blocks) {
+      const manifestResp = await fetch(`/api/timeline/${draftSlug}/${block.id}`);
+      if (manifestResp.ok) {
+        const { slots } = await manifestResp.json();
+        blockSlots[block.id] = slots;
+      }
+    }
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 // --- Sincronização automática de pasta pro rascunho inteiro (ver

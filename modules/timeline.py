@@ -15,12 +15,27 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from pathlib import Path
 
 from modules.config import cache_dir, load_config
 from modules.keyword_extractor import _LANGUAGE_NAMES, _call_anthropic, _call_openai
 
 logger = logging.getLogger(__name__)
+
+# Nome em INGLÊS de cada idioma — diferente de _LANGUAGE_NAMES (nome em
+# PORTUGUÊS, usado dentro do prompt em português que instrui a IA). Usado
+# só no final do image_prompt (ver generate_slot_hints), que é em inglês e
+# vai direto pro gerador de imagem externo.
+_LANGUAGE_NAMES_EN = {
+    "pt": "Portuguese",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "it": "Italian",
+    "ja": "Japanese",
+}
 
 # Alvo de duração de cada trecho — mesmo valor pedido pelo usuário. Trechos
 # reais variam um pouco pra sempre fechar em fronteira de palavra (nunca
@@ -64,7 +79,18 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # novo) — a instrução vivia enterrada dentro do bullet de "image_prompt",
 # fácil da IA não prestar atenção; virou um parágrafo PRÓPRIO logo depois
 # do JSON, com exemplo certo/errado lado a lado.
-TIMELINE_HINTS_VERSION = 5
+# 6 = vazou de novo, mas dessa vez num prompt que NUNCA pedia texto nenhum
+# ("Side-by-side comparison of Honda and Toyota cars, balanced scales") —
+# o gerador de imagem EXTERNO (fora do nosso controle) inventou painéis
+# inteiros de texto em português sozinho, sem a IA ter descrito texto
+# nenhum, então a REGRA CRÍTICA DE IDIOMA acima (que só vale quando a IA
+# decide descrever texto) nunca chegava a se aplicar. Reforço DETERMINÍSTICO
+# (mesmo princípio do image_style — não dá pra confiar 100% na IA seguir
+# uma instrução condicional): todo image_prompt não vazio ganha, em
+# Python, uma cláusula final avisando que qualquer texto que aparecer na
+# imagem tem que estar no idioma do vídeo — mesmo quando a IA não pediu
+# texto nenhum, cobrindo o gerador externo inventar um sozinho.
+TIMELINE_HINTS_VERSION = 6
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -409,23 +435,49 @@ def generate_slot_hints(
             language_name=_LANGUAGE_NAMES.get(language, "português"),
             numbered_slots=numbered,
         )
-        for attempt_prompt in (prompt, prompt + _RETRY_SUFFIX):
+        # 3 tentativas (era 2), com um respiro curto ANTES de cada retry —
+        # usuário reportou que clicar em "Gerar de novo" às vezes não
+        # resolve: o botão já chamava a IA de novo (não é cache velho
+        # travando nada, ver docstring acima), mas duas tentativas em
+        # sequência SEM pausa nenhuma tendem a bater no mesmo erro
+        # TRANSITÓRIO da API (rate limit/sobrecarga do provider) de novo,
+        # já que nada mudou entre elas. exc logado com a mensagem real
+        # (não só exc_info) pra facilitar diagnosticar qual erro é esse.
+        attempts = (prompt, prompt + _RETRY_SUFFIX, prompt + _RETRY_SUFFIX)
+        for attempt_index, attempt_prompt in enumerate(attempts):
+            if attempt_index > 0:
+                time.sleep(2 * attempt_index)
             try:
                 hints = _parse_hints(call(attempt_prompt, kw_cfg["model"]), len(slots))
                 if hints is not None:
                     break
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Geração de dica/tradução do beat %d falhou.", beat_id, exc_info=True
+                    "Geração de dica/tradução do beat %d falhou (tentativa %d/%d): %s",
+                    beat_id, attempt_index + 1, len(attempts), exc, exc_info=True,
                 )
 
-    if hints is not None and image_style:
-        # Concatenado aqui, em Python — não faz parte do que a IA decide.
-        # Só em quem tem image_prompt de verdade (fallback vazio continua
-        # vazio, sem vírgula solta no final).
+    if hints is not None:
+        # Reforço DETERMINÍSTICO de idioma (ver TIMELINE_HINTS_VERSION=6
+        # acima) — vai em TODO image_prompt não vazio, mesmo quando a IA
+        # não descreveu texto nenhum na cena: o gerador de imagem externo
+        # pode inventar letreiro/texto por conta própria, sem instrução
+        # nenhuma sobre idioma, e nesse caso tende a escrever em português.
+        lang_en = _LANGUAGE_NAMES_EN.get(language, "English")
         for hint in hints:
             if hint["image_prompt"]:
-                hint["image_prompt"] = f"{hint['image_prompt']}, {image_style}"
+                hint["image_prompt"] = (
+                    f"{hint['image_prompt']}, any text/labels/captions visible in the image must "
+                    f"be written in {lang_en}"
+                )
+
+        if image_style:
+            # Concatenado aqui, em Python — não faz parte do que a IA
+            # decide. Só em quem tem image_prompt de verdade (fallback
+            # vazio continua vazio, sem vírgula solta no final).
+            for hint in hints:
+                if hint["image_prompt"]:
+                    hint["image_prompt"] = f"{hint['image_prompt']}, {image_style}"
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)

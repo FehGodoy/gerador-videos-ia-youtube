@@ -162,6 +162,10 @@ class SetSlotFillScreenRequest(BaseModel):
     fill_screen: bool
 
 
+class SetAllFillScreenRequest(BaseModel):
+    fill_screen: bool
+
+
 class ShiftMediaRequest(BaseModel):
     block_id: int
     slot_index: int
@@ -766,6 +770,38 @@ async def shift_timeline_media(slug: str, req: ShiftMediaRequest) -> dict:
     if req.slot_index < 0 or req.slot_index >= len(manifest):
         raise HTTPException(status_code=404, detail="Trecho não encontrado.")
     return timeline_module.shift_media_from(slug, req.block_id, req.slot_index)
+
+
+@app.post("/api/timeline/{slug}/fill-screen")
+async def set_all_timeline_fill_screen(slug: str, req: SetAllFillScreenRequest) -> dict:
+    """Liga/desliga "preencher tela toda" em TODO trecho elegível de TODOS
+    os blocos já fatiados do rascunho de uma vez — atalho pro usuário não
+    precisar clicar trecho por trecho (ver toggle individual em
+    .../{block_id}/{slot_index}/fill-screen, que continua existindo pra
+    ligar/desligar um trecho pontual depois desse atalho). Pula trecho
+    marcado needs_media=false (vira card de texto, sem mídia — o campo
+    nunca é lido nesse caso, ver composition_builder.py::_scenes_from_manifest)."""
+    block_ids = timeline_module.list_block_ids(slug)
+    if not block_ids:
+        raise HTTPException(status_code=404, detail="Nenhum bloco fatiado ainda neste rascunho.")
+
+    updated = 0
+    for block_id in block_ids:
+        manifest = timeline_module.load_manifest(slug, block_id)
+        if manifest is None:
+            continue
+        changed = False
+        for slot in manifest:
+            if slot.get("needs_media") is False:
+                continue
+            if bool(slot.get("fill_screen")) != req.fill_screen:
+                slot["fill_screen"] = req.fill_screen
+                changed = True
+                updated += 1
+        if changed:
+            timeline_module.save_manifest(slug, block_id, manifest)
+
+    return {"updated": updated}
 
 
 @app.get("/api/timeline/{slug}/{block_id}")
