@@ -1152,6 +1152,16 @@ function renderAssignedMedia(blockId, slot, mediaIndex, media) {
       : Object.assign(document.createElement("video"), { src: url, muted: true });
   wrap.appendChild(el);
 
+  if (slot.sync_warning) {
+    const warn = document.createElement("span");
+    warn.className = "timeline-slot-sync-warning";
+    warn.textContent = "Confira";
+    warn.title =
+      `Chegou em ${slot.sync_warning.gap_seconds}s (normal ~${slot.sync_warning.expected_seconds}s) — ` +
+      "pode ser um reenvio depois de uma falha de download. Confira se é a mídia certa pra este trecho.";
+    wrap.appendChild(warn);
+  }
+
   if (media.media_type === "video" && media.clip_start_seconds != null) {
     const time = document.createElement("span");
     time.className = "timeline-slot-time";

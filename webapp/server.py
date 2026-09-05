@@ -820,6 +820,10 @@ async def assign_timeline_slot(slug: str, block_id: int, slot_index: int, req: A
     while len(media_list) <= req.media_index:
         media_list.append(None)
     media_list[req.media_index] = media
+    # O usuário mexendo na mídia manualmente já É a revisão acontecendo —
+    # o aviso de possível desalinhamento (webapp/folder_sync.py) não faz
+    # mais sentido depois disso.
+    slot.pop("sync_warning", None)
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
 
@@ -836,6 +840,7 @@ async def unassign_timeline_slot(slug: str, block_id: int, slot_index: int, medi
     media_list = slot.get("media") or []
     if 0 <= media_index < len(media_list):
         media_list[media_index] = None
+    slot.pop("sync_warning", None)
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
 

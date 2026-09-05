@@ -1904,6 +1904,18 @@ button.review-concept-upload.armed {
   color: var(--text-secondary);
 }
 
+.timeline-slot-sync-warning {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  padding: 2px 8px;
+  cursor: help;
+}
+
 .timeline-slot-remove {
   margin-left: auto;
   height: 28px;

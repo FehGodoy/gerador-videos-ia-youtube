@@ -141,6 +141,12 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 "needs_media_overridden": False,
                 "effect": DEFAULT_EFFECT,
                 "media": [],
+                # Aviso de possível desalinhamento (webapp/folder_sync.py) —
+                # {"gap_seconds", "expected_seconds"} quando o download
+                # deste trecho demorou bem mais que o normal aprendido, ou
+                # None. Nunca bloqueia nada, é só uma dica pro usuário
+                # conferir; some ao reatribuir/remover a mídia do trecho.
+                "sync_warning": None,
             }
         )
 

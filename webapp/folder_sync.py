@@ -28,18 +28,34 @@ próximo poll, sem apagar nada.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from modules import media_pool
 from modules import timeline as timeline_module
+from modules.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 1.5
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 _VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
+
+# Aviso de possível desalinhamento: um download que falha faz o PRÓXIMO
+# bem-sucedido demorar bem mais que o normal pra chegar (o usuário
+# percebe/reenvia) — comparamos o intervalo entre downloads consecutivos
+# contra o "normal" aprendido (ver _record_gap/_expected_gap_seconds) e
+# marcamos o trecho como suspeito quando estoura esse fator. É só uma
+# DICA pro usuário conferir com a ferramenta de realinhamento
+# (shift_media_from) — nunca corrige nada sozinho, e falso positivo
+# (usuário só demorou mais numa vez) é esperado.
+SLOW_GAP_FACTOR = 1.6
+_MIN_SAMPLES_FOR_BASELINE = 5
+_TIMING_HISTORY_MAX = 50
+_TIMING_STATS_FILE = PROJECT_ROOT / "state" / "folder_sync_timing.json"
 
 
 @dataclass
@@ -52,12 +68,58 @@ class _Watch:
     # decidir a próxima vaga (isso é sempre recalculado do zero varrendo
     # os blocos em ordem, ver _next_empty_position_in_draft).
     current_block_id: int | None = None
+    # mtime do último arquivo consumido por ESTE watch — usado só pra medir
+    # o intervalo até o próximo (ver SLOW_GAP_FACTOR acima). None até o
+    # primeiro arquivo (nada pra comparar ainda).
+    last_consumed_mtime: float | None = None
     last_error: str | None = None
     task: asyncio.Task | None = None
     stop_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 _watches: dict[str, _Watch] = {}
+
+
+def _load_timing_history() -> list[float]:
+    """Janela deslizante dos últimos intervalos NORMAIS entre downloads
+    bem-sucedidos — persistida em state/ (não é cache regenerável, é o
+    "aprendizado" acumulado do usuário, mesmo padrão de
+    webapp/channels.py) e GLOBAL (não por slug/vídeo): é assim que o app
+    aprende com cada vídeo gerado, não só dentro de uma sessão."""
+    if not _TIMING_STATS_FILE.exists():
+        return []
+    try:
+        data = json.loads(_TIMING_STATS_FILE.read_text(encoding="utf-8"))
+        return [float(g) for g in data.get("recent_gaps_seconds", [])]
+    except Exception:
+        return []
+
+
+def _record_gap(gap_seconds: float) -> None:
+    """Alimenta a janela aprendida — só chamado pra um intervalo
+    considerado NORMAL (ver _poll_once); um intervalo já marcado como
+    suspeito nunca entra aqui, senão uma sequência de falhas reais ia
+    empurrar a mediana aprendida pra cima e o detector ia ficando cego
+    com o tempo."""
+    gaps = _load_timing_history()
+    gaps.append(round(gap_seconds, 2))
+    gaps = gaps[-_TIMING_HISTORY_MAX:]
+    _TIMING_STATS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _TIMING_STATS_FILE.write_text(
+        json.dumps({"recent_gaps_seconds": gaps}, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _expected_gap_seconds() -> float | None:
+    """Mediana da janela aprendida — None enquanto não houver amostra
+    suficiente (rascunho novo, poucos downloads ainda), pra nunca marcar
+    aviso nenhum sem uma base minimamente confiável. Mediana (não média):
+    resiste melhor a um outlier isolado (usuário parou pra tomar café no
+    meio) distorcer o valor aprendido."""
+    gaps = _load_timing_history()
+    if len(gaps) < _MIN_SAMPLES_FOR_BASELINE:
+        return None
+    return statistics.median(gaps)
 
 
 def _media_ext_type(path: Path) -> str | None:
@@ -136,6 +198,24 @@ async def _poll_once(watch: _Watch) -> None:
         while len(media_list) <= media_index:
             media_list.append(None)
         media_list[media_index] = media
+
+        # Intervalo até o download anterior — possível sinal de que ROLOU
+        # um reenvio no meio (o download desta mídia teria sido rápido, mas
+        # teve uma tentativa falha antes que o usuário não nos conta).
+        mtime = path.stat().st_mtime
+        if watch.last_consumed_mtime is not None:
+            gap = mtime - watch.last_consumed_mtime
+            expected = _expected_gap_seconds()
+            if expected is not None and gap > expected * SLOW_GAP_FACTOR:
+                slot["sync_warning"] = {
+                    "gap_seconds": round(gap, 1),
+                    "expected_seconds": round(expected, 1),
+                }
+            else:
+                slot.pop("sync_warning", None)
+                _record_gap(gap)
+        watch.last_consumed_mtime = mtime
+
         # salva a cada arquivo (não só no fim do poll): um poll pode
         # atravessar a fronteira de dois blocos diferentes, cada um com
         # seu próprio manifesto em disco.
