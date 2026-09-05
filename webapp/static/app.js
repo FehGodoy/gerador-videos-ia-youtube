@@ -57,6 +57,9 @@ const channelHandleFeedback = document.getElementById("channel-handle-feedback")
 const channelAvatarInput = document.getElementById("channel-avatar-input");
 const channelAvatarBtn = document.getElementById("channel-avatar-btn");
 const channelAvatarPreview = document.getElementById("channel-avatar-preview");
+const channelImageStyleInput = document.getElementById("channel-image-style-input");
+const channelImageStyleSave = document.getElementById("channel-image-style-save");
+const channelImageStyleFeedback = document.getElementById("channel-image-style-feedback");
 
 let currentChannel = localStorage.getItem("lastChannel") || null;
 let favoriteIds = new Set();
@@ -352,10 +355,13 @@ async function loadIdentity() {
   channelHandleInput.value = "";
   channelHandleFeedback.textContent = "";
   channelAvatarPreview.classList.add("hidden");
+  channelImageStyleInput.value = "";
+  channelImageStyleFeedback.textContent = "";
   if (!currentChannel) return;
   const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/identity`);
   const identity = await resp.json();
   channelHandleInput.value = identity.handle || "";
+  channelImageStyleInput.value = identity.image_style_prompt || "";
   if (identity.avatar_url) {
     channelAvatarPreview.src = identity.avatar_url;
     channelAvatarPreview.classList.remove("hidden");
@@ -387,6 +393,34 @@ channelHandleSave.addEventListener("click", async () => {
     channelHandleFeedback.className = "api-key-feedback error";
   } finally {
     channelHandleSave.disabled = false;
+  }
+});
+
+channelImageStyleSave.addEventListener("click", async () => {
+  if (!currentChannel) return;
+  const style = channelImageStyleInput.value.trim();
+  channelImageStyleFeedback.textContent = "Salvando...";
+  channelImageStyleFeedback.className = "api-key-feedback";
+  channelImageStyleSave.disabled = true;
+  try {
+    const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/image-style`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ style }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      channelImageStyleFeedback.textContent = data.detail || "Não deu certo.";
+      channelImageStyleFeedback.className = "api-key-feedback error";
+      return;
+    }
+    channelImageStyleFeedback.textContent = "Salvo.";
+    channelImageStyleFeedback.className = "api-key-feedback ok";
+  } catch {
+    channelImageStyleFeedback.textContent = "Falha de rede ao salvar.";
+    channelImageStyleFeedback.className = "api-key-feedback error";
+  } finally {
+    channelImageStyleSave.disabled = false;
   }
 });
 
@@ -623,7 +657,7 @@ async function fetchSlotHints(blockId, language) {
     const resp = await fetch(`/api/narration-blocks/${draftSlug}/${blockId}/hints`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language: language || "pt" }),
+      body: JSON.stringify({ language: language || "pt", channel: currentChannel }),
     });
     if (!resp.ok) return;
     const { slots } = await resp.json();

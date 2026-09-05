@@ -125,6 +125,10 @@ class HandleRequest(BaseModel):
     handle: str
 
 
+class ImageStyleRequest(BaseModel):
+    style: str
+
+
 class FootageChoiceRequest(BaseModel):
     candidate_index: int
 
@@ -137,6 +141,7 @@ class YoutubeClipRequest(BaseModel):
 
 class SlotHintsRequest(BaseModel):
     language: str = "pt"
+    channel: str | None = None
 
 
 class AssignSlotRequest(BaseModel):
@@ -689,8 +694,12 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
         raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
 
     beat_text = " ".join(s["text"] for s in manifest)
+    image_style = (
+        channels_module.get_identity(req.channel).get("image_style_prompt") if req.channel else None
+    )
     hints = await asyncio.to_thread(
-        timeline_module.generate_slot_hints, manifest, beat_text, req.language, slug, block_id
+        timeline_module.generate_slot_hints,
+        manifest, beat_text, req.language, slug, block_id, image_style,
     )
     for slot, hint in zip(manifest, hints):
         slot["translation_pt"] = hint["translation_pt"]
@@ -977,7 +986,11 @@ def _identity_response(name: str) -> dict:
         if identity["avatar_filename"]
         else None
     )
-    return {"handle": identity["handle"], "avatar_url": avatar_url}
+    return {
+        "handle": identity["handle"],
+        "avatar_url": avatar_url,
+        "image_style_prompt": identity["image_style_prompt"],
+    }
 
 
 @app.get("/api/channels/{name}/identity")
@@ -988,6 +1001,15 @@ async def get_identity(name: str) -> dict:
 @app.post("/api/channels/{name}/identity")
 async def post_identity(name: str, req: HandleRequest) -> dict:
     channels_module.set_handle(name, req.handle.strip())
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/image-style")
+async def post_image_style(name: str, req: ImageStyleRequest) -> dict:
+    """Estilo visual fixo pros prompts de imagem gerados pra vídeos deste
+    canal (ver webapp/channels.py::set_image_style) — concatenado em
+    modules/timeline.py::generate_slot_hints, não pedido pra IA lembrar."""
+    channels_module.set_image_style(name, req.style.strip())
     return _identity_response(name)
 
 

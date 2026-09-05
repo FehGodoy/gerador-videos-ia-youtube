@@ -60,7 +60,7 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
     return entry["favorites"]
 
 
-_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None}
+_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None, "image_style_prompt": ""}
 
 
 def get_identity(channel: str) -> dict:
@@ -83,5 +83,18 @@ def set_avatar_filename(channel: str, filename: str) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
     identity["avatar_filename"] = filename
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_image_style(channel: str, style: str) -> dict:
+    """Estilo visual fixo pros prompts de imagem gerados pra vídeos deste
+    canal (ex.: "quadro-negro, giz branco e azul claro sobre fundo preto,
+    diagramas desenhados à mão") — concatenado em modules/timeline.py::
+    generate_slot_hints, não pedido pra IA lembrar de aplicar sozinha."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity["image_style_prompt"] = style
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}

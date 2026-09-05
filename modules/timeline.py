@@ -307,8 +307,10 @@ def _hints_cache_path(slug: str, beat_id: int) -> Path:
     return cache_dir("timeline", slug) / f"beat_{beat_id:03d}_hints.json"
 
 
-def _cache_key(beat_text: str, language: str, model: str) -> str:
-    payload = f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}"
+def _cache_key(beat_text: str, language: str, model: str, image_style: str = "") -> str:
+    # image_style entra na chave: trocar o estilo do canal precisa
+    # regenerar (o image_prompt cacheado tem o estilo ANTIGO concatenado).
+    payload = f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}|{image_style}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -349,7 +351,12 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
 
 
 def generate_slot_hints(
-    slots: list[dict], beat_text: str, language: str, slug: str, beat_id: int
+    slots: list[dict],
+    beat_text: str,
+    language: str,
+    slug: str,
+    beat_id: int,
+    image_style: str | None = None,
 ) -> list[dict]:
     """Tradução pra português + dica curta de mídia, um item por trecho —
     UMA chamada de LLM pro bloco inteiro (evita N chamadas separadas),
@@ -357,6 +364,15 @@ def generate_slot_hints(
     retry num JSON malformado). Nunca levanta exceção: dica/tradução são
     só apoio visual, uma falha aqui não pode travar o usuário de atribuir
     mídia — cai pra string vazia em cada item.
+
+    `image_style`: estilo visual fixo do canal (webapp/channels.py::
+    image_style_prompt, ex. "quadro-negro, giz branco e azul claro sobre
+    fundo preto"), CONCATENADO no final de cada `image_prompt` depois da
+    resposta da IA — não é pedido pra IA lembrar de aplicar sozinha (uma
+    instrução assim pode não "pegar" de forma confiável em toda resposta,
+    mesmo bem escrita; ver a regra de idioma logo acima no arquivo, que
+    precisou de reforço depois de vazar duas vezes). A IA só descreve o
+    CONTEÚDO da cena, igual antes.
 
     O fallback de string vazia NÃO é gravado no cache (bug real: gerar
     vários blocos em sequência dispara uma chamada de LLM por bloco em
@@ -373,9 +389,10 @@ def generate_slot_hints(
     cfg = load_config()
     kw_cfg = cfg["keywords"]
     call = {"anthropic": _call_anthropic, "openai": _call_openai}.get(kw_cfg["provider"])
+    image_style = (image_style or "").strip()
 
     cache_path = _hints_cache_path(slug, beat_id)
-    cache_key = _cache_key(beat_text, language, kw_cfg["model"])
+    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style)
     if cache_path.exists():
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if cached.get("cache_key") == cache_key and len(cached.get("hints", [])) == len(slots):
@@ -397,6 +414,14 @@ def generate_slot_hints(
                 logger.warning(
                     "Geração de dica/tradução do beat %d falhou.", beat_id, exc_info=True
                 )
+
+    if hints is not None and image_style:
+        # Concatenado aqui, em Python — não faz parte do que a IA decide.
+        # Só em quem tem image_prompt de verdade (fallback vazio continua
+        # vazio, sem vírgula solta no final).
+        for hint in hints:
+            if hint["image_prompt"]:
+                hint["image_prompt"] = f"{hint['image_prompt']}, {image_style}"
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)

@@ -403,6 +403,10 @@ button:focus-visible {
   flex-wrap: wrap;
 }
 
+#channel-image-style-form textarea {
+  min-height: 52px;
+}
+
 .row-between {
   display: flex;
   align-items: center;
