@@ -245,7 +245,7 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Fatiamento em trechos de ~4s pro editor de timeline manual (ver
+    # Fatiamento em trechos de ~5s pro editor de timeline manual (ver
     # modules/timeline.py) — geometria pura sobre os timestamps por palavra
     # que a Cartesia já devolveu, sem custo nenhum, então roda sempre
     # (mesmo que este rascunho acabe usando busca por IA em vez de mídia

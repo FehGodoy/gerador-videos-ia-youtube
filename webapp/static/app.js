@@ -1365,7 +1365,7 @@ async function unassignSlot(blockId, slot, mediaIndex) {
 }
 
 // Popup de recorte: escolhe visualmente qual trecho (do tamanho do slot,
-// ~4s) de um vídeo da biblioteca vai pro trecho da narração. Não existe
+// ~5s) de um vídeo da biblioteca vai pro trecho da narração. Não existe
 // componente de scrubber no projeto (o slider de velocidade é de um valor
 // só) — janela arrastável construída na mão sobre uma barra representando
 // a duração inteira do vídeo.

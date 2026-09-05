@@ -1,12 +1,12 @@
 """
 Editor de timeline manual (modo de mídia própria, painel web): fatia a
-narração de um bloco em trechos de ~4s a partir dos timestamps por palavra
+narração de um bloco em trechos de ~5s a partir dos timestamps por palavra
 que a Cartesia já devolve (modules/narration.py), gera tradução + dica de
 IA por trecho, e guarda qual arquivo do lote de mídia própria (modules/
 media_pool.py) o usuário atribuiu a cada um.
 
 Separado de composition_builder.py (que fatia em CENAS pra render) porque o
-grão é diferente e a origem também: aqui é ~4s fixo, decidido no momento em
+grão é diferente e a origem também: aqui é ~5s fixo, decidido no momento em
 que o bloco é gerado no painel, antes de existir job nenhum; lá é por shot
 visual, decidido durante a montagem do composition.json.
 """
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Alvo de duração de cada trecho — mesmo valor pedido pelo usuário. Trechos
 # reais variam um pouco pra sempre fechar em fronteira de palavra (nunca
 # cortar uma palavra ao meio).
-DEFAULT_TARGET_SECONDS = 4.0
+DEFAULT_TARGET_SECONDS = 5.0
 
 # Efeitos que o usuário pode escolher manualmente por trecho, no editor de
 # timeline (modo mídia própria) — espelha os mesmos efeitos "de plano
@@ -60,7 +60,11 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # idioma do roteiro — antes vazava pra português por padrão mesmo em vídeo
 # em outro idioma (bug real reportado pelo usuário, com print de um
 # infográfico da Toyota Camry em inglês que saiu com texto em português).
-TIMELINE_HINTS_VERSION = 4
+# 5 = a regra de idioma continuou vazando às vezes (mesmo bug reportado de
+# novo) — a instrução vivia enterrada dentro do bullet de "image_prompt",
+# fácil da IA não prestar atenção; virou um parágrafo PRÓPRIO logo depois
+# do JSON, com exemplo certo/errado lado a lado.
+TIMELINE_HINTS_VERSION = 5
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -71,6 +75,18 @@ _HINTS_PROMPT_TEMPLATE = """Você ajuda um criador de vídeos documentários que
 {{"slots": [{{"index": 0, "translation_pt": "...", "hint": "...", "image_prompt": "...", \
 "needs_media": true}}, ...]}}
 
+REGRA CRÍTICA DE IDIOMA (a mais importante desta tarefa — respostas erram nisso com frequência, \
+preste atenção mesmo que você esteja "pensando" em português agora): sempre que "image_prompt" \
+descrever uma imagem com QUALQUER texto/número/letreiro/título/legenda visível NA CENA (infográfico, \
+linha do tempo, gráfico, placa, capa, tela, documento), esse texto tem que estar em {language_name} \
+— o idioma do roteiro/vídeo — nunca em português por padrão. Escreva as palavras exatas em \
+{language_name} entre aspas dentro do prompt.
+  ERRADO (roteiro em inglês, texto saiu em português): "an infographic with a timeline showing \
+the labels 'Primeira Geração 1982', 'Segunda Geração 1987'"
+  CERTO (mesmo caso, texto em inglês): "an infographic with a timeline showing the labels \
+'First Generation 1982', 'Second Generation 1987', written in English"
+Se a cena não tiver texto nenhum visível, ignore esta regra.
+
 Um item por trecho numerado abaixo, na mesma ordem, onde:
 - "translation_pt": tradução literal do trecho pra português do Brasil (se o roteiro já estiver \
 em português, repita o texto original sem alterar).
@@ -79,11 +95,7 @@ aquele trecho — só pra ajudar o usuário a escolher entre as mídias que ele 
 - "image_prompt": prompt curto e direto (até 20 palavras), em inglês, pronto pra colar num gerador \
 de imagem por IA (Midjourney, DALL-E, etc.) caso o usuário prefira gerar a imagem em vez de usar \
 uma mídia própria — descreva a cena visualmente (sujeito, cenário, enquadramento), sem falar sobre \
-o vídeo em si. Regra crítica quando a cena pedir QUALQUER texto visível na própria imagem \
-(infográfico, linha do tempo, gráfico, placa, capa, letreiro, legenda): esse texto tem que estar \
-em {language_name} — o idioma do ROTEIRO/vídeo, não português por padrão — e o prompt precisa \
-citar as palavras exatas entre aspas (ex.: "with the timeline labeled '1982', '1987', '1992' in \
-{language_name}"), nunca deixar a IA de imagem escolher o idioma sozinha.
+o vídeo em si. Se a cena pedir texto na imagem, siga a REGRA CRÍTICA DE IDIOMA acima sem exceção.
 - "needs_media": false SOMENTE quando o trecho é abstrato/transição — uma reflexão, uma frase-ponte, \
 uma pergunta retórica — sem NADA concreto e específico pra mostrar; esse trecho vira um card de \
 texto na tela em vez de pedir foto/vídeo. Na dúvida, ou quando há qualquer coisa filmável/fotografável \

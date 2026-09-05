@@ -278,7 +278,7 @@ def _scenes_from_manifest(
     modo de mídia própria) — sem shot-planning por IA nem PoolDistributor:
     o usuário já decidiu exatamente qual mídia (ou mídias, se escolheu um
     efeito de galeria — ver timeline.EFFECT_CATALOG) e qual EFEITO vai em
-    cada trecho de ~4s, então não há reuso pra variar nem threshold de
+    cada trecho de ~5s, então não há reuso pra variar nem threshold de
     relevância pra aplicar (webapp/server.py::create_job já bloqueia a
     criação do job até todo trecho ter mídia suficiente pro efeito
     escolhido — os fallbacks abaixo são só defensivos).
@@ -371,7 +371,7 @@ def _insert_chart_scene(scenes: list[dict], chart: dict, captions: list[dict]) -
     naquela cena como fundo desfocado atrás do gráfico.
 
     Simplificação consciente pro editor manual: a duração do gráfico vira
-    a duração do próprio trecho que ele substituiu (~4s, a grade fixa do
+    a duração do próprio trecho que ele substituiu (~5s, a grade fixa do
     editor), não `chart_scene_seconds` do config — encaixar uma duração
     diferente exigiria fundir/encolher trechos vizinhos, como `_tile_scenes`
     faz pra clipe de duração variável; não se aplica à grade fixa aqui.
@@ -1001,7 +1001,7 @@ def _assemble_composition(
         )
 
         # Editor de timeline manual (painel web, modo de mídia própria):
-        # o usuário já escolheu a mídia de cada trecho de ~4s antes de criar
+        # o usuário já escolheu a mídia de cada trecho de ~5s antes de criar
         # o job (ver modules/timeline.py) — pula shot-planning por IA e
         # PoolDistributor inteiramente pra este beat, monta as cenas direto
         # do manifesto. `analyze_beat` AINDA roda (chamado com n_shots=1,
