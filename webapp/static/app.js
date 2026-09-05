@@ -950,7 +950,11 @@ function renderDraftFolderSync() {
     status.className = "timeline-folder-sync-status";
     status.textContent =
       `Observando "${state.folder}"${blockLabel} — ${state.consumed_count} arquivo(s) usado(s)` +
-      (state.all_filled ? " · todos os trechos de mídia única já completos" : "");
+      (state.has_pending_warning
+        ? " · tem trecho esperando anexo manual (veja o aviso no card)"
+        : state.all_filled
+        ? " · todos os trechos de mídia única já completos"
+        : "");
 
     const stopBtn = document.createElement("button");
     stopBtn.type = "button";
@@ -1085,6 +1089,10 @@ function renderSlotCard(blockId, slot) {
   card.appendChild(renderSlotEffectPicker(blockId, slot));
   card.appendChild(renderFillScreenToggle(blockId, slot));
 
+  if (slot.sync_warning) {
+    card.appendChild(renderSyncWarningNotice(slot));
+  }
+
   const attach = document.createElement("div");
   attach.className = "timeline-slot-attach";
   const spec = slotEffectSpec(slot);
@@ -1192,6 +1200,23 @@ function renderFillScreenToggle(blockId, slot) {
   return row;
 }
 
+// Trecho que a sincronização de pasta PULOU de propósito porque o
+// intervalo até o arquivo seguinte veio bem maior que o normal aprendido
+// (ver webapp/folder_sync.py, SLOW_GAP_FACTOR) — o arquivo já está salvo
+// na biblioteca (botão "Anexar mídia" abaixo lista ele), só não foi
+// atribuído automaticamente aqui pra não arriscar desalinhar tudo que vem
+// depois. Some sozinho assim que o usuário anexa alguma mídia manualmente
+// (ver POST .../{slot_index}, que limpa sync_warning).
+function renderSyncWarningNotice(slot) {
+  const notice = document.createElement("div");
+  notice.className = "timeline-slot-sync-warning-notice";
+  notice.textContent =
+    `Pulei o preenchimento automático aqui: o arquivo seguinte chegou em ${slot.sync_warning.gap_seconds}s ` +
+    `(normal ~${slot.sync_warning.expected_seconds}s) — pode ter tido um reenvio no meio. Confira sua ` +
+    `biblioteca e anexe manualmente a mídia certa pra este trecho.`;
+  return notice;
+}
+
 async function setSlotFillScreen(blockId, slot, fillScreen) {
   clearError();
   try {
@@ -1222,16 +1247,6 @@ function renderAssignedMedia(blockId, slot, mediaIndex, media) {
       ? Object.assign(document.createElement("img"), { src: url })
       : Object.assign(document.createElement("video"), { src: url, muted: true });
   wrap.appendChild(el);
-
-  if (slot.sync_warning) {
-    const warn = document.createElement("span");
-    warn.className = "timeline-slot-sync-warning";
-    warn.textContent = "Confira";
-    warn.title =
-      `Chegou em ${slot.sync_warning.gap_seconds}s (normal ~${slot.sync_warning.expected_seconds}s) — ` +
-      "pode ser um reenvio depois de uma falha de download. Confira se é a mídia certa pra este trecho.";
-    wrap.appendChild(warn);
-  }
 
   if (media.media_type === "video" && media.clip_start_seconds != null) {
     const time = document.createElement("span");

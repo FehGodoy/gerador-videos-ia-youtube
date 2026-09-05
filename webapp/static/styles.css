@@ -1918,16 +1918,15 @@ button.review-concept-upload.armed {
   color: var(--text-secondary);
 }
 
-.timeline-slot-sync-warning {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+.timeline-slot-sync-warning-notice {
+  margin: 2px 0 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--warn);
-  border: 1px solid var(--warn);
-  border-radius: 999px;
-  padding: 2px 8px;
-  cursor: help;
+  border: 1px dashed var(--warn);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
 }
 
 .timeline-slot-remove {

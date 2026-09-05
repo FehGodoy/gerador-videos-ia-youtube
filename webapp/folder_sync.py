@@ -23,7 +23,9 @@ pede mais de um arquivo.
 
 Arquivo consumido é MOVIDO (não copiado) pra uma subpasta "usados/" dentro
 da pasta observada — assim nunca reprocessa o mesmo arquivo de novo no
-próximo poll, sem apagar nada.
+próximo poll, sem apagar nada. Mesmo quando o intervalo até ele parece
+suspeito (ver SLOW_GAP_FACTOR abaixo) o arquivo é consumido e vai pra
+biblioteca do rascunho — só não é atribuído a nenhum trecho automaticamente.
 """
 from __future__ import annotations
 
@@ -47,11 +49,15 @@ _VIDEO_EXTS = {".mp4", ".mov", ".webm", ".mkv", ".avi"}
 # Aviso de possível desalinhamento: um download que falha faz o PRÓXIMO
 # bem-sucedido demorar bem mais que o normal pra chegar (o usuário
 # percebe/reenvia) — comparamos o intervalo entre downloads consecutivos
-# contra o "normal" aprendido (ver _record_gap/_expected_gap_seconds) e
-# marcamos o trecho como suspeito quando estoura esse fator. É só uma
-# DICA pro usuário conferir com a ferramenta de realinhamento
-# (shift_media_from) — nunca corrige nada sozinho, e falso positivo
-# (usuário só demorou mais numa vez) é esperado.
+# contra o "normal" aprendido (ver _record_gap/_expected_gap_seconds).
+# Quando o intervalo estoura esse fator, o PREENCHIMENTO AUTOMÁTICO É
+# PULADO pra esse trecho (decisão explícita do usuário: prefere revisar
+# manualmente a arriscar encaixar errado e desalinhar tudo que vem
+# depois) — o trecho fica vazio e marcado com sync_warning, excluído da
+# fila de preenchimento automático (ver _next_empty_position) até o
+# usuário anexar a mídia certa à mão (o arquivo já foi salvo na
+# biblioteca, só não sabemos se é dele mesmo). Falso positivo (usuário só
+# demorou mais numa vez) é esperado — o custo é só um anexo manual a mais.
 SLOW_GAP_FACTOR = 1.6
 _MIN_SAMPLES_FOR_BASELINE = 5
 _TIMING_HISTORY_MAX = 50
@@ -135,9 +141,14 @@ def _next_empty_position(manifest: list[dict]) -> tuple[int, int] | None:
     """(índice do trecho, posição de mídia) da próxima vaga livre DENTRO
     DE UM MANIFESTO — só em trechos de mídia única. None quando não sobra
     vaga preenchível automaticamente (trechos completos, só sobrou efeito
-    de galeria, ou trecho marcado needs_media=false pela IA/usuário)."""
+    de galeria, trecho marcado needs_media=false pela IA/usuário, ou
+    trecho com sync_warning pendente — ver módulo acima: fica reservado
+    pro usuário resolver à mão, o preenchimento automático não tenta mais
+    nele até o aviso ser limpo por um anexo manual)."""
     for slot in manifest:
         if not timeline_module.is_single_media_slot(slot):
+            continue
+        if slot.get("sync_warning"):
             continue
         _, max_media = timeline_module.effect_media_bounds(slot.get("effect") or timeline_module.DEFAULT_EFFECT)
         media_list = slot.get("media") or []
@@ -181,39 +192,50 @@ async def _poll_once(watch: _Watch) -> None:
 
         block_id, slot_index, media_index = position
         manifest = timeline_module.load_manifest(watch.slug, block_id)
+        slot = manifest[slot_index]
 
         media_type = _media_ext_type(path)
-        data = path.read_bytes()
-        saved = await asyncio.to_thread(media_pool.save_pool_upload, watch.slug, path.name, data)
-
-        media: dict = {"pool_filename": saved["filename"], "media_type": media_type}
-        if media_type == "video":
-            # sem interação do usuário pra escolher o recorte — sempre
-            # começa do início do vídeo (mesmo padrão de fallback já usado
-            # quando clip_start_seconds não é informado no anexo manual).
-            media["clip_start_seconds"] = 0.0
-
-        slot = manifest[slot_index]
-        media_list = slot.setdefault("media", [])
-        while len(media_list) <= media_index:
-            media_list.append(None)
-        media_list[media_index] = media
+        mtime = path.stat().st_mtime
 
         # Intervalo até o download anterior — possível sinal de que ROLOU
-        # um reenvio no meio (o download desta mídia teria sido rápido, mas
-        # teve uma tentativa falha antes que o usuário não nos conta).
-        mtime = path.stat().st_mtime
+        # um reenvio no meio (uma tentativa falhou antes desta, sem o
+        # sincronizador nunca saber). Calculado ANTES de decidir se
+        # preenche: quando suspeito, a gente NÃO ATRIBUI (ver abaixo) em
+        # vez de só avisar depois de já ter encaixado errado.
+        gap = None
+        expected = None
         if watch.last_consumed_mtime is not None:
             gap = mtime - watch.last_consumed_mtime
             expected = _expected_gap_seconds()
-            if expected is not None and gap > expected * SLOW_GAP_FACTOR:
-                slot["sync_warning"] = {
-                    "gap_seconds": round(gap, 1),
-                    "expected_seconds": round(expected, 1),
-                }
-            else:
-                slot.pop("sync_warning", None)
+        suspicious = expected is not None and gap is not None and gap > expected * SLOW_GAP_FACTOR
+
+        # Consumido (salvo na biblioteca + movido pra "usados/") mesmo
+        # quando suspeito — o arquivo não é perdido, só não é atribuído a
+        # nenhum trecho automaticamente; fica disponível pro usuário
+        # escolher manualmente (ver "Anexar mídia") se de fato for dele.
+        data = path.read_bytes()
+        saved = await asyncio.to_thread(media_pool.save_pool_upload, watch.slug, path.name, data)
+
+        if suspicious:
+            slot["sync_warning"] = {
+                "gap_seconds": round(gap, 1),
+                "expected_seconds": round(expected, 1),
+            }
+        else:
+            media: dict = {"pool_filename": saved["filename"], "media_type": media_type}
+            if media_type == "video":
+                # sem interação do usuário pra escolher o recorte — sempre
+                # começa do início do vídeo (mesmo padrão de fallback já usado
+                # quando clip_start_seconds não é informado no anexo manual).
+                media["clip_start_seconds"] = 0.0
+            media_list = slot.setdefault("media", [])
+            while len(media_list) <= media_index:
+                media_list.append(None)
+            media_list[media_index] = media
+            slot.pop("sync_warning", None)
+            if gap is not None:
                 _record_gap(gap)
+
         watch.last_consumed_mtime = mtime
 
         # salva a cada arquivo (não só no fim do poll): um poll pode
@@ -256,6 +278,20 @@ def stop(slug: str) -> None:
         watch.stop_event.set()
 
 
+def _has_pending_warning(slug: str) -> bool:
+    """True quando sobra algum trecho com sync_warning ainda não resolvido
+    (excluído da fila de preenchimento automático, ver _next_empty_position)
+    — usado só pro status não dizer "tudo completo" enquanto um trecho
+    ainda espera anexo manual."""
+    for block_id in timeline_module.list_block_ids(slug):
+        manifest = timeline_module.load_manifest(slug, block_id)
+        if manifest is None:
+            continue
+        if any(slot.get("sync_warning") for slot in manifest):
+            return True
+    return False
+
+
 def status(slug: str) -> dict:
     watch = _watches.get(slug)
     if watch is None:
@@ -266,9 +302,11 @@ def status(slug: str) -> dict:
             "last_error": None,
             "all_filled": None,
             "current_block_id": None,
+            "has_pending_warning": False,
         }
 
-    all_filled = _next_empty_position_in_draft(slug) is None
+    pending_warning = _has_pending_warning(slug)
+    all_filled = _next_empty_position_in_draft(slug) is None and not pending_warning
     return {
         "watching": True,
         "folder": str(watch.folder),
@@ -276,4 +314,5 @@ def status(slug: str) -> dict:
         "last_error": watch.last_error,
         "all_filled": all_filled,
         "current_block_id": watch.current_block_id,
+        "has_pending_warning": pending_warning,
     }
