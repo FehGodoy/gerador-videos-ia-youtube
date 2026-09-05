@@ -224,17 +224,26 @@ def shift_media_from(slug: str, from_block_id: int, from_slot_index: int) -> dic
     no trecho ERRADO (o que devia ter recebido o arquivo que falhou) — e
     tudo que vem depois fica uma posição adiantado.
 
-    A partir do trecho indicado (o primeiro com a mídia errada, na visão
-    de quem está revisando), empurra a mídia de cada trecho ELEGÍVEL
-    seguinte (`is_single_media_slot`, mesmo filtro do sincronizador — vale
-    através de vários blocos, na mesma ordem que o sincronizador usa,
-    ver list_block_ids) uma posição pra trás, fechando o buraco. O ÚLTIMO
-    trecho da cadeia fica sem mídia, pronto pra receber o próximo download.
+    O trecho indicado é o PRIMEIRO com a mídia errada, na visão de quem
+    está revisando — ele guardava a mídia que na verdade pertence ao
+    próximo trecho elegível (`is_single_media_slot`, mesmo filtro do
+    sincronizador — vale através de vários blocos, na mesma ordem que o
+    sincronizador usa, ver list_block_ids), porque o download DELE é que
+    falhou, não o dele mesmo. Empurra a mídia de cada trecho seguinte uma
+    posição PRA FRENTE (o trecho seguinte herda o que o anterior tinha) e
+    deixa o trecho indicado (o primeiro da cadeia) VAZIO — é ali que falta
+    a mídia de verdade, pronta pra você baixar e encaixar.
+
+    Se houver MAIS de um download que falhou no mesmo bloco/rascunho, cada
+    chamada resolve só o PRIMEIRO buraco a partir do ponto indicado —
+    repare que o padrão errado continua a partir de onde o próximo buraco
+    começa, e chame de novo a partir dali (nessa ordem, do mais cedo pro
+    mais tarde: aplicar fora de ordem re-embaralha uma correção já feita).
 
     Retorna {"shifted": int, "cleared": {"block_id", "slot_index"} | None}
-    — "shifted" é quantos trechos mudaram de mídia; "cleared" é onde ficou
-    a vaga nova (None só quando não sobrou nenhum trecho elegível depois
-    do ponto indicado).
+    — "shifted" é quantos trechos mudaram de mídia; "cleared" é o próprio
+    trecho indicado, agora vazio (None só quando o trecho indicado não é
+    elegível e não sobra nenhum outro elegível a partir dali).
     """
     chain: list[dict] = []
     manifests: dict[int, list[dict]] = {}
@@ -254,22 +263,25 @@ def shift_media_from(slug: str, from_block_id: int, from_slot_index: int) -> dic
     if not chain:
         return {"shifted": 0, "cleared": None}
 
+    # De trás pra frente: cada trecho herda o que o ANTERIOR tinha (antes
+    # de ser sobrescrito) — precisa ir do fim pro começo pra nunca ler um
+    # valor que essa mesma passada já sobrescreveu.
     shifted = 0
-    for i in range(len(chain) - 1):
+    for i in range(len(chain) - 1, 0, -1):
         _, slot_current = chain[i]
-        _, slot_next = chain[i + 1]
-        slot_current["media"] = list(slot_next.get("media") or [])
+        _, slot_prev = chain[i - 1]
+        slot_current["media"] = list(slot_prev.get("media") or [])
         shifted += 1
 
-    last_block_id, last_slot = chain[-1]
-    last_slot["media"] = []
+    first_block_id, first_slot = chain[0]
+    first_slot["media"] = []
 
     for block_id, manifest in manifests.items():
         save_manifest(slug, block_id, manifest)
 
     return {
         "shifted": shifted,
-        "cleared": {"block_id": last_block_id, "slot_index": last_slot["index"]},
+        "cleared": {"block_id": first_block_id, "slot_index": first_slot["index"]},
     }
 
 

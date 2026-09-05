@@ -744,8 +744,9 @@ async def shift_timeline_media(slug: str, req: ShiftMediaRequest) -> dict:
     download que falhou no navegador não deixa rastro nenhum aqui, então o
     próximo download bem-sucedido cai no trecho anterior ao que devia (ver
     modules/timeline.py::shift_media_from). Chamado a partir do trecho que
-    está com a mídia ERRADA — empurra a mídia de cada trecho elegível
-    seguinte uma posição pra trás, através de quantos blocos precisar."""
+    está com a mídia ERRADA — deixa ele vazio e empurra a mídia de cada
+    trecho elegível seguinte uma posição pra frente, através de quantos
+    blocos precisar."""
     manifest = timeline_module.load_manifest(slug, req.block_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail="Bloco não encontrado.")

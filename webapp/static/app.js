@@ -1175,7 +1175,7 @@ function renderAssignedMedia(blockId, slot, mediaIndex, media) {
     const shiftBtn = document.createElement("button");
     shiftBtn.type = "button";
     shiftBtn.className = "ghost icon-btn timeline-slot-shift";
-    shiftBtn.title = "Essa mídia é a do próximo trecho? Puxa a mídia de cada trecho seguinte uma posição pra trás.";
+    shiftBtn.title = "Essa mídia é a do próximo trecho (o download deste aqui falhou)? Empurra a mídia de cada trecho seguinte uma posição pra frente e deixa este vazio.";
     shiftBtn.textContent = "Realinhar a partir daqui";
     shiftBtn.addEventListener("click", () => shiftMediaFrom(blockId, slot));
     wrap.appendChild(shiftBtn);
@@ -1187,8 +1187,9 @@ function renderAssignedMedia(blockId, slot, mediaIndex, media) {
 async function shiftMediaFrom(blockId, slot) {
   clearError();
   const ok = window.confirm(
-    "Isso vai puxar a mídia de cada trecho seguinte (deste bloco em diante) uma posição pra trás, " +
-    "fechando a vaga aqui. O último trecho da cadeia fica sem mídia. Confirma?"
+    "Isso vai deixar ESTE trecho sem mídia (é onde o download que falhou devia ter caído) e empurrar " +
+    "a mídia de cada trecho seguinte (deste bloco em diante) uma posição pra frente — cada um herda " +
+    "o que o anterior tinha. Confirma?"
   );
   if (!ok) return;
   try {
