@@ -36,16 +36,17 @@ const POLAROID_ROTATE_MULT = 1.8;
  * (card com sombra suave, cantos arredondados) e "polaroid" (moldura
  * branca física, sombra dura, mais rotação).
  */
-export const MasonryGallery: React.FC<{ items?: GalleryItem[]; style?: "clean" | "polaroid" }> = ({
-  items = [],
-  style = "clean",
-}) => {
+export const MasonryGallery: React.FC<{
+  items?: GalleryItem[];
+  style?: "clean" | "polaroid";
+  fillScreen?: boolean;
+}> = ({ items = [], style = "clean", fillScreen }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const polaroid = style === "polaroid";
 
   return (
-    <AbsoluteFill style={{ padding: 90 }}>
+    <AbsoluteFill style={{ padding: fillScreen ? 0 : 90 }}>
       <div style={{ position: "relative", width: "100%", height: "100%" }}>
         {items.slice(0, LAYOUT.length).map((item, i) => {
           const layout = LAYOUT[i];

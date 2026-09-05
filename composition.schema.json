@@ -141,6 +141,10 @@
           "enum": ["fade", "whip_pan", "film_burn"],
           "description": "Transição usada pro Remotion entrar nesta cena vindo da anterior. Ausente = 'fade' (comportamento de antes da Fase 5, compatível com composition.json já existentes). Decidido algoritmicamente em composition_builder.py, não pela IA — só quem monta o beat inteiro consegue evitar repetir o mesmo tipo em sequência."
         },
+        "fill_screen": {
+          "type": "boolean",
+          "description": "Quando true, a mídia desta cena preenche a tela inteira (sem a margem de papel/cantos arredondados/sombra do card padrão). Ausente/false = comportamento de sempre. Só existe no editor de timeline manual (own_media), escolhido por trecho pelo usuário — nunca decidido pela IA."
+        },
         "concept_text": {
           "type": "string",
           "description": "Frase-chave exibida quando kind='concept'."

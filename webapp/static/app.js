@@ -1083,6 +1083,7 @@ function renderSlotCard(blockId, slot) {
   }
 
   card.appendChild(renderSlotEffectPicker(blockId, slot));
+  card.appendChild(renderFillScreenToggle(blockId, slot));
 
   const attach = document.createElement("div");
   attach.className = "timeline-slot-attach";
@@ -1166,6 +1167,42 @@ async function setSlotEffect(blockId, slot, effect) {
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Erro ao trocar efeito (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+// Toggle "preencher tela toda" — quando ativo, a mídia deste trecho ocupa a
+// tela inteira, sem a margem de papel/cantos arredondados/sombra do card
+// padrão (ver remotion/src/*.tsx, prop fillScreen).
+function renderFillScreenToggle(blockId, slot) {
+  const row = document.createElement("label");
+  row.className = "timeline-slot-fill-screen";
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = Boolean(slot.fill_screen);
+  checkbox.addEventListener("change", () => setSlotFillScreen(blockId, slot, checkbox.checked));
+
+  row.append(checkbox, document.createTextNode(" Preencher tela toda"));
+  return row;
+}
+
+async function setSlotFillScreen(blockId, slot, fillScreen) {
+  clearError();
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/fill-screen`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fill_screen: fillScreen }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao atualizar trecho (${resp.status})`);
     }
     const { slot: updated } = await resp.json();
     blockSlots[blockId][updated.index] = updated;

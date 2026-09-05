@@ -158,6 +158,10 @@ class SetSlotNeedsMediaRequest(BaseModel):
     needs_media: bool
 
 
+class SetSlotFillScreenRequest(BaseModel):
+    fill_screen: bool
+
+
 class ShiftMediaRequest(BaseModel):
     block_id: int
     slot_index: int
@@ -898,6 +902,25 @@ async def set_timeline_slot_needs_media(
     slot = manifest[slot_index]
     slot["needs_media"] = req.needs_media
     slot["needs_media_overridden"] = True
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": slot}
+
+
+@app.post("/api/timeline/{slug}/{block_id}/{slot_index}/fill-screen")
+async def set_timeline_slot_fill_screen(
+    slug: str, block_id: int, slot_index: int, req: SetSlotFillScreenRequest
+) -> dict:
+    """Liga/desliga o toggle "preencher tela toda" deste trecho (ver
+    remotion/src/*.tsx, prop fillScreen) — escolha do usuário, nunca
+    decidido pela IA."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    slot = manifest[slot_index]
+    slot["fill_screen"] = req.fill_screen
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
 

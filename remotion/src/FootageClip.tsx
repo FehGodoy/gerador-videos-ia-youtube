@@ -41,6 +41,11 @@ const CARD_MARGIN_RATIO = 0.05;
  * Sem Ken Burns (zoom lento): era um `scale()` animado ao longo do shot
  * inteiro, caro pra recalcular a cada frame sem GPU no CI. Removido a
  * pedido do usuário nesta mesma sessão.
+ *
+ * `fillScreen` (editor manual, toggle "preencher tela toda"): ignora todo
+ * o cálculo de card acima — a mídia cobre o frame 1920x1080 inteiro
+ * (`object-fit: cover`, cortando o excesso), sem papel visível ao redor,
+ * sem cantos arredondados, sem sombra.
  */
 export const FootageClip: React.FC<{
   clipPath: string;
@@ -48,8 +53,27 @@ export const FootageClip: React.FC<{
   clipStartSeconds: number;
   width?: number;
   height?: number;
-}> = ({ clipPath, mediaType, clipStartSeconds, width, height }) => {
+  fillScreen?: boolean;
+}> = ({ clipPath, mediaType, clipStartSeconds, width, height, fillScreen }) => {
   const { fps, width: videoW, height: videoH } = useVideoConfig();
+
+  if (fillScreen) {
+    const coverStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit: "cover" };
+    return (
+      <AbsoluteFill>
+        {mediaType === "image" ? (
+          <Img src={staticFile(clipPath)} style={coverStyle} />
+        ) : (
+          <OffthreadVideo
+            src={staticFile(clipPath)}
+            trimBefore={Math.max(0, Math.round(clipStartSeconds * fps))}
+            muted
+            style={coverStyle}
+          />
+        )}
+      </AbsoluteFill>
+    );
+  }
 
   // Com dimensão conhecida: wrapper div com tamanho em PIXELS calculado
   // (contain manual), mídia por dentro a 100%/100% preenchendo certinho.

@@ -159,6 +159,10 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 # None. Nunca bloqueia nada, é só uma dica pro usuário
                 # conferir; some ao reatribuir/remover a mídia do trecho.
                 "sync_warning": None,
+                # Toggle "preencher tela toda" (webapp/server.py .../fill-screen)
+                # — escolha do usuário, nunca decidido pela IA. False = comportamento
+                # de sempre (card com margem/cantos arredondados/sombra).
+                "fill_screen": False,
             }
         )
 

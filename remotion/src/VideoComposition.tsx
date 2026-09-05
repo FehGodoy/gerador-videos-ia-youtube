@@ -40,7 +40,7 @@ function presentationFor(transitionIn: Scene["transition_in"]): TransitionPresen
 // Grid/Masonry aceitam a lista inteira (2-6). Decisão de QUAL efeito usar é
 // da IA (keyword_extractor.py) — aqui só mapeia pros props de cada
 // componente já existente em remotion/src/.
-function renderGallery(gallery: GalleryData) {
+function renderGallery(gallery: GalleryData, fillScreen?: boolean) {
   const [first, second] = gallery.items;
   switch (gallery.effect) {
     case "split_screen":
@@ -50,6 +50,7 @@ function renderGallery(gallery: GalleryData) {
           leftMediaType={first?.media_type}
           rightClipPath={second?.clip_path}
           rightMediaType={second?.media_type}
+          fillScreen={fillScreen}
         />
       );
     case "comparison_slider":
@@ -59,6 +60,7 @@ function renderGallery(gallery: GalleryData) {
           beforeMediaType={first?.media_type}
           afterClipPath={second?.clip_path}
           afterMediaType={second?.media_type}
+          fillScreen={fillScreen}
         />
       );
     case "masonry":
@@ -66,6 +68,7 @@ function renderGallery(gallery: GalleryData) {
         <MasonryGallery
           items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))}
           style={gallery.style === "polaroid" ? "polaroid" : "clean"}
+          fillScreen={fillScreen}
         />
       );
     case "gallery_grid":
@@ -74,6 +77,7 @@ function renderGallery(gallery: GalleryData) {
         <GalleryGrid
           items={gallery.items.map((i) => ({ clipPath: i.clip_path, mediaType: i.media_type }))}
           style={gallery.style === "spotlight" ? "spotlight" : "grid"}
+          fillScreen={fillScreen}
         />
       );
   }
@@ -164,13 +168,14 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                     durationInFrames={durationInFrames}
                   />
                 ) : scene.kind === "gallery" && scene.gallery ? (
-                  renderGallery(scene.gallery)
+                  renderGallery(scene.gallery, scene.fill_screen)
                 ) : scene.footage?.clip_path ? (
                   scene.footage.render_style === "parallax_pan" ? (
                     <ParallaxPan
                       clipPath={scene.footage.clip_path}
                       mediaType={scene.footage.media_type}
                       durationInFrames={durationInFrames}
+                      fillScreen={scene.fill_screen}
                     />
                   ) : (
                     <FootageClip
@@ -179,6 +184,7 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
                       clipStartSeconds={scene.clip_start_seconds}
                       width={scene.footage.width}
                       height={scene.footage.height}
+                      fillScreen={scene.fill_screen}
                     />
                   )
                 ) : (

@@ -61,17 +61,19 @@ const GridCard: React.FC<{ item: GalleryItem; delay: number; gridArea?: string }
  * demais numa coluna ao lado — só faz sentido com 3-5 itens; fora dessa
  * faixa cai pra "grid" mesmo que peçam spotlight).
  */
-export const GalleryGrid: React.FC<{ items?: GalleryItem[]; style?: "grid" | "spotlight" }> = ({
+export const GalleryGrid: React.FC<{ items?: GalleryItem[]; style?: "grid" | "spotlight"; fillScreen?: boolean }> = ({
   items = [],
   style = "grid",
+  fillScreen,
 }) => {
   const count = Math.min(Math.max(items.length, 2), 6);
   const useSpotlight = style === "spotlight" && count >= 3 && count <= 5;
+  const padding = fillScreen ? 0 : 60;
 
   if (useSpotlight) {
     const [hero, ...rest] = items;
     return (
-      <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 60 }}>
+      <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding }}>
         <div style={{ display: "flex", gap: 32, width: "100%", height: "100%" }}>
           <div style={{ flex: 1.7, height: "100%" }}>
             <GridCard item={hero} delay={0} />
@@ -88,7 +90,7 @@ export const GalleryGrid: React.FC<{ items?: GalleryItem[]; style?: "grid" | "sp
 
   const layout = LAYOUTS[count];
   return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding: 60 }}>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", padding }}>
       <div
         style={{
           display: "grid",

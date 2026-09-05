@@ -24,14 +24,15 @@ const Panel: React.FC<{
   mediaType?: "image" | "video";
   label: string;
   translateX: number;
-}> = ({ clipPath, mediaType = "image", label, translateX }) => (
+  fillScreen?: boolean;
+}> = ({ clipPath, mediaType = "image", label, translateX, fillScreen }) => (
   <div
     style={{
       flex: 1,
       height: "100%",
       overflow: "hidden",
-      borderRadius: CARD_RADIUS,
-      boxShadow: CARD_SHADOW,
+      borderRadius: fillScreen ? 0 : CARD_RADIUS,
+      boxShadow: fillScreen ? "none" : CARD_SHADOW,
       transform: `translateX(${translateX}%)`,
       position: "relative",
       backgroundColor: "rgba(26,21,18,0.06)",
@@ -58,7 +59,16 @@ export const SplitScreen: React.FC<{
   rightClipPath?: string;
   rightMediaType?: "image" | "video";
   rightLabel?: string;
-}> = ({ leftClipPath, leftMediaType, leftLabel = "Painel A", rightClipPath, rightMediaType, rightLabel = "Painel B" }) => {
+  fillScreen?: boolean;
+}> = ({
+  leftClipPath,
+  leftMediaType,
+  leftLabel = "Painel A",
+  rightClipPath,
+  rightMediaType,
+  rightLabel = "Painel B",
+  fillScreen,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -68,9 +78,21 @@ export const SplitScreen: React.FC<{
   const rightTranslateX = interpolate(rightSlide, [0, 1], [30, 0]);
 
   return (
-    <AbsoluteFill style={{ inset: CARD_INSET, flexDirection: "row", gap: GAP }}>
-      <Panel clipPath={leftClipPath} mediaType={leftMediaType} label={leftLabel} translateX={leftTranslateX} />
-      <Panel clipPath={rightClipPath} mediaType={rightMediaType} label={rightLabel} translateX={rightTranslateX} />
+    <AbsoluteFill style={{ inset: fillScreen ? 0 : CARD_INSET, flexDirection: "row", gap: fillScreen ? 0 : GAP }}>
+      <Panel
+        clipPath={leftClipPath}
+        mediaType={leftMediaType}
+        label={leftLabel}
+        translateX={leftTranslateX}
+        fillScreen={fillScreen}
+      />
+      <Panel
+        clipPath={rightClipPath}
+        mediaType={rightMediaType}
+        label={rightLabel}
+        translateX={rightTranslateX}
+        fillScreen={fillScreen}
+      />
     </AbsoluteFill>
   );
 };

@@ -25,7 +25,8 @@ export const ParallaxPan: React.FC<{
   durationInFrames: number;
   direction?: Direction;
   scale?: number;
-}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2 }) => {
+  fillScreen?: boolean;
+}> = ({ clipPath, mediaType = "image", durationInFrames, direction = "left-right", scale = 1.2, fillScreen }) => {
   const frame = useCurrentFrame();
 
   const progress = interpolate(frame, [0, durationInFrames], [0, 1], {
@@ -43,10 +44,10 @@ export const ParallaxPan: React.FC<{
   return (
     <AbsoluteFill
       style={{
-        inset: CARD_INSET,
-        borderRadius: CARD_RADIUS,
+        inset: fillScreen ? 0 : CARD_INSET,
+        borderRadius: fillScreen ? 0 : CARD_RADIUS,
         overflow: "hidden",
-        boxShadow: CARD_SHADOW,
+        boxShadow: fillScreen ? "none" : CARD_SHADOW,
         backgroundColor: "#000",
       }}
     >

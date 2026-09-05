@@ -335,6 +335,7 @@ def _scenes_from_manifest(
                         "gallery": gallery_scene,
                         "shot_slot": slot["index"],
                         "transition_in": transition_in,
+                        "fill_screen": bool(slot.get("fill_screen")),
                     }
                 )
                 continue
@@ -359,6 +360,7 @@ def _scenes_from_manifest(
                 "gallery": None,
                 "shot_slot": slot["index"],
                 "transition_in": transition_in,
+                "fill_screen": bool(slot.get("fill_screen")),
             }
         )
     return scenes

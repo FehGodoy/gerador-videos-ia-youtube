@@ -127,6 +127,11 @@ export interface Scene {
   // Ausente = "fade" (comportamento de antes da Fase 5). Algorítmico, ver
   // Footage.render_style acima pro mesmo princípio.
   transition_in?: "fade" | "whip_pan" | "film_burn";
+  // Quando true, a mídia preenche a tela inteira (sem margem de papel/
+  // cantos arredondados/sombra). Ausente/false = comportamento de sempre.
+  // Só existe no editor manual (own_media), escolhido por trecho pelo
+  // usuário — nunca decidido pela IA.
+  fill_screen?: boolean;
   // índice do shot que gerou esta cena — usado só pelo painel (revisão/troca
   // manual de mídia), não é lido por nenhum componente de render
   shot_slot?: number | null;

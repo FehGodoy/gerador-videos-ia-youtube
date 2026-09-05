@@ -36,7 +36,16 @@ export const ImageComparisonSlider: React.FC<{
   afterClipPath?: string;
   afterMediaType?: "image" | "video";
   afterLabel?: string;
-}> = ({ beforeClipPath, beforeMediaType, beforeLabel = "Antes", afterClipPath, afterMediaType, afterLabel = "Depois" }) => {
+  fillScreen?: boolean;
+}> = ({
+  beforeClipPath,
+  beforeMediaType,
+  beforeLabel = "Antes",
+  afterClipPath,
+  afterMediaType,
+  afterLabel = "Depois",
+  fillScreen,
+}) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
@@ -47,7 +56,16 @@ export const ImageComparisonSlider: React.FC<{
 
   return (
     <AbsoluteFill style={{ alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: "85%", height: "75%", borderRadius: CARD_RADIUS, overflow: "hidden", boxShadow: CARD_SHADOW, position: "relative" }}>
+      <div
+        style={{
+          width: fillScreen ? "100%" : "85%",
+          height: fillScreen ? "100%" : "75%",
+          borderRadius: fillScreen ? 0 : CARD_RADIUS,
+          overflow: "hidden",
+          boxShadow: fillScreen ? "none" : CARD_SHADOW,
+          position: "relative",
+        }}
+      >
         <div style={{ position: "absolute", inset: 0 }}>
           <Side clipPath={afterClipPath} mediaType={afterMediaType} label={afterLabel} />
         </div>
