@@ -152,15 +152,47 @@ def create_narration_block(base_url: str, slug: str, block_id: int, text: str, v
     return resp.json()["slots"]
 
 
+_HINTS_MAX_ATTEMPTS = 3
+_HINTS_RETRY_DELAY_SECONDS = 5
+
+
+def _hints_all_empty(slots: list[dict]) -> bool:
+    # Mesmo critério do painel (webapp/static/app.js, botão "Gerar de
+    # novo"): todo trecho sem NENHUM dos 3 campos de IA é sinal de que
+    # generate_slot_hints esgotou as 3 tentativas dela e caiu no fallback
+    # vazio (ver modules/timeline.py) — falha real, não é cache velho.
+    return all(not s.get("translation_pt") and not s.get("hint") and not s.get("image_prompt") for s in slots)
+
+
 def fetch_hints(base_url: str, slug: str, block_id: int, language: str, channel: str) -> list[dict]:
-    resp = requests.post(
-        f"{base_url}/api/narration-blocks/{slug}/{block_id}/hints",
-        json={"language": language, "channel": channel},
-        timeout=180,
+    """Bug real pego rodando contra um roteiro de verdade: um bloco cuja
+    chamada de LLM falhou (fallback vazio) passava batido aqui e só
+    quebrava bem mais tarde, em create_job, com uma mensagem genérica
+    ("Faltam N trechos sem mídia") sem dizer QUAL bloco nem por quê —
+    tarde demais pra saber o que aconteceu sem inspecionar o manifesto na
+    mão. Agora detecta o fallback vazio e tenta de novo (mesmo efeito de
+    clicar "Gerar de novo" no painel — cada chamada é independente, sem
+    cache de falha) antes de desistir."""
+    last_slots: list[dict] = []
+    for attempt in range(_HINTS_MAX_ATTEMPTS):
+        if attempt > 0:
+            log(f"Bloco {block_id}: dica/prompt veio vazio (tentativa {attempt}/{_HINTS_MAX_ATTEMPTS}) — tentando de novo...")
+            time.sleep(_HINTS_RETRY_DELAY_SECONDS)
+        resp = requests.post(
+            f"{base_url}/api/narration-blocks/{slug}/{block_id}/hints",
+            json={"language": language, "channel": channel},
+            timeout=180,
+        )
+        if not resp.ok:
+            raise RuntimeError(f"Falha ao gerar dica/prompt do bloco {block_id}: {resp.json().get('detail', resp.text)}")
+        last_slots = resp.json()["slots"]
+        if not _hints_all_empty(last_slots):
+            return last_slots
+    raise RuntimeError(
+        f"Bloco {block_id}: tradução/dica/prompt de imagem vieram vazios em {_HINTS_MAX_ATTEMPTS} "
+        "tentativas — provável instabilidade da API de LLM. Abortando em vez de criar um job que "
+        "certamente falharia por falta de mídia nesses trechos."
     )
-    if not resp.ok:
-        raise RuntimeError(f"Falha ao gerar dica/prompt do bloco {block_id}: {resp.json().get('detail', resp.text)}")
-    return resp.json()["slots"]
 
 
 def _is_eligible_for_image_gen(slot: dict) -> bool:
