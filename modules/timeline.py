@@ -137,7 +137,9 @@ _RETRY_SUFFIX = (
 )
 
 
-def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_SECONDS) -> list[dict]:
+def chunk_captions(
+    captions: list[dict], target_seconds: float = DEFAULT_TARGET_SECONDS, fill_screen_default: bool = False
+) -> list[dict]:
     """Fatia os timestamps por palavra de um beat (ver
     narration.synthesize_beat) em trechos de ~`target_seconds`, sempre
     fechando depois de uma palavra inteira — nunca no meio.
@@ -147,6 +149,13 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
     que só sobra quando as palavras acabam antes de bater o alvo de novo)
     é absorvido pelo ÚLTIMO trecho fechado em vez de virar um trechinho
     minúsculo sozinho.
+
+    `fill_screen_default`: True quando o bloco nasce do fluxo 100%
+    automático (webapp/server.py::create_narration_block, `auto_mode`) —
+    pedido do usuário: nesse fluxo todo trecho já nasce com "preencher
+    tela toda" ligado (efeito continua "padrão", único usado nesse modo —
+    galeria/parallax nunca são escolhidos automaticamente). Fora desse
+    fluxo, continua nascendo `False` (usuário liga manualmente se quiser).
 
     Retorna [{"index", "text", "start_seconds", "end_seconds", "effect",
     "media": []}, ...] com segundos relativos ao início do bloco (mesmo
@@ -188,7 +197,7 @@ def chunk_captions(captions: list[dict], target_seconds: float = DEFAULT_TARGET_
                 # Toggle "preencher tela toda" (webapp/server.py .../fill-screen)
                 # — escolha do usuário, nunca decidido pela IA. False = comportamento
                 # de sempre (card com margem/cantos arredondados/sombra).
-                "fill_screen": False,
+                "fill_screen": fill_screen_default,
             }
         )
 

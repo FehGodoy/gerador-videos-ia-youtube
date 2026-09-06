@@ -89,6 +89,13 @@ class NarrationBlockRequest(BaseModel):
     language: str = "pt"
     speed: float = 1.0
     force: bool = False
+    # True quando o bloco nasce do fluxo 100% automático (roteiro por IA
+    # -> narração -> imagem -> vídeo, sem clique nenhum no meio) — nesse
+    # caso todo trecho já nasce com "preencher tela toda" ligado (ver
+    # modules/timeline.py::chunk_captions), pedido do usuário. Colar bloco
+    # manualmente não manda esse campo (default False = comportamento de
+    # sempre).
+    auto_mode: bool = False
 
 
 class CreateJobRequest(BaseModel):
@@ -304,7 +311,7 @@ async def create_narration_block(req: NarrationBlockRequest) -> dict:
     # (mesmo que este rascunho acabe usando busca por IA em vez de mídia
     # própria). Tradução/dica de IA ficam pra POST .../hints, chamado
     # separado pelo painel — é chamada de LLM, não trava esta resposta.
-    slots = timeline_module.chunk_captions(result["captions"])
+    slots = timeline_module.chunk_captions(result["captions"], fill_screen_default=req.auto_mode)
     # "Regenerar" (force=True) chama esta mesma rota de novo — sem isso, a
     # mídia que o usuário já tinha atribuído por trecho seria apagada só por
     # reprocessar o áudio. Reaproveita por índice (best-effort: se a fala

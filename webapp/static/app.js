@@ -819,6 +819,11 @@ async function createNarrationBlock(text) {
       voice_id: selectedVoiceId,
       language: selectedVoiceLanguage,
       speed: Number(speedSlider.value),
+      // Fluxo 100% automático (roteiro por IA): todo trecho já nasce com
+      // "preencher tela toda" ligado (ver modules/timeline.py::chunk_captions)
+      // — pedido do usuário, só nesse fluxo (colar bloco manualmente não
+      // ativa isso).
+      auto_mode: autoRenderArmed,
     }),
   });
   if (!resp.ok) {
