@@ -662,6 +662,13 @@ async function fetchSlotHints(blockId, language) {
     if (!resp.ok) return;
     const { slots } = await resp.json();
     blockSlots[blockId] = slots;
+    // Assim que o prompt de imagem de cada trecho existe, dispara a
+    // geração automática — pedido do usuário: colar bloco, gerar
+    // narração, e as imagens já começam a sair sozinhas (ver
+    // autoGenerateBlockImages/enqueueImageGen). Sem efeito nenhum se a
+    // geração de dica falhou (nenhum trecho tem image_prompt ainda) ou
+    // se não sobrou trecho elegível.
+    autoGenerateBlockImages(blockId);
   } catch {
     // dica/tradução são só apoio visual — falha aqui não impede atribuir mídia
   } finally {
@@ -912,28 +919,40 @@ async function setAllSlotsFillScreen(fillScreen) {
   }
 }
 
-// Geração em lote de imagem por IA (fal.ai FLUX schnell) — o atalho que
-// mais elimina a extensão de navegador + sincronização de pasta do fluxo
-// do usuário: gera a imagem de TODO trecho de mídia única ainda vazio do
-// rascunho, um de cada vez. Estado fora do DOM (mesmo princípio de
-// blockHintsLoading/folderSyncState) porque renderBlocksList() recria a
-// árvore inteira a cada chamada — não dá pra guardar uma referência de
-// elemento HTML através de um loop com re-render no meio.
-let draftImageGenState = null; // {total, done, cancelled} enquanto um lote está rodando; null quando parado
+// Geração de imagem por IA (fal.ai FLUX schnell) — o atalho que mais
+// elimina a extensão de navegador + sincronização de pasta do fluxo do
+// usuário. Duas portas de entrada pra mesma fila: o botão manual "gerar
+// tudo" (pede confirmação, custo real) e o disparo AUTOMÁTICO assim que
+// o prompt de um bloco recém-gerado fica pronto (ver fetchSlotHints) —
+// pedido explícito do usuário: colar bloco, gerar narração, e as imagens
+// já começam a sair sozinhas assim que os prompts existem, sem precisar
+// clicar em nada.
+//
+// Fila (não uma lista fixa) porque um bloco novo pode terminar de gerar
+// prompt ENQUANTO um lote anterior ainda está rodando — nesse caso só
+// entra na mesma fila em vez de disparar uma segunda chamada em paralelo
+// (nunca martelar a API com N requisições de uma vez). Estado fora do DOM
+// (mesmo princípio de blockHintsLoading/folderSyncState) porque
+// renderBlocksList() recria a árvore inteira a cada chamada — não dá pra
+// guardar referência de elemento HTML através do loop.
+let draftImageGenState = null; // {queue: [{blockId, slot}], done, total, cancelled} enquanto a fila está rodando; null quando parada
 
-function collectEligibleImageGenSlots() {
+function isEligibleForImageGen(slot) {
+  return (
+    slotEffectSpec(slot).max === 1 &&
+    slot.needs_media !== false &&
+    Boolean(slot.image_prompt) &&
+    !(slot.media && slot.media[0])
+  );
+}
+
+function collectEligibleImageGenSlots(blockIds) {
   const eligible = [];
   for (const block of blocks) {
+    if (blockIds && !blockIds.includes(block.id)) continue;
     const slots = blockSlots[block.id] || [];
     for (const slot of slots) {
-      if (
-        slotEffectSpec(slot).max === 1 &&
-        slot.needs_media !== false &&
-        slot.image_prompt &&
-        !(slot.media && slot.media[0])
-      ) {
-        eligible.push({ blockId: block.id, slot });
-      }
+      if (isEligibleForImageGen(slot)) eligible.push({ blockId: block.id, slot });
     }
   }
   return eligible;
@@ -982,13 +1001,36 @@ async function startGenerateAllSlotImages(eligible) {
     `(poucos centavos por imagem). Confirma?`
   );
   if (!ok) return;
-
   clearError();
-  draftImageGenState = { total: eligible.length, done: 0, cancelled: false };
-  renderBlocksList();
+  enqueueImageGen(eligible);
+}
 
-  for (const { blockId, slot } of eligible) {
-    if (draftImageGenState.cancelled) break;
+// Disparo automático: chamado assim que o prompt de um bloco recém-
+// fatiado (ou regenerado via "Gerar de novo") fica pronto. Sem
+// window.confirm — é exatamente o "sem precisar clicar em nada" que o
+// usuário pediu; o custo por trecho já é pequeno e o usuário topou isso
+// ao pedir o fluxo automático.
+function autoGenerateBlockImages(blockId) {
+  const eligible = collectEligibleImageGenSlots([blockId]);
+  enqueueImageGen(eligible);
+}
+
+function enqueueImageGen(eligible) {
+  if (!eligible.length) return;
+  if (draftImageGenState) {
+    draftImageGenState.queue.push(...eligible);
+    draftImageGenState.total += eligible.length;
+    renderBlocksList();
+    return;
+  }
+  draftImageGenState = { queue: [...eligible], done: 0, total: eligible.length, cancelled: false };
+  renderBlocksList();
+  runImageGenQueue();
+}
+
+async function runImageGenQueue() {
+  while (draftImageGenState.queue.length && !draftImageGenState.cancelled) {
+    const { blockId, slot } = draftImageGenState.queue.shift();
     try {
       const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image`, {
         method: "POST",
