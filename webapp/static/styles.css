@@ -1720,7 +1720,8 @@ button.review-concept-upload.armed {
 }
 
 .timeline-folder-sync,
-.timeline-fill-screen-all-row {
+.timeline-fill-screen-all-row,
+.timeline-generate-images-row {
   margin-top: 4px;
   padding-top: 10px;
   border-top: 1px dashed var(--border);
@@ -1730,7 +1731,8 @@ button.review-concept-upload.armed {
   gap: var(--space-2);
 }
 
-.timeline-fill-screen-all-row button {
+.timeline-fill-screen-all-row button,
+.timeline-generate-images-row button {
   font-size: 12px;
   height: 32px;
   padding: 0 12px;

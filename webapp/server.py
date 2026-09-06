@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel
 
-from modules import footage_search, github_render, media_pool, settings as settings_module
+from modules import footage_search, github_render, image_gen, media_pool, settings as settings_module
 from modules import timeline as timeline_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
@@ -957,6 +957,47 @@ async def set_timeline_slot_fill_screen(
 
     slot = manifest[slot_index]
     slot["fill_screen"] = req.fill_screen
+    timeline_module.save_manifest(slug, block_id, manifest)
+    return {"slot": slot}
+
+
+@app.post("/api/timeline/{slug}/{block_id}/{slot_index}/generate-image")
+async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int) -> dict:
+    """Gera a imagem deste trecho via IA (fal.ai FLUX schnell,
+    modules/image_gen.py) a partir do `image_prompt` já salvo no
+    manifesto, e já atribui na posição 0 — substitui o fluxo de copiar o
+    prompt, gerar num serviço externo e reanexar pela sincronização de
+    pasta (webapp/folder_sync.py), sem o risco de desalinhamento por
+    ordem de chegada. Só funciona pra efeito de mídia única (padrão/
+    parallax_pan) — galeria continua sempre manual, mesma fronteira já
+    usada em folder_sync.py."""
+    manifest = timeline_module.load_manifest(slug, block_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
+    if slot_index < 0 or slot_index >= len(manifest):
+        raise HTTPException(status_code=404, detail="Trecho não encontrado.")
+
+    slot = manifest[slot_index]
+    if not slot.get("image_prompt"):
+        raise HTTPException(status_code=400, detail="Este trecho ainda não tem prompt de imagem gerado.")
+    _, max_media = timeline_module.effect_media_bounds(slot.get("effect", timeline_module.DEFAULT_EFFECT))
+    if max_media != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Geração automática só funciona em efeitos de mídia única (padrão/parallax pan).",
+        )
+
+    try:
+        image_bytes, ext = await asyncio.to_thread(image_gen.generate_image, slot["image_prompt"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    saved = media_pool.save_pool_upload(slug, f"ai{ext}", image_bytes)
+    media_list = slot.setdefault("media", [])
+    if not media_list:
+        media_list.append(None)
+    media_list[0] = {"pool_filename": saved["filename"], "media_type": "image"}
+    slot.pop("sync_warning", None)
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
 

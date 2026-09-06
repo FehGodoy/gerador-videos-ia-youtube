@@ -746,6 +746,7 @@ function renderBlocksList() {
   renderDraftFolderSync();
   renderDraftCopyAllPrompts();
   renderDraftFillScreenControl();
+  renderDraftGenerateImagesControl();
   updateGenerateVideoButton();
   updateGenerateBlockButton();
 }
@@ -909,6 +910,107 @@ async function setAllSlotsFillScreen(fillScreen) {
   } catch (err) {
     showError(err.message);
   }
+}
+
+// Geração em lote de imagem por IA (fal.ai FLUX schnell) — o atalho que
+// mais elimina a extensão de navegador + sincronização de pasta do fluxo
+// do usuário: gera a imagem de TODO trecho de mídia única ainda vazio do
+// rascunho, um de cada vez. Estado fora do DOM (mesmo princípio de
+// blockHintsLoading/folderSyncState) porque renderBlocksList() recria a
+// árvore inteira a cada chamada — não dá pra guardar uma referência de
+// elemento HTML através de um loop com re-render no meio.
+let draftImageGenState = null; // {total, done, cancelled} enquanto um lote está rodando; null quando parado
+
+function collectEligibleImageGenSlots() {
+  const eligible = [];
+  for (const block of blocks) {
+    const slots = blockSlots[block.id] || [];
+    for (const slot of slots) {
+      if (
+        slotEffectSpec(slot).max === 1 &&
+        slot.needs_media !== false &&
+        slot.image_prompt &&
+        !(slot.media && slot.media[0])
+      ) {
+        eligible.push({ blockId: block.id, slot });
+      }
+    }
+  }
+  return eligible;
+}
+
+function renderDraftGenerateImagesControl() {
+  const container = document.getElementById("draft-generate-images");
+  if (!container) return;
+  container.innerHTML = "";
+  if (mediaMode !== "own_media") return;
+
+  const row = document.createElement("div");
+  row.className = "timeline-generate-images-row";
+
+  if (draftImageGenState) {
+    const status = document.createElement("span");
+    status.className = "hint";
+    status.textContent = `Gerando imagem ${draftImageGenState.done}/${draftImageGenState.total} via IA...`;
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "ghost";
+    cancelBtn.textContent = "Cancelar";
+    cancelBtn.addEventListener("click", () => {
+      draftImageGenState.cancelled = true;
+    });
+    row.append(status, cancelBtn);
+    container.appendChild(row);
+    return;
+  }
+
+  const eligible = collectEligibleImageGenSlots();
+  if (!eligible.length) return;
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "ghost";
+  btn.textContent = `Gerar imagem com IA em todos os trechos vazios (${eligible.length})`;
+  btn.addEventListener("click", () => startGenerateAllSlotImages(eligible));
+  row.appendChild(btn);
+  container.appendChild(row);
+}
+
+async function startGenerateAllSlotImages(eligible) {
+  const ok = window.confirm(
+    `Isso vai gerar ${eligible.length} imagem(ns) via IA (fal.ai), uma por vez — tem custo pago à parte ` +
+    `(poucos centavos por imagem). Confirma?`
+  );
+  if (!ok) return;
+
+  clearError();
+  draftImageGenState = { total: eligible.length, done: 0, cancelled: false };
+  renderBlocksList();
+
+  for (const { blockId, slot } of eligible) {
+    if (draftImageGenState.cancelled) break;
+    try {
+      const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image`, {
+        method: "POST",
+      });
+      if (resp.ok) {
+        const { slot: updated } = await resp.json();
+        blockSlots[blockId][updated.index] = updated;
+      } else {
+        const body = await resp.json().catch(() => ({}));
+        showError(
+          `Trecho ${slot.index + 1}: ${body.detail || "erro ao gerar"} — continuando com os próximos.`
+        );
+      }
+    } catch (err) {
+      showError(`Trecho ${slot.index + 1}: ${err.message} — continuando com os próximos.`);
+    }
+    draftImageGenState.done += 1;
+    renderBlocksList();
+  }
+
+  draftImageGenState = null;
+  renderBlocksList();
 }
 
 // --- Sincronização automática de pasta pro rascunho inteiro (ver
@@ -1390,9 +1492,47 @@ function renderAttachControl(blockId, slot, mediaIndex) {
   btn.className = "ghost";
   btn.textContent = "Anexar mídia";
   btn.addEventListener("click", () => openAttachPickerPopup(blockId, slot, mediaIndex));
-
   wrap.appendChild(btn);
+
+  // Geração automática (fal.ai FLUX schnell, ver webapp/server.py
+  // .../generate-image) só faz sentido em mídia única (galeria sempre
+  // manual, mesma fronteira do sincronizador de pasta) e só quando já
+  // existe um prompt de imagem gerado pra este trecho.
+  if (slotEffectSpec(slot).max === 1 && slot.image_prompt) {
+    const aiBtn = document.createElement("button");
+    aiBtn.type = "button";
+    aiBtn.className = "ghost";
+    aiBtn.textContent = "Gerar imagem com IA";
+    aiBtn.title =
+      "Gera a imagem a partir do prompt acima via fal.ai (FLUX schnell) e já anexa aqui — custo pago à parte, poucos centavos por imagem.";
+    aiBtn.addEventListener("click", () => generateSlotImage(blockId, slot, aiBtn));
+    wrap.appendChild(aiBtn);
+  }
+
   return wrap;
+}
+
+async function generateSlotImage(blockId, slot, btnEl) {
+  clearError();
+  const originalText = btnEl.textContent;
+  btnEl.disabled = true;
+  btnEl.textContent = "Gerando...";
+  try {
+    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image`, {
+      method: "POST",
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Erro ao gerar imagem (${resp.status})`);
+    }
+    const { slot: updated } = await resp.json();
+    blockSlots[blockId][updated.index] = updated;
+    renderBlocksList();
+  } catch (err) {
+    showError(err.message);
+    btnEl.disabled = false;
+    btnEl.textContent = originalText;
+  }
 }
 
 // Popup fixo no <body> (mesmo padrão de openClipStartPicker) em vez de um
@@ -1669,6 +1809,7 @@ function resetDraft() {
   blockSlots = {};
   collapsedBlocks = new Set();
   blockHintsLoading = new Set();
+  draftImageGenState = null;
   mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";
