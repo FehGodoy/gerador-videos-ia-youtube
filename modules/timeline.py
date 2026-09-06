@@ -90,7 +90,14 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # Python, uma cláusula final avisando que qualquer texto que aparecer na
 # imagem tem que estar no idioma do vídeo — mesmo quando a IA não pediu
 # texto nenhum, cobrindo o gerador externo inventar um sozinho.
-TIMELINE_HINTS_VERSION = 6
+# 7 = pego rodando um roteiro de verdade (skill /gerar-video): a IA
+# fundia dois trechos vizinhos numa resposta só quando formavam uma frase
+# contínua (corte por TEMPO, não por frase), derrubando a resposta
+# INTEIRA (len(by_index) < n_slots) mesmo com os outros índices corretos.
+# Novo parágrafo "REGRA CRÍTICA DE QUANTIDADE" no prompt + _parse_hints
+# agora preenche um índice faltando com o hint do vizinho mais próximo em
+# vez de descartar tudo.
+TIMELINE_HINTS_VERSION = 7
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -112,6 +119,13 @@ the labels 'Primeira Geração 1982', 'Segunda Geração 1987'"
   CERTO (mesmo caso, texto em inglês): "an infographic with a timeline showing the labels \
 'First Generation 1982', 'Second Generation 1987', written in English"
 Se a cena não tiver texto nenhum visível, ignore esta regra.
+
+REGRA CRÍTICA DE QUANTIDADE (segundo erro mais comum nesta tarefa): cada trecho numerado abaixo é \
+uma unidade FIXA, cortada por TEMPO (~5s de fala), não por frase — é normal um trecho terminar NO \
+MEIO de uma frase e o próximo continuar de onde parou. Mesmo quando dois trechos vizinhos juntos \
+formam uma frase só, você tem que responder cada índice SEPARADAMENTE — um item por índice, na \
+MESMA quantidade de trechos listados abaixo. NUNCA combine dois trechos numa única resposta nem \
+pule um índice, mesmo que pareça redundante repetir uma ideia parecida em dois itens seguidos.
 
 Um item por trecho numerado abaixo, na mesma ordem, onde:
 - "translation_pt": tradução literal do trecho pra português do Brasil (se o roteiro já estiver \
@@ -384,8 +398,29 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
             # resposta incompleta da IA.
             "needs_media": needs_media if isinstance(needs_media, bool) else True,
         }
-    if len(by_index) < n_slots:
+    if not by_index:
         return None
+
+    # Bug real (pego rodando um roteiro de verdade): a IA às vezes FUNDE
+    # dois trechos vizinhos numa resposta só quando, juntos, formam uma
+    # frase contínua (o corte em ~5s é por TEMPO, não por frase — ver
+    # REGRA CRÍTICA DE QUANTIDADE no prompt acima). Isso derrubava a
+    # resposta INTEIRA antes (até os índices que vieram certos ficavam
+    # sem hint nenhuma), mesmo com 1.6x de tentativas de retry — o mesmo
+    # "erro" tende a se repetir de novo pro mesmo par de trechos. Em vez
+    # de descartar tudo, um índice faltando herda o hint do vizinho mais
+    # próximo que respondeu (primeiro tenta o anterior, senão o
+    # seguinte) — reaproveitar um prompt de imagem parecido é uma
+    # aproximação bem melhor que perder a resposta inteira.
+    for i in range(n_slots):
+        if i in by_index:
+            continue
+        donor = next((j for j in range(i - 1, -1, -1) if j in by_index), None)
+        if donor is None:
+            donor = next((j for j in range(i + 1, n_slots) if j in by_index), None)
+        if donor is None:
+            return None  # nem um vizinho respondeu, nada aproveitável
+        by_index[i] = dict(by_index[donor])
     return [by_index[i] for i in range(n_slots)]
 
 
