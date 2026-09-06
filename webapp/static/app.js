@@ -596,6 +596,14 @@ async function startGenerateScript() {
 
   generateScriptBtn.disabled = true;
   generateScriptStatus.textContent = "Gerando roteiro...";
+  // A partir daqui o fluxo é automático de ponta a ponta (pedido do
+  // usuário): roteiro -> blocos -> narração -> imagens -> vídeo, sem
+  // clique nenhum no meio, inclusive pulando a revisão manual antes do
+  // render (ver maybeAutoRenderVideo/composition_ready). bulkScriptInProgress
+  // evita disparar o vídeo cedo demais enquanto ainda faltam blocos deste
+  // MESMO roteiro sendo criados.
+  autoRenderArmed = true;
+  bulkScriptInProgress = true;
   try {
     const resp = await fetch("/api/scripts/generate", {
       method: "POST",
@@ -622,12 +630,14 @@ async function startGenerateScript() {
         showError(`Bloco ${i + 1}: ${err.message} — continuando com os próximos.`);
       }
     }
-    generateScriptStatus.textContent = `Roteiro gerado: ${blockTexts.length} bloco(s) criado(s).`;
+    generateScriptStatus.textContent = `Roteiro gerado: ${blockTexts.length} bloco(s) criado(s). Gerando vídeo assim que a mídia estiver pronta...`;
   } catch (err) {
     showError(err.message);
     generateScriptStatus.textContent = "";
   } finally {
     generateScriptBtn.disabled = false;
+    bulkScriptInProgress = false;
+    maybeAutoRenderVideo();
   }
 }
 
@@ -824,6 +834,49 @@ async function createNarrationBlock(text) {
   if (mediaMode === "own_media") fetchSlotHints(blockId, selectedVoiceLanguage);
 }
 
+// Pedido do usuário: no fluxo de "Gerar roteiro com IA" (startGenerateScript),
+// assim que o rascunho ficar completo (todo bloco narrado e, no modo
+// own_media, todo trecho elegível com mídia atribuída — mesma checagem
+// que webapp/server.py::create_job já faz), dispara a criação do vídeo
+// sozinho, SEM esperar clique em "Gerar vídeo" e SEM parar na revisão
+// manual antes do render (ver startJobEvents -> composition_ready, que
+// agora já auto-confirma).
+//
+// SÓ arma esse gatilho quando o roteiro veio do fluxo automático
+// (`autoRenderArmed`) — colar bloco por bloco manualmente continua
+// exigindo o clique de sempre em "Gerar vídeo", porque nesse fluxo o app
+// não tem como saber se o usuário já terminou de colar blocos ou vai
+// colar mais um. `bulkScriptInProgress` evita disparar cedo demais
+// DURANTE o loop de criação de blocos do roteiro (ex.: bloco 1 já com
+// imagem pronta enquanto bloco 2 ainda está sendo narrado) — só
+// reavalia de verdade depois que o loop inteiro terminar.
+let autoRenderArmed = false;
+let bulkScriptInProgress = false;
+let autoRenderTriggered = false;
+
+function isDraftFullyReady() {
+  if (!blocks.length) return false;
+  if (mediaMode === "ai_search") return selectedSources.size > 0;
+  if (poolItemCount === 0) return false;
+  for (const block of blocks) {
+    const slots = blockSlots[block.id];
+    if (!slots || !slots.length) return false; // bloco ainda fatiando
+    for (const slot of slots) {
+      if (slot.needs_media === false) continue;
+      const attached = (slot.media || []).filter(Boolean).length;
+      if (attached < slotEffectSpec(slot).min) return false;
+    }
+  }
+  return true;
+}
+
+function maybeAutoRenderVideo() {
+  if (!autoRenderArmed || bulkScriptInProgress || autoRenderTriggered || currentJobId) return;
+  if (!isDraftFullyReady()) return;
+  autoRenderTriggered = true;
+  handleGenerateVideo();
+}
+
 async function generateBlock() {
   clearError();
   const text = blockText.value.trim();
@@ -867,6 +920,7 @@ async function fetchSlotHints(blockId, language) {
   } finally {
     blockHintsLoading.delete(blockId);
     renderBlocksList();
+    maybeAutoRenderVideo();
   }
 }
 
@@ -1246,6 +1300,7 @@ async function runImageGenQueue() {
 
   draftImageGenState = null;
   renderBlocksList();
+  maybeAutoRenderVideo();
 }
 
 // --- Sincronização automática de pasta pro rascunho inteiro (ver
@@ -2045,6 +2100,9 @@ function resetDraft() {
   collapsedBlocks = new Set();
   blockHintsLoading = new Set();
   draftImageGenState = null;
+  autoRenderArmed = false;
+  bulkScriptInProgress = false;
+  autoRenderTriggered = false;
   mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";
@@ -2724,6 +2782,11 @@ function startJobEvents(jobId) {
   source.addEventListener("composition_ready", () => {
     confirmRenderBtn.disabled = false;
     loadFootageReview(jobId);
+    // Pedido do usuário: renderizar sem parar pra revisão manual — a
+    // composição já está pronta assim que este evento chega, então
+    // confirma sozinho em vez de esperar clique em "Confirmar e
+    // renderizar" (mesmo endpoint de sempre, POST .../confirm-render).
+    handleConfirmRender();
   });
 
   source.addEventListener("render_progress", (e) => {
