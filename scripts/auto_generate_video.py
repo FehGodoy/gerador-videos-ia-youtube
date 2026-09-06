@@ -94,11 +94,23 @@ def split_script_into_blocks(text: str) -> list[str]:
     painel (ver `#block-text`, "Cole um bloco por vez (um parágrafo, por
     exemplo)"). Usado só quando `--script-file` é passado — pula
     completamente a geração por IA (`generate_script`/POST
-    /api/scripts/generate), o texto do usuário nunca é reescrito."""
+    /api/scripts/generate), o texto do usuário nunca é reescrito.
+
+    Parágrafo INTEIRAMENTE em maiúsculas (ignorando pontuação/espaço) é
+    tratado como título/marcador de seção, não narração — cobre tanto um
+    título solto ("ROTEIRO COMPLETO") quanto divisores tipo
+    "=== BLOCK 1 - ... ===" (bug real pego testando com um roteiro de
+    verdade do usuário: sem esse filtro, esses marcadores viravam blocos
+    de narração absurdos, sendo narrados/gerando imagem de verdade).
+    Narração normal nunca é 100% maiúscula, então o risco de descartar
+    uma frase de verdade por engano é baixo — mas é bom avisar o usuário
+    quantos blocos sobraram antes de gastar dinheiro de verdade.
+    """
     import re
 
     paragraphs = re.split(r"\n\s*\n", text.strip())
-    return [p.strip() for p in paragraphs if p.strip()]
+    clean = [p.strip() for p in paragraphs if p.strip()]
+    return [p for p in clean if not p.isupper()]
 
 
 def generate_script(base_url: str, channel: str, language: str, topic: str | None, transcript: str | None, target_minutes: float) -> list[str]:
