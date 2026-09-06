@@ -48,6 +48,17 @@ _RETRY_SUFFIX = (
 _SCRIPT_PROMPT_TEMPLATE = """Você é um roteirista escrevendo um roteiro de vídeo documentário estilo \
 "faceless YouTube", em {language_name}, no ESTILO de um canal específico.
 
+REGRA CRÍTICA DE IDIOMA (a mais importante desta tarefa — respostas erram nisso com frequência, \
+preste atenção mesmo que a transcrição-fonte abaixo esteja em outro idioma e você acabe "pensando" \
+nele agora): o roteiro que você escrever tem que estar 100% em {language_name}, do início ao fim — \
+mesmo quando o conteúdo de origem (a transcrição de outro vídeo, se for o caso) estiver num idioma \
+diferente. Leia a fonte no idioma original dela, mas ESCREVA o roteiro novo inteiro em \
+{language_name}, sem misturar nem uma frase no idioma da fonte.
+  ERRADO: a transcrição-fonte estava em outro idioma e alguma frase (ou palavra solta) do roteiro \
+final saiu nesse idioma da fonte em vez de {language_name}.
+  CERTO: ler o conteúdo no idioma original da fonte, mas escrever o roteiro inteiro em \
+{language_name}, sem nenhuma frase remanescente no idioma da fonte.
+
 Abaixo estão roteiros de EXEMPLO que esse canal já publicou — imite o tom, o ritmo das frases, a \
 estrutura de abertura/fechamento e o tipo de vocabulário usado, mas escreva um roteiro TOTALMENTE NOVO, \
 nunca reaproveitando frases dos exemplos:
