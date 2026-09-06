@@ -235,7 +235,7 @@ _RETRY_SUFFIX = (
 )
 
 
-def _call_anthropic(prompt: str, model: str) -> str:
+def _call_anthropic(prompt: str, model: str, max_tokens: int | None = None) -> str:
     import anthropic
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -244,13 +244,13 @@ def _call_anthropic(prompt: str, model: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=model,
-        max_tokens=MAX_TOKENS,
+        max_tokens=max_tokens or MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.content[0].text
 
 
-def _call_openai(prompt: str, model: str) -> str:
+def _call_openai(prompt: str, model: str, max_tokens: int | None = None) -> str:
     try:
         import openai
     except ImportError as e:
@@ -265,7 +265,7 @@ def _call_openai(prompt: str, model: str) -> str:
     client = openai.OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=model,
-        max_tokens=MAX_TOKENS,
+        max_tokens=max_tokens or MAX_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.choices[0].message.content

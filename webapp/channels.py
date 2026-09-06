@@ -60,7 +60,16 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
     return entry["favorites"]
 
 
-_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None, "image_style_prompt": ""}
+_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None, "image_style_prompt": "", "script_examples": []}
+
+
+def _new_identity() -> dict:
+    """Identidade nova (canal recém-criado) com cada campo mutável (hoje só
+    `script_examples`) numa lista PRÓPRIA — nunca `dict(_DEFAULT_IDENTITY)`
+    direto, que faria uma cópia RASA e deixaria todo canal novo
+    compartilhando a MESMA lista de `_DEFAULT_IDENTITY` (um `append` num
+    canal vazaria pros outros)."""
+    return {**_DEFAULT_IDENTITY, "script_examples": []}
 
 
 def get_identity(channel: str) -> dict:
@@ -72,7 +81,7 @@ def get_identity(channel: str) -> dict:
 def set_handle(channel: str, handle: str) -> dict:
     data = _load()
     entry = data.setdefault(channel, {"favorites": []})
-    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity = entry.setdefault("identity", _new_identity())
     identity["handle"] = handle
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
@@ -81,7 +90,7 @@ def set_handle(channel: str, handle: str) -> dict:
 def set_avatar_filename(channel: str, filename: str) -> dict:
     data = _load()
     entry = data.setdefault(channel, {"favorites": []})
-    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity = entry.setdefault("identity", _new_identity())
     identity["avatar_filename"] = filename
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
@@ -94,7 +103,31 @@ def set_image_style(channel: str, style: str) -> dict:
     generate_slot_hints, não pedido pra IA lembrar de aplicar sozinha."""
     data = _load()
     entry = data.setdefault(channel, {"favorites": []})
-    identity = entry.setdefault("identity", dict(_DEFAULT_IDENTITY))
+    identity = entry.setdefault("identity", _new_identity())
     identity["image_style_prompt"] = style
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
+
+
+def add_script_example(channel: str, text: str) -> list[str]:
+    """Roteiro de exemplo que o usuário já escreveu pra este canal — usado
+    como referência de estilo (tom, estrutura, ritmo) na geração
+    automática de roteiro (modules/script_writer.py). Guarda o texto
+    INTEIRO, não um resumo — é isso que a IA usa como few-shot."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity.setdefault("script_examples", []).append(text)
+    _save(data)
+    return identity["script_examples"]
+
+
+def remove_script_example(channel: str, index: int) -> list[str]:
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    examples = identity.setdefault("script_examples", [])
+    if 0 <= index < len(examples):
+        examples.pop(index)
+    _save(data)
+    return examples

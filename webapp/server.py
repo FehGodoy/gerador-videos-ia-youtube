@@ -23,6 +23,7 @@ from PIL import Image
 from pydantic import BaseModel
 
 from modules import footage_search, github_render, image_gen, media_pool, settings as settings_module
+from modules import script_writer
 from modules import timeline as timeline_module
 from modules.composition_builder import validate_composition
 from modules.config import PROJECT_ROOT, cache_dir, load_config, output_dir
@@ -127,6 +128,18 @@ class HandleRequest(BaseModel):
 
 class ImageStyleRequest(BaseModel):
     style: str
+
+
+class ScriptExampleRequest(BaseModel):
+    text: str
+
+
+class GenerateScriptRequest(BaseModel):
+    channel: str
+    language: str
+    topic: str | None = None
+    transcript: str | None = None
+    target_minutes: float | None = None
 
 
 class FootageChoiceRequest(BaseModel):
@@ -237,6 +250,33 @@ async def get_voices(language: str = "pt") -> list[dict]:
         return await voices_module.list_voices(language)
     except RuntimeError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/scripts/generate")
+async def generate_script(req: GenerateScriptRequest) -> dict:
+    """Gera um roteiro novo no estilo do canal (modules/script_writer.py,
+    few-shot a partir de webapp/channels.py::script_examples) a partir de
+    um TEMA ou de uma TRANSCRIÇÃO — exatamente um dos dois. Só devolve o
+    texto já fatiado em blocos; quem transforma cada bloco em narração de
+    verdade (encadeando na geração automática de imagem) é o front-end,
+    chamando POST /api/narration-blocks em loop pra cada item."""
+    if bool(req.topic) == bool(req.transcript):
+        raise HTTPException(
+            status_code=400, detail="Informe exatamente um dos dois: tema OU transcrição."
+        )
+    examples = channels_module.get_identity(req.channel)["script_examples"]
+    try:
+        blocks = await asyncio.to_thread(
+            script_writer.generate_script,
+            examples,
+            req.language,
+            topic=req.topic,
+            transcript=req.transcript,
+            target_minutes=req.target_minutes,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+    return {"blocks": blocks}
 
 
 @app.post("/api/narration-blocks")
@@ -1090,6 +1130,7 @@ def _identity_response(name: str) -> dict:
         "handle": identity["handle"],
         "avatar_url": avatar_url,
         "image_style_prompt": identity["image_style_prompt"],
+        "script_examples": identity["script_examples"],
     }
 
 
@@ -1110,6 +1151,26 @@ async def post_image_style(name: str, req: ImageStyleRequest) -> dict:
     canal (ver webapp/channels.py::set_image_style) — concatenado em
     modules/timeline.py::generate_slot_hints, não pedido pra IA lembrar."""
     channels_module.set_image_style(name, req.style.strip())
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/script-examples")
+async def post_script_example(name: str, req: ScriptExampleRequest) -> dict:
+    """Roteiro de exemplo já escrito pelo usuário pra este canal (ver
+    webapp/channels.py::add_script_example) — usado como few-shot na
+    geração automática de roteiro (modules/script_writer.py). Texto pode
+    vir colado direto ou lido de um .txt no cliente (FileReader) — o
+    endpoint não diferencia, é sempre string."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Roteiro de exemplo vazio.")
+    channels_module.add_script_example(name, text)
+    return _identity_response(name)
+
+
+@app.delete("/api/channels/{name}/script-examples/{index}")
+async def delete_script_example(name: str, index: int) -> dict:
+    channels_module.remove_script_example(name, index)
     return _identity_response(name)
 
 

@@ -59,6 +59,16 @@
       <span id="channel-image-style-feedback" class="api-key-feedback"></span>
     </div>
     <p class="hint">Esse estilo entra automaticamente no fim de todo prompt de imagem gerado pela IA pra vídeos deste canal.</p>
+
+    <div id="channel-script-examples-list" class="script-examples-list"></div>
+    <div class="row" id="channel-script-example-form">
+      <textarea id="channel-script-example-input" rows="3" placeholder="Cole aqui um roteiro de exemplo já publicado deste canal..."></textarea>
+      <input type="file" id="channel-script-example-file" accept=".txt" class="hidden">
+      <button type="button" id="channel-script-example-file-btn" class="ghost small">Enviar .txt</button>
+      <button type="button" id="channel-script-example-save" class="ghost small">Salvar exemplo</button>
+      <span id="channel-script-example-feedback" class="api-key-feedback"></span>
+    </div>
+    <p class="hint">Roteiros de exemplo ensinam a IA o tom/ritmo/estrutura deste canal, pra gerar roteiros novos no mesmo estilo (ver "Gerar roteiro com IA" abaixo).</p>
   </section>
 
   <section id="step-voice" class="panel">
@@ -100,7 +110,27 @@
       <h2><span class="slate">03</span>Blocos do roteiro</h2>
       <button id="new-draft-btn" class="ghost">Novo vídeo</button>
     </div>
-    <p class="hint">Cole um bloco por vez (um parágrafo, por exemplo) e gere a narração antes de colar o próximo.</p>
+    <div class="generate-script-panel" id="generate-script-panel">
+      <strong>Gerar roteiro com IA</strong>
+      <span class="hint">No estilo do canal (roteiros de exemplo salvos acima) — já cria os blocos e dispara a narração sozinho.</span>
+      <div class="generate-script-source-toggle">
+        <label><input type="radio" name="script-source" id="script-source-topic" value="topic" checked> Tema</label>
+        <label><input type="radio" name="script-source" id="script-source-transcript" value="transcript"> Transcrição (.txt)</label>
+      </div>
+      <input type="text" id="script-topic-input" placeholder="Tema do vídeo (ex.: história da Honda Civic)">
+      <div class="row hidden" id="script-transcript-row">
+        <input type="file" id="script-transcript-file" accept=".txt" class="hidden">
+        <button type="button" id="script-transcript-file-btn" class="ghost small">Escolher .txt</button>
+        <span id="script-transcript-file-name" class="hint"></span>
+      </div>
+      <label class="row">
+        Duração desejada (min)
+        <input type="number" id="script-target-minutes" min="1" step="1" value="15" style="max-width:80px">
+      </label>
+      <button type="button" id="generate-script-btn" class="ghost">Gerar roteiro</button>
+      <p id="generate-script-status" class="hint"></p>
+    </div>
+    <p class="hint">Ou cole um bloco por vez (um parágrafo, por exemplo) e gere a narração antes de colar o próximo.</p>
     <textarea id="block-text" rows="4" placeholder="Cole aqui um bloco do roteiro..."></textarea>
     <div class="row block-submit-row">
       <button id="generate-block-btn" class="primary" disabled>Gerar narração deste bloco</button>

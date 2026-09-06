@@ -407,6 +407,53 @@ button:focus-visible {
   min-height: 52px;
 }
 
+#channel-script-example-form textarea {
+  min-height: 60px;
+}
+
+.script-examples-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.script-example-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.script-example-preview {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.generate-script-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.generate-script-source-toggle {
+  display: flex;
+  gap: var(--space-3);
+  font-size: 13px;
+}
+
 .row-between {
   display: flex;
   align-items: center;

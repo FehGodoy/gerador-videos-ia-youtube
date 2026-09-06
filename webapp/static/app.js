@@ -60,6 +60,22 @@ const channelAvatarPreview = document.getElementById("channel-avatar-preview");
 const channelImageStyleInput = document.getElementById("channel-image-style-input");
 const channelImageStyleSave = document.getElementById("channel-image-style-save");
 const channelImageStyleFeedback = document.getElementById("channel-image-style-feedback");
+const channelScriptExamplesList = document.getElementById("channel-script-examples-list");
+const channelScriptExampleInput = document.getElementById("channel-script-example-input");
+const channelScriptExampleFile = document.getElementById("channel-script-example-file");
+const channelScriptExampleFileBtn = document.getElementById("channel-script-example-file-btn");
+const channelScriptExampleSave = document.getElementById("channel-script-example-save");
+const channelScriptExampleFeedback = document.getElementById("channel-script-example-feedback");
+const scriptSourceTopic = document.getElementById("script-source-topic");
+const scriptSourceTranscript = document.getElementById("script-source-transcript");
+const scriptTopicInput = document.getElementById("script-topic-input");
+const scriptTranscriptRow = document.getElementById("script-transcript-row");
+const scriptTranscriptFile = document.getElementById("script-transcript-file");
+const scriptTranscriptFileBtn = document.getElementById("script-transcript-file-btn");
+const scriptTranscriptFileName = document.getElementById("script-transcript-file-name");
+const scriptTargetMinutes = document.getElementById("script-target-minutes");
+const generateScriptBtn = document.getElementById("generate-script-btn");
+const generateScriptStatus = document.getElementById("generate-script-status");
 
 let currentChannel = localStorage.getItem("lastChannel") || null;
 let favoriteIds = new Set();
@@ -357,6 +373,7 @@ async function loadIdentity() {
   channelAvatarPreview.classList.add("hidden");
   channelImageStyleInput.value = "";
   channelImageStyleFeedback.textContent = "";
+  renderScriptExamplesList([]);
   if (!currentChannel) return;
   const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/identity`);
   const identity = await resp.json();
@@ -366,7 +383,86 @@ async function loadIdentity() {
     channelAvatarPreview.src = identity.avatar_url;
     channelAvatarPreview.classList.remove("hidden");
   }
+  renderScriptExamplesList(identity.script_examples || []);
 }
+
+// Lista dos roteiros de exemplo já salvos pra este canal (usados como
+// few-shot na geração automática de roteiro, ver modules/script_writer.py)
+// — preview truncado + botão remover por índice (posição na lista).
+function renderScriptExamplesList(examples) {
+  channelScriptExamplesList.innerHTML = "";
+  examples.forEach((text, index) => {
+    const item = document.createElement("div");
+    item.className = "script-example-item";
+    const preview = document.createElement("span");
+    preview.className = "script-example-preview";
+    preview.textContent = text.length > 140 ? `${text.slice(0, 140)}...` : text;
+    preview.title = text;
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "danger-ghost icon-btn";
+    removeBtn.appendChild(icon("icon-trash"));
+    removeBtn.addEventListener("click", () => removeScriptExample(index));
+    item.append(preview, removeBtn);
+    channelScriptExamplesList.appendChild(item);
+  });
+}
+
+async function saveScriptExample(text) {
+  if (!currentChannel || !text.trim()) return;
+  channelScriptExampleFeedback.textContent = "Salvando...";
+  channelScriptExampleFeedback.className = "api-key-feedback";
+  channelScriptExampleSave.disabled = true;
+  try {
+    const resp = await fetch(`/api/channels/${encodeURIComponent(currentChannel)}/script-examples`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      channelScriptExampleFeedback.textContent = data.detail || "Não deu certo.";
+      channelScriptExampleFeedback.className = "api-key-feedback error";
+      return;
+    }
+    channelScriptExampleFeedback.textContent = "Salvo.";
+    channelScriptExampleFeedback.className = "api-key-feedback ok";
+    channelScriptExampleInput.value = "";
+    renderScriptExamplesList(data.script_examples || []);
+  } catch {
+    channelScriptExampleFeedback.textContent = "Falha de rede ao salvar.";
+    channelScriptExampleFeedback.className = "api-key-feedback error";
+  } finally {
+    channelScriptExampleSave.disabled = false;
+  }
+}
+
+async function removeScriptExample(index) {
+  if (!currentChannel) return;
+  try {
+    const resp = await fetch(
+      `/api/channels/${encodeURIComponent(currentChannel)}/script-examples/${index}`,
+      { method: "DELETE" }
+    );
+    const data = await resp.json();
+    if (resp.ok) renderScriptExamplesList(data.script_examples || []);
+  } catch {
+    showError("Falha de rede ao remover o exemplo.");
+  }
+}
+
+channelScriptExampleSave.addEventListener("click", () => saveScriptExample(channelScriptExampleInput.value));
+
+channelScriptExampleFileBtn.addEventListener("click", () => channelScriptExampleFile.click());
+
+channelScriptExampleFile.addEventListener("change", () => {
+  const file = channelScriptExampleFile.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => saveScriptExample(String(reader.result || ""));
+  reader.readAsText(file);
+  channelScriptExampleFile.value = "";
+});
 
 channelHandleSave.addEventListener("click", async () => {
   if (!currentChannel) return;
@@ -448,6 +544,92 @@ channelAvatarInput.addEventListener("change", async () => {
     channelAvatarInput.value = "";
   }
 });
+
+// --- Geração automática de roteiro (modules/script_writer.py) ---
+// Tema OU transcrição (.txt, lida no cliente) + estilo do canal (roteiros
+// de exemplo salvos acima) -> roteiro novo já fatiado em blocos. Cada
+// bloco entra no MESMO caminho de sempre (createNarrationBlock), que já
+// encadeia sozinho em fetchSlotHints -> autoGenerateBlockImages.
+let scriptTranscriptText = null;
+
+function updateScriptSourceUI() {
+  const isTranscript = scriptSourceTranscript.checked;
+  scriptTranscriptRow.classList.toggle("hidden", !isTranscript);
+  scriptTopicInput.classList.toggle("hidden", isTranscript);
+}
+scriptSourceTopic.addEventListener("change", updateScriptSourceUI);
+scriptSourceTranscript.addEventListener("change", updateScriptSourceUI);
+updateScriptSourceUI();
+
+scriptTranscriptFileBtn.addEventListener("click", () => scriptTranscriptFile.click());
+
+scriptTranscriptFile.addEventListener("change", () => {
+  const file = scriptTranscriptFile.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    scriptTranscriptText = String(reader.result || "");
+    scriptTranscriptFileName.textContent = file.name;
+  };
+  reader.readAsText(file);
+});
+
+generateScriptBtn.addEventListener("click", startGenerateScript);
+
+async function startGenerateScript() {
+  clearError();
+  if (!selectedVoiceId) {
+    showError("Selecione uma voz antes de gerar o roteiro.");
+    return;
+  }
+  const isTranscript = scriptSourceTranscript.checked;
+  const topic = scriptTopicInput.value.trim();
+  if (isTranscript && !scriptTranscriptText) {
+    showError("Escolha um arquivo .txt de transcrição antes.");
+    return;
+  }
+  if (!isTranscript && !topic) {
+    showError("Escreva um tema antes de gerar o roteiro.");
+    return;
+  }
+  const targetMinutes = Number(scriptTargetMinutes.value) || null;
+
+  generateScriptBtn.disabled = true;
+  generateScriptStatus.textContent = "Gerando roteiro...";
+  try {
+    const resp = await fetch("/api/scripts/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        channel: currentChannel,
+        language: selectedVoiceLanguage,
+        topic: isTranscript ? null : topic,
+        transcript: isTranscript ? scriptTranscriptText : null,
+        target_minutes: targetMinutes,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      throw new Error(data.detail || `Erro ao gerar roteiro (${resp.status})`);
+    }
+
+    const blockTexts = data.blocks || [];
+    for (let i = 0; i < blockTexts.length; i++) {
+      generateScriptStatus.textContent = `Criando bloco ${i + 1}/${blockTexts.length}...`;
+      try {
+        await createNarrationBlock(blockTexts[i]);
+      } catch (err) {
+        showError(`Bloco ${i + 1}: ${err.message} — continuando com os próximos.`);
+      }
+    }
+    generateScriptStatus.textContent = `Roteiro gerado: ${blockTexts.length} bloco(s) criado(s).`;
+  } catch (err) {
+    showError(err.message);
+    generateScriptStatus.textContent = "";
+  } finally {
+    generateScriptBtn.disabled = false;
+  }
+}
 
 async function loadFavorites() {
   if (!currentChannel) {
@@ -608,6 +790,40 @@ function unlockDraft() {
   renderVoicesGrid();
 }
 
+// Núcleo de "colar um bloco e gerar a narração dele" — extraído pra ser
+// reutilizável tanto pelo clique manual (generateBlock) quanto pelo loop
+// automático que cria vários blocos em sequência a partir de um roteiro
+// gerado por IA (ver startGenerateScript). Mesmo caminho pros dois: gera
+// a narração, entra em `blocks`/`blockSlots`, tranca o rascunho, e (modo
+// own_media) dispara fetchSlotHints — que já encadeia sozinho na geração
+// automática de imagem (autoGenerateBlockImages).
+async function createNarrationBlock(text) {
+  const blockId = nextBlockId;
+  const resp = await fetch("/api/narration-blocks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slug: draftSlug,
+      block_id: blockId,
+      text,
+      voice_id: selectedVoiceId,
+      language: selectedVoiceLanguage,
+      speed: Number(speedSlider.value),
+    }),
+  });
+  if (!resp.ok) {
+    const body = await resp.json().catch(() => ({}));
+    throw new Error(body.detail || `Erro ao gerar narração (${resp.status})`);
+  }
+  const result = await resp.json();
+  blocks.push({ id: blockId, text, audioUrl: result.audio_url, duration: result.duration_seconds });
+  blockSlots[blockId] = result.slots || [];
+  nextBlockId += 1;
+  lockDraft();
+  renderBlocksList();
+  if (mediaMode === "own_media") fetchSlotHints(blockId, selectedVoiceLanguage);
+}
+
 async function generateBlock() {
   clearError();
   const text = blockText.value.trim();
@@ -617,31 +833,8 @@ async function generateBlock() {
   generateBlockBtn.textContent = "Gerando narração...";
 
   try {
-    const blockId = nextBlockId;
-    const resp = await fetch("/api/narration-blocks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        slug: draftSlug,
-        block_id: blockId,
-        text,
-        voice_id: selectedVoiceId,
-        language: selectedVoiceLanguage,
-        speed: Number(speedSlider.value),
-      }),
-    });
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      throw new Error(body.detail || `Erro ao gerar narração (${resp.status})`);
-    }
-    const result = await resp.json();
-    blocks.push({ id: blockId, text, audioUrl: result.audio_url, duration: result.duration_seconds });
-    blockSlots[blockId] = result.slots || [];
-    nextBlockId += 1;
+    await createNarrationBlock(text);
     blockText.value = "";
-    lockDraft();
-    renderBlocksList();
-    if (mediaMode === "own_media") fetchSlotHints(blockId, selectedVoiceLanguage);
   } catch (err) {
     showError(err.message);
   } finally {
@@ -1855,6 +2048,10 @@ function resetDraft() {
   mediaPool = { photos: [], videos: [] };
   nextBlockId = 0;
   blockText.value = "";
+  scriptTranscriptText = null;
+  scriptTranscriptFileName.textContent = "";
+  scriptTopicInput.value = "";
+  generateScriptStatus.textContent = "";
   blocksList.innerHTML = "";
   currentJobId = null;
   stepReview.classList.add("hidden");
