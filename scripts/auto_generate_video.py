@@ -17,6 +17,13 @@ Uso:
 
     python scripts/auto_generate_video.py --channel meucanal --voice-id VOICE_ID \
         --transcript-file caminho/transcricao.txt --target-minutes 15
+
+    # Roteiro já pronto, usado EXATAMENTE como está (sem passar pela IA
+    # pra reescrever/adaptar nada) — pula POST /api/scripts/generate, só
+    # fatia o arquivo em blocos (um parágrafo = um bloco, mesmo grão que
+    # colar manualmente no painel) e segue pro resto do pipeline.
+    python scripts/auto_generate_video.py --channel meucanal --voice-id VOICE_ID \
+        --script-file caminho/roteiro_pronto.txt
 """
 from __future__ import annotations
 
@@ -79,6 +86,19 @@ def ensure_server_running(base_url: str) -> None:
             return
         time.sleep(_SERVER_POLL_INTERVAL_SECONDS)
     raise RuntimeError(f"Servidor não respondeu em {base_url} depois de {_SERVER_START_TIMEOUT_SECONDS}s.")
+
+
+def split_script_into_blocks(text: str) -> list[str]:
+    """Fatia um roteiro JÁ PRONTO em blocos, um parágrafo por bloco (linha
+    em branco separa um do outro) — mesmo grão que colar manualmente no
+    painel (ver `#block-text`, "Cole um bloco por vez (um parágrafo, por
+    exemplo)"). Usado só quando `--script-file` é passado — pula
+    completamente a geração por IA (`generate_script`/POST
+    /api/scripts/generate), o texto do usuário nunca é reescrito."""
+    import re
+
+    paragraphs = re.split(r"\n\s*\n", text.strip())
+    return [p.strip() for p in paragraphs if p.strip()]
 
 
 def generate_script(base_url: str, channel: str, language: str, topic: str | None, transcript: str | None, target_minutes: float) -> list[str]:
@@ -248,13 +268,19 @@ def main() -> int:
     parser.add_argument("--target-minutes", type=float, default=15.0)
     parser.add_argument("--topic", default=None)
     parser.add_argument("--transcript-file", default=None)
+    parser.add_argument(
+        "--script-file", default=None,
+        help="Roteiro JÁ PRONTO, usado exatamente como está (sem passar pela IA) — pula a geração "
+             "de roteiro, só fatia o arquivo em blocos (um parágrafo = um bloco).",
+    )
     render_group = parser.add_mutually_exclusive_group()
     render_group.add_argument("--remote-render", dest="remote_render", action="store_true", default=True)
     render_group.add_argument("--no-remote-render", dest="remote_render", action="store_false")
     args = parser.parse_args()
 
-    if bool(args.topic) == bool(args.transcript_file):
-        parser.error("Informe exatamente um dos dois: --topic OU --transcript-file.")
+    sources_given = sum(bool(x) for x in (args.topic, args.transcript_file, args.script_file))
+    if sources_given != 1:
+        parser.error("Informe exatamente um dos três: --topic, --transcript-file OU --script-file.")
 
     transcript = None
     if args.transcript_file:
@@ -263,15 +289,26 @@ def main() -> int:
             parser.error(f"Arquivo de transcrição não encontrado: {transcript_path}")
         transcript = transcript_path.read_text(encoding="utf-8")
 
+    script_path = None
+    if args.script_file:
+        script_path = Path(args.script_file)
+        if not script_path.exists():
+            parser.error(f"Arquivo de roteiro não encontrado: {script_path}")
+
     try:
         ensure_server_running(args.base_url)
 
         slug = f"cli-{uuid.uuid4().hex[:10]}"
         log(f"Rascunho: {slug}")
 
-        block_texts = generate_script(
-            args.base_url, args.channel, args.language, args.topic, transcript, args.target_minutes
-        )
+        if script_path:
+            log("Usando roteiro já pronto (sem passar pela IA) — só fatiando em blocos...")
+            block_texts = split_script_into_blocks(script_path.read_text(encoding="utf-8"))
+            log(f"Roteiro fatiado em {len(block_texts)} bloco(s).")
+        else:
+            block_texts = generate_script(
+                args.base_url, args.channel, args.language, args.topic, transcript, args.target_minutes
+            )
 
         blocks_for_job = []
         for i, text in enumerate(block_texts):
