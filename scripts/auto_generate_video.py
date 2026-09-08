@@ -97,20 +97,30 @@ def split_script_into_blocks(text: str) -> list[str]:
     /api/scripts/generate), o texto do usuário nunca é reescrito.
 
     Parágrafo INTEIRAMENTE em maiúsculas (ignorando pontuação/espaço) é
-    tratado como título/marcador de seção, não narração — cobre tanto um
-    título solto ("ROTEIRO COMPLETO") quanto divisores tipo
-    "=== BLOCK 1 - ... ===" (bug real pego testando com um roteiro de
-    verdade do usuário: sem esse filtro, esses marcadores viravam blocos
-    de narração absurdos, sendo narrados/gerando imagem de verdade).
-    Narração normal nunca é 100% maiúscula, então o risco de descartar
-    uma frase de verdade por engano é baixo — mas é bom avisar o usuário
-    quantos blocos sobraram antes de gastar dinheiro de verdade.
+    tratado como título/marcador de seção, não narração — cobre divisores
+    tipo "=== BLOCK 1 - ... ===" ou "--- BLOCK 1 ---" (bug real pego
+    testando com um roteiro de verdade do usuário: sem esse filtro, esses
+    marcadores viravam blocos de narração absurdos, sendo narrados/
+    gerando imagem de verdade). Narração normal nunca é 100% maiúscula,
+    então o risco de descartar uma frase de verdade por engano é baixo.
+
+    Além disso, TUDO antes do primeiro marcador desse tipo também é
+    tratado como preâmbulo (título, nome do canal) — mesmo quando o
+    título em si não é 100% maiúsculo. Segundo bug real pego testando com
+    outro roteiro de verdade: um título em alemão ("Trockener Mund am
+    Morgen: ...") capitaliza só os substantivos (regra do idioma), não a
+    frase inteira, então não batia no filtro isupper() sozinho — mas
+    ainda assim não é narração, é só metadado do documento.
     """
     import re
 
     paragraphs = re.split(r"\n\s*\n", text.strip())
     clean = [p.strip() for p in paragraphs if p.strip()]
-    return [p for p in clean if not p.isupper()]
+
+    header_indices = [i for i, p in enumerate(clean) if p.isupper()]
+    preamble_end = header_indices[0] if header_indices else 0
+    header_set = set(header_indices)
+    return [p for i, p in enumerate(clean) if i >= preamble_end and i not in header_set]
 
 
 def generate_script(base_url: str, channel: str, language: str, topic: str | None, transcript: str | None, target_minutes: float) -> list[str]:
