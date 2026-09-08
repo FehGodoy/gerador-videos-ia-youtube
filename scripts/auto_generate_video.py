@@ -88,6 +88,23 @@ def ensure_server_running(base_url: str) -> None:
     raise RuntimeError(f"Servidor não respondeu em {base_url} depois de {_SERVER_START_TIMEOUT_SECONDS}s.")
 
 
+_SECTION_BORDER_RE = __import__("re").compile(r"^[-=_*]{2,}.*[-=_*]{2,}$")
+
+
+def _is_section_header(paragraph: str) -> bool:
+    """Um parágrafo é marcador de seção se: (a) é uma linha só cercada por
+    um mesmo tipo de borda repetida (`--- ... ---`, `=== ... ===`), ou (b)
+    é INTEIRAMENTE maiúsculo (ignorando pontuação/espaço) — cobre título
+    sem borda nenhuma. A checagem (a) foi adicionada depois de um roteiro
+    de verdade usar `--- BLOCK 1: Gancho + Fundamento ---`, onde as
+    palavras do título ("Gancho", "Fundamento") não são maiúsculas, então
+    só a checagem (b) (usada sozinha antes) deixava esse marcador passar
+    batido como narração de verdade."""
+    if "\n" not in paragraph and _SECTION_BORDER_RE.match(paragraph):
+        return True
+    return paragraph.isupper()
+
+
 def split_script_into_blocks(text: str) -> list[str]:
     """Fatia um roteiro JÁ PRONTO em blocos, um parágrafo por bloco (linha
     em branco separa um do outro) — mesmo grão que colar manualmente no
@@ -96,28 +113,25 @@ def split_script_into_blocks(text: str) -> list[str]:
     completamente a geração por IA (`generate_script`/POST
     /api/scripts/generate), o texto do usuário nunca é reescrito.
 
-    Parágrafo INTEIRAMENTE em maiúsculas (ignorando pontuação/espaço) é
-    tratado como título/marcador de seção, não narração — cobre divisores
-    tipo "=== BLOCK 1 - ... ===" ou "--- BLOCK 1 ---" (bug real pego
-    testando com um roteiro de verdade do usuário: sem esse filtro, esses
-    marcadores viravam blocos de narração absurdos, sendo narrados/
-    gerando imagem de verdade). Narração normal nunca é 100% maiúscula,
-    então o risco de descartar uma frase de verdade por engano é baixo.
+    Marcadores de seção (ver `_is_section_header`) nunca viram bloco de
+    narração — bug real pego testando com um roteiro de verdade do
+    usuário: sem esse filtro, esses marcadores viravam blocos de
+    narração absurdos, sendo narrados/gerando imagem de verdade.
 
     Além disso, TUDO antes do primeiro marcador desse tipo também é
     tratado como preâmbulo (título, nome do canal) — mesmo quando o
-    título em si não é 100% maiúsculo. Segundo bug real pego testando com
-    outro roteiro de verdade: um título em alemão ("Trockener Mund am
-    Morgen: ...") capitaliza só os substantivos (regra do idioma), não a
-    frase inteira, então não batia no filtro isupper() sozinho — mas
-    ainda assim não é narração, é só metadado do documento.
+    título em si não bate em `_is_section_header` sozinho. Segundo bug
+    real pego testando com outro roteiro de verdade: um título em alemão
+    ("Trockener Mund am Morgen: ...") capitaliza só os substantivos
+    (regra do idioma), não a frase inteira — mas ainda assim não é
+    narração, é só metadado do documento.
     """
     import re
 
     paragraphs = re.split(r"\n\s*\n", text.strip())
     clean = [p.strip() for p in paragraphs if p.strip()]
 
-    header_indices = [i for i, p in enumerate(clean) if p.isupper()]
+    header_indices = [i for i, p in enumerate(clean) if _is_section_header(p)]
     preamble_end = header_indices[0] if header_indices else 0
     header_set = set(header_indices)
     return [p for i, p in enumerate(clean) if i >= preamble_end and i not in header_set]
@@ -140,7 +154,7 @@ def group_script_into_blocks_by_section(text: str) -> list[str]:
     paragraphs = re.split(r"\n\s*\n", text.strip())
     clean = [p.strip() for p in paragraphs if p.strip()]
 
-    header_indices = [i for i, p in enumerate(clean) if p.isupper()]
+    header_indices = [i for i, p in enumerate(clean) if _is_section_header(p)]
     if not header_indices:
         return clean
 
