@@ -123,6 +123,45 @@ def split_script_into_blocks(text: str) -> list[str]:
     return [p for i, p in enumerate(clean) if i >= preamble_end and i not in header_set]
 
 
+def group_script_into_blocks_by_section(text: str) -> list[str]:
+    """Variante de `split_script_into_blocks` que agrupa todos os
+    parágrafos de uma mesma seção nomeada (entre dois marcadores tipo
+    "--- BLOCK N ---"/"=== BLOCK N ===") numa ÚNICA narração, em vez de
+    um bloco por parágrafo — pedido do usuário quando o roteiro tem
+    parágrafos curtos demais e vira narração fragmentada demais (menos
+    chamadas de Cartesia/LLM; o número de IMAGENS geradas não muda —
+    continua uma por trecho de ~5s dentro do bloco, independente de como
+    ele foi agrupado). Preâmbulo (antes do 1º marcador) é descartado,
+    mesma regra de `split_script_into_blocks`. Sem marcador nenhum no
+    texto, cai pro comportamento de sempre (um parágrafo = um bloco) —
+    não tem seção pra agrupar."""
+    import re
+
+    paragraphs = re.split(r"\n\s*\n", text.strip())
+    clean = [p.strip() for p in paragraphs if p.strip()]
+
+    header_indices = [i for i, p in enumerate(clean) if p.isupper()]
+    if not header_indices:
+        return clean
+
+    header_set = set(header_indices)
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for i, p in enumerate(clean):
+        if i < header_indices[0]:
+            continue  # preâmbulo
+        if i in header_set:
+            if current:
+                groups.append(current)
+            current = []
+            continue
+        current.append(p)
+    if current:
+        groups.append(current)
+
+    return ["\n\n".join(g) for g in groups]
+
+
 def generate_script(base_url: str, channel: str, language: str, topic: str | None, transcript: str | None, target_minutes: float) -> list[str]:
     log("Gerando roteiro...")
     resp = requests.post(
@@ -325,7 +364,13 @@ def main() -> int:
     parser.add_argument(
         "--script-file", default=None,
         help="Roteiro JÁ PRONTO, usado exatamente como está (sem passar pela IA) — pula a geração "
-             "de roteiro, só fatia o arquivo em blocos (um parágrafo = um bloco).",
+             "de roteiro, só fatia o arquivo em blocos (um parágrafo = um bloco por padrão).",
+    )
+    parser.add_argument(
+        "--group-by-section", action="store_true", default=False,
+        help="Com --script-file: agrupa os parágrafos de cada seção nomeada (\"--- BLOCK N ---\") "
+             "numa única narração, em vez de um bloco por parágrafo — menos chamadas de "
+             "narração/dica; o número de imagens geradas não muda.",
     )
     render_group = parser.add_mutually_exclusive_group()
     render_group.add_argument("--remote-render", dest="remote_render", action="store_true", default=True)
@@ -357,8 +402,13 @@ def main() -> int:
 
         if script_path:
             log("Usando roteiro já pronto (sem passar pela IA) — só fatiando em blocos...")
-            block_texts = split_script_into_blocks(script_path.read_text(encoding="utf-8"))
-            log(f"Roteiro fatiado em {len(block_texts)} bloco(s).")
+            script_text = script_path.read_text(encoding="utf-8")
+            if args.group_by_section:
+                block_texts = group_script_into_blocks_by_section(script_text)
+                log(f"Roteiro agrupado em {len(block_texts)} bloco(s) (um por seção nomeada).")
+            else:
+                block_texts = split_script_into_blocks(script_text)
+                log(f"Roteiro fatiado em {len(block_texts)} bloco(s) (um por parágrafo).")
         else:
             block_texts = generate_script(
                 args.base_url, args.channel, args.language, args.topic, transcript, args.target_minutes
