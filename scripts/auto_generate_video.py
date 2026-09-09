@@ -187,7 +187,12 @@ def generate_script(base_url: str, channel: str, language: str, topic: str | Non
             "transcript": transcript,
             "target_minutes": target_minutes,
         },
-        timeout=300,
+        # bug real: um roteiro/transcricao mais longa (perto do limite de
+        # _SCRIPT_MAX_TOKENS em modules/script_writer.py) estourou um
+        # timeout de 300s -- webapp/static/app.js nao tem timeout nenhum
+        # nessa chamada (fetch do navegador), entao aqui precisa de folga
+        # bem maior pra nao falhar por impaciencia do CLI, nao da API.
+        timeout=900,
     )
     if not resp.ok:
         raise RuntimeError(f"Falha ao gerar roteiro: {resp.json().get('detail', resp.text)}")
