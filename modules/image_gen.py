@@ -13,28 +13,73 @@ integrar: resultado bom o bastante pra esse caso de uso, bem mais barato
 que gerar via API do GPT Image (~$0,003/megapixel). Constante no código
 (não config.yaml) porque é uma integração de fornecedor único, mesmo
 padrão de outras integrações do projeto (ex.: Cartesia em narration.py).
+
+Exceção: quando o prompt pede texto legível NA CENA (infográfico, placa,
+capa, documento — ver REGRA CRÍTICA DE IDIOMA em modules/timeline.py), o
+FLUX schnell renderiza mal (letras "tremidas"/incompletas — limitação
+conhecida de modelos rápidos/destilados, que "adivinham" a forma da letra
+em vez de desenhar com precisão). Nesse caso, usa Ideogram v3 (fal.ai)
+em vez do FLUX — especialista em texto legível (~90% de precisão),
+~10x mais caro (Turbo, $0,03/imagem vs ~$0,003 do schnell), mas usado só
+nas poucas imagens de cada vídeo que realmente pedem texto, então o
+impacto no custo total é pequeno. Detecção: o próprio prompt de dica
+(_HINTS_PROMPT_TEMPLATE) já instrui a IA a escrever o texto exato ENTRE
+ASPAS dentro do image_prompt quando a cena pede texto — reaproveita esse
+sinal existente em vez de pedir um campo novo (ver _prompt_wants_text_in_image).
 """
 from __future__ import annotations
 
 import logging
+import re
 import time
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-FAL_MODEL_URL = "https://fal.run/fal-ai/flux/schnell"
+FAL_FLUX_SCHNELL_URL = "https://fal.run/fal-ai/flux/schnell"
+FAL_IDEOGRAM_URL = "https://fal.run/fal-ai/ideogram/v3"
 _TIMEOUT_SECONDS = 60
 _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 3
 
+# Sinal de que o image_prompt pede texto legível na cena: a REGRA CRÍTICA DE
+# IDIOMA (modules/timeline.py::_HINTS_PROMPT_TEMPLATE) instrui a IA a
+# escrever a palavra exata entre aspas quando a cena tem texto — ver exemplo
+# "CERTO" no prompt. Aspas simples ou duplas, 2+ caracteres dentro.
+_TEXT_IN_IMAGE_RE = re.compile(r"['\"][^'\"]{2,}['\"]")
+
+
+def _prompt_wants_text_in_image(prompt: str) -> bool:
+    return bool(_TEXT_IN_IMAGE_RE.search(prompt))
+
+
+def _get_fal_key() -> str:
+    import os
+
+    fal_key = os.environ.get("FAL_KEY")
+    if not fal_key:
+        raise RuntimeError(
+            "FAL_KEY não definida no .env — configure sua chave do fal.ai "
+            "(https://fal.ai/dashboard/keys) antes de gerar imagens por IA."
+        )
+    return fal_key
+
+
+def _download(image: dict) -> tuple[bytes, str]:
+    img_resp = requests.get(image["url"], timeout=_TIMEOUT_SECONDS)
+    img_resp.raise_for_status()
+    ext = ".png" if "png" in image.get("content_type", "") else ".jpg"
+    return img_resp.content, ext
+
 
 def generate_image(prompt: str, image_size: str = "landscape_16_9") -> tuple[bytes, str]:
-    """Gera uma imagem via fal.ai (FLUX schnell) a partir de `prompt` e
-    devolve `(bytes_da_imagem, extensao)`. `image_size` aceita os presets
-    do fal.ai (landscape_16_9 combina com o formato 1920x1080 do projeto —
-    o Remotion recorta com object-fit:cover, não precisa bater pixel a
-    pixel).
+    """Gera uma imagem via fal.ai a partir de `prompt` e devolve
+    `(bytes_da_imagem, extensao)`. `image_size` aceita os presets do FLUX
+    (landscape_16_9 combina com o formato 1920x1080 do projeto — o
+    Remotion recorta com object-fit:cover, não precisa bater pixel a
+    pixel); convertido internamente pro formato de aspect-ratio do
+    Ideogram quando o prompt pede texto na cena (ver módulo).
 
     Levanta RuntimeError com mensagem clara (chave ausente, erro da API)
     em vez de deixar a exceção genérica do requests vazar — quem chama
@@ -44,45 +89,50 @@ def generate_image(prompt: str, image_size: str = "landscape_16_9") -> tuple[byt
     de retry já aplicado em modules/timeline.py::generate_slot_hints:
     falha transitória de rede/API não devia exigir clique manual de novo.
     """
-    import os
-
-    fal_key = os.environ.get("FAL_KEY")
-    if not fal_key:
-        raise RuntimeError(
-            "FAL_KEY não definida no .env — configure sua chave do fal.ai "
-            "(https://fal.ai/dashboard/keys) antes de gerar imagens por IA."
-        )
+    fal_key = _get_fal_key()
+    use_ideogram = _prompt_wants_text_in_image(prompt)
 
     last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
         if attempt > 0:
             time.sleep(_RETRY_DELAY_SECONDS)
         try:
-            resp = requests.post(
-                FAL_MODEL_URL,
-                headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
-                json={
-                    "prompt": prompt,
-                    "image_size": image_size,
-                    "num_inference_steps": 4,
-                    "num_images": 1,
-                    "enable_safety_checker": True,
-                },
-                timeout=_TIMEOUT_SECONDS,
-            )
+            if use_ideogram:
+                resp = requests.post(
+                    FAL_IDEOGRAM_URL,
+                    headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
+                    json={
+                        "prompt": prompt,
+                        # mesmo enum de preset do FLUX (confirmado testando ao
+                        # vivo contra a API real: um 422 revelou que a doc
+                        # pesquisada sugerindo "16:9" estava desatualizada —
+                        # o schema real aceita 'landscape_16_9' etc., igual FLUX).
+                        "image_size": image_size,
+                        "rendering_speed": "TURBO",
+                        "num_images": 1,
+                    },
+                    timeout=_TIMEOUT_SECONDS,
+                )
+            else:
+                resp = requests.post(
+                    FAL_FLUX_SCHNELL_URL,
+                    headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
+                    json={
+                        "prompt": prompt,
+                        "image_size": image_size,
+                        "num_inference_steps": 4,
+                        "num_images": 1,
+                        "enable_safety_checker": True,
+                    },
+                    timeout=_TIMEOUT_SECONDS,
+                )
             resp.raise_for_status()
-            data = resp.json()
-            image = data["images"][0]
-            image_url = image["url"]
-
-            img_resp = requests.get(image_url, timeout=_TIMEOUT_SECONDS)
-            img_resp.raise_for_status()
-            ext = ".png" if "png" in image.get("content_type", "") else ".jpg"
-            return img_resp.content, ext
+            return _download(resp.json()["images"][0])
         except Exception as exc:
             last_error = exc
             logger.warning(
-                "Geração de imagem via fal.ai falhou (tentativa %d/%d): %s",
+                "Geração de imagem via fal.ai (%s) falhou (tentativa %d/%d): %s",
+                "Ideogram v3" if use_ideogram else "FLUX schnell",
                 attempt + 1, _MAX_ATTEMPTS, exc, exc_info=True,
             )
 
