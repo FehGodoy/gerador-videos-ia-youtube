@@ -73,13 +73,25 @@ def _download(image: dict) -> tuple[bytes, str]:
     return img_resp.content, ext
 
 
-def generate_image(prompt: str, image_size: str = "landscape_16_9") -> tuple[bytes, str]:
+def generate_image(
+    prompt: str, image_size: str = "landscape_16_9", allow_ideogram: bool = True
+) -> tuple[bytes, str, str]:
     """Gera uma imagem via fal.ai a partir de `prompt` e devolve
-    `(bytes_da_imagem, extensao)`. `image_size` aceita os presets do FLUX
-    (landscape_16_9 combina com o formato 1920x1080 do projeto — o
-    Remotion recorta com object-fit:cover, não precisa bater pixel a
-    pixel); convertido internamente pro formato de aspect-ratio do
-    Ideogram quando o prompt pede texto na cena (ver módulo).
+    `(bytes_da_imagem, extensao, modelo_usado)` — `modelo_usado` é
+    "ideogram" ou "flux_schnell", pra quem chama persistir e contar (ver
+    modules/timeline.py::count_text_image_generations, usado pra aplicar o
+    teto `image_gen.max_text_images_per_draft` do config.yaml).
+
+    `allow_ideogram=False` força FLUX schnell mesmo quando o prompt pede
+    texto na cena — usado quando o rascunho já bateu o teto de imagens
+    caras: a imagem sai com texto pior (mesma limitação de sempre do
+    schnell), mas o pipeline nunca quebra nem para de gerar imagem por
+    causa de orçamento.
+
+    `image_size` aceita os presets do FLUX (landscape_16_9 combina com o
+    formato 1920x1080 do projeto — o Remotion recorta com
+    object-fit:cover, não precisa bater pixel a pixel); o Ideogram usa o
+    MESMO enum de preset (confirmado testando ao vivo contra a API real).
 
     Levanta RuntimeError com mensagem clara (chave ausente, erro da API)
     em vez de deixar a exceção genérica do requests vazar — quem chama
@@ -90,7 +102,7 @@ def generate_image(prompt: str, image_size: str = "landscape_16_9") -> tuple[byt
     falha transitória de rede/API não devia exigir clique manual de novo.
     """
     fal_key = _get_fal_key()
-    use_ideogram = _prompt_wants_text_in_image(prompt)
+    use_ideogram = allow_ideogram and _prompt_wants_text_in_image(prompt)
 
     last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
@@ -127,7 +139,8 @@ def generate_image(prompt: str, image_size: str = "landscape_16_9") -> tuple[byt
                     timeout=_TIMEOUT_SECONDS,
                 )
             resp.raise_for_status()
-            return _download(resp.json()["images"][0])
+            img_bytes, ext = _download(resp.json()["images"][0])
+            return img_bytes, ext, ("ideogram" if use_ideogram else "flux_schnell")
         except Exception as exc:
             last_error = exc
             logger.warning(

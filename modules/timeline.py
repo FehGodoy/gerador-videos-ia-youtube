@@ -275,6 +275,22 @@ def list_block_ids(slug: str) -> list[int]:
     return sorted(ids)
 
 
+def count_text_image_generations(slug: str) -> int:
+    """Conta quantos trechos do rascunho inteiro (todos os blocos já
+    fatiados, ver list_block_ids) já geraram imagem pelo modelo caro de
+    texto (Ideogram v3, ver modules/image_gen.py) — usado pra aplicar o
+    teto `image_gen.max_text_images_per_draft` do config.yaml antes de
+    cada nova geração (webapp/server.py). Varre o manifesto em disco em
+    vez de manter contador em memória: sobrevive a restart do servidor e
+    funciona igual seja a chamada vinda do painel (JS) ou da CLI
+    (scripts/auto_generate_video.py), sem estado duplicado entre os dois."""
+    count = 0
+    for beat_id in list_block_ids(slug):
+        manifest = load_manifest(slug, beat_id) or []
+        count += sum(1 for slot in manifest if slot.get("image_gen_model") == "ideogram")
+    return count
+
+
 def is_single_media_slot(slot: dict) -> bool:
     """True quando o trecho é elegível pro preenchimento automático de
     mídia única (padrão/parallax_pan) — mesmo critério de

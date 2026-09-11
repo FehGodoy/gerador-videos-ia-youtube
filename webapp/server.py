@@ -1034,8 +1034,17 @@ async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int
             detail="Geração automática só funciona em efeitos de mídia única (padrão/parallax pan).",
         )
 
+    # teto de imagens pelo modelo caro de texto (Ideogram v3) por rascunho
+    # inteiro (config.yaml::image_gen.max_text_images_per_draft) — acima
+    # disso, cai pro FLUX schnell mesmo se o prompt pedir texto na cena
+    # (perde nitidez do texto, mas nunca estoura o orçamento do vídeo).
+    max_text_images = load_config()["image_gen"]["max_text_images_per_draft"]
+    allow_ideogram = timeline_module.count_text_image_generations(slug) < max_text_images
+
     try:
-        image_bytes, ext = await asyncio.to_thread(image_gen.generate_image, slot["image_prompt"])
+        image_bytes, ext, model_used = await asyncio.to_thread(
+            image_gen.generate_image, slot["image_prompt"], "landscape_16_9", allow_ideogram
+        )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e
 
@@ -1044,6 +1053,7 @@ async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int
     if not media_list:
         media_list.append(None)
     media_list[0] = {"pool_filename": saved["filename"], "media_type": "image"}
+    slot["image_gen_model"] = model_used
     slot.pop("sync_warning", None)
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}

@@ -175,6 +175,15 @@ paths:
   fallback_footage: "assets/fallback"
   music_dir: "assets/music"
 
+image_gen:
+  # fal.ai FLUX schnell (~$0,003/imagem) x Ideogram v3 Turbo (~$0,03/imagem,
+  # ~10x mais caro) -- ver modules/image_gen.py::_prompt_wants_text_in_image.
+  # Teto de quantas imagens POR RASCUNHO podem usar o modelo caro de texto;
+  # a partir daí, os trechos seguintes que pedirem texto caem pro FLUX
+  # schnell mesmo assim (perde nitidez do texto, mas não estoura o
+  # orçamento do vídeo). Contagem em modules/timeline.py::count_text_image_generations.
+  max_text_images_per_draft: 8
+
 remotion:
   project_dir: "remotion"
   composition_id: "VideoComposition"
