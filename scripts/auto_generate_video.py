@@ -89,20 +89,46 @@ def ensure_server_running(base_url: str) -> None:
 
 
 _SECTION_BORDER_RE = __import__("re").compile(r"^[-=_*]{2,}.*[-=_*]{2,}$")
+# roteiro de ficção longa (ex.: "Secretos del Corazón") usa "ACTO N — Título
+# (0-3 minutos)" como marcador -- não bate isupper() (o intervalo de tempo em
+# minúsculo quebra) nem a borda repetida acima, mas o prefixo "ACTO N" (ou
+# variantes em outros idiomas/convenções) é um sinal claro o bastante sozinho.
+_CHAPTER_HEADER_RE = __import__("re").compile(
+    r"^(ACTO|ACT|CAP[ÍI]TULO|PARTE|BLOQUE)\s+\d+\b", __import__("re").IGNORECASE
+)
 
 
 def _is_section_header(paragraph: str) -> bool:
     """Um parágrafo é marcador de seção se: (a) é uma linha só cercada por
-    um mesmo tipo de borda repetida (`--- ... ---`, `=== ... ===`), ou (b)
-    é INTEIRAMENTE maiúsculo (ignorando pontuação/espaço) — cobre título
-    sem borda nenhuma. A checagem (a) foi adicionada depois de um roteiro
-    de verdade usar `--- BLOCK 1: Gancho + Fundamento ---`, onde as
-    palavras do título ("Gancho", "Fundamento") não são maiúsculas, então
-    só a checagem (b) (usada sozinha antes) deixava esse marcador passar
-    batido como narração de verdade."""
+    um mesmo tipo de borda repetida (`--- ... ---`, `=== ... ===`), (b) é
+    INTEIRAMENTE maiúsculo (ignorando pontuação/espaço) — cobre título sem
+    borda nenhuma, ou (c) começa com um prefixo de capítulo/ato reconhecido
+    (`ACTO 1 — ...`), mesmo com o resto da linha em minúsculo. A checagem
+    (a) foi adicionada depois de um roteiro de verdade usar
+    `--- BLOCK 1: Gancho + Fundamento ---`, onde as palavras do título
+    ("Gancho", "Fundamento") não são maiúsculas, então só a checagem (b)
+    (usada sozinha antes) deixava esse marcador passar batido como
+    narração de verdade. A checagem (c) veio de outro roteiro de verdade
+    ("Secretos del Corazón", história longa em 7 atos), onde o cabeçalho
+    inclui um intervalo de tempo em minúsculo — `"ACTO 1 — GANCHO
+    INMEDIATO (0-3 minutos)"` não é 100% maiúsculo por causa de
+    "minutos"."""
     if "\n" not in paragraph and _SECTION_BORDER_RE.match(paragraph):
         return True
+    if _CHAPTER_HEADER_RE.match(paragraph.strip()):
+        return True
     return paragraph.isupper()
+
+
+def _is_production_note(paragraph: str) -> bool:
+    """Parágrafo que é só uma nota de produção pro criador (ex.: sugestão
+    visual pra ilustrar a cena, `[Visual: ...]`), nunca narração de
+    verdade — cobre qualquer nota entre colchetes que ocupa o parágrafo
+    inteiro, não só o formato "Visual:" específico (uma futura convenção
+    tipo `[Nota: ...]`/`[SFX: ...]` cai no mesmo filtro sem precisar de
+    mudança nenhuma aqui)."""
+    stripped = paragraph.strip()
+    return stripped.startswith("[") and stripped.endswith("]")
 
 
 def split_script_into_blocks(text: str) -> list[str]:
@@ -125,6 +151,12 @@ def split_script_into_blocks(text: str) -> list[str]:
     ("Trockener Mund am Morgen: ...") capitaliza só os substantivos
     (regra do idioma), não a frase inteira — mas ainda assim não é
     narração, é só metadado do documento.
+
+    Parágrafo que é só uma nota de produção entre colchetes (ver
+    `_is_production_note`, ex.: `[Visual: ...]` numa história longa de
+    ficção) também nunca vira bloco — terceiro bug real pego testando
+    com um roteiro de ficção de 40+ minutos, cheio de sugestões visuais
+    intercaladas que não são narração.
     """
     import re
 
@@ -133,8 +165,8 @@ def split_script_into_blocks(text: str) -> list[str]:
 
     header_indices = [i for i, p in enumerate(clean) if _is_section_header(p)]
     preamble_end = header_indices[0] if header_indices else 0
-    header_set = set(header_indices)
-    return [p for i, p in enumerate(clean) if i >= preamble_end and i not in header_set]
+    excluded = set(header_indices) | {i for i, p in enumerate(clean) if _is_production_note(p)}
+    return [p for i, p in enumerate(clean) if i >= preamble_end and i not in excluded]
 
 
 def group_script_into_blocks_by_section(text: str) -> list[str]:
@@ -146,7 +178,9 @@ def group_script_into_blocks_by_section(text: str) -> list[str]:
     chamadas de Cartesia/LLM; o número de IMAGENS geradas não muda —
     continua uma por trecho de ~5s dentro do bloco, independente de como
     ele foi agrupado). Preâmbulo (antes do 1º marcador) é descartado,
-    mesma regra de `split_script_into_blocks`. Sem marcador nenhum no
+    mesma regra de `split_script_into_blocks` — incluindo nota de
+    produção entre colchetes (`_is_production_note`, ex.: `[Visual:
+    ...]`), que nunca entra no texto agrupado. Sem marcador nenhum no
     texto, cai pro comportamento de sempre (um parágrafo = um bloco) —
     não tem seção pra agrupar."""
     import re
@@ -156,7 +190,7 @@ def group_script_into_blocks_by_section(text: str) -> list[str]:
 
     header_indices = [i for i, p in enumerate(clean) if _is_section_header(p)]
     if not header_indices:
-        return clean
+        return [p for p in clean if not _is_production_note(p)]
 
     header_set = set(header_indices)
     groups: list[list[str]] = []
@@ -168,6 +202,8 @@ def group_script_into_blocks_by_section(text: str) -> list[str]:
             if current:
                 groups.append(current)
             current = []
+            continue
+        if _is_production_note(p):
             continue
         current.append(p)
     if current:
