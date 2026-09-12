@@ -60,7 +60,10 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
     return entry["favorites"]
 
 
-_DEFAULT_IDENTITY = {"handle": "", "avatar_filename": None, "image_style_prompt": "", "script_examples": []}
+_DEFAULT_IDENTITY = {
+    "handle": "", "avatar_filename": None, "image_style_prompt": "", "character_style_prompt": "",
+    "script_examples": [],
+}
 
 
 def _new_identity() -> dict:
@@ -105,6 +108,22 @@ def set_image_style(channel: str, style: str) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", _new_identity())
     identity["image_style_prompt"] = style
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_character_style(channel: str, style: str) -> dict:
+    """Estilo visual que SUBSTITUI `image_style_prompt` nos trechos onde a
+    cena tem uma pessoa em destaque (`has_person: true`, ver
+    modules/timeline.py::generate_slot_hints) — pedido do usuário pra
+    evitar gerar pessoa fotorrealista em canais que preferem um
+    "personagem" ilustrado (ex.: "flat vector illustration, bold thick
+    black outlines, solid flat colors, expressive cartoon style" pro
+    Gesund ab 60)."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity["character_style_prompt"] = style
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
 

@@ -97,7 +97,21 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # Novo parágrafo "REGRA CRÍTICA DE QUANTIDADE" no prompt + _parse_hints
 # agora preenche um índice faltando com o hint do vizinho mais próximo em
 # vez de descartar tudo.
-TIMELINE_HINTS_VERSION = 7
+# 8 = usuário percebeu que o image_style_prompt do canal (ex.: lousa de
+# giz do Gesund ab 60) praticamente não aparecia nos vídeos de verdade —
+# conferido numa imagem real gerada: FLUX schnell ignorava quase todo o
+# estilo. Causa raiz (confirmada com teste ao vivo antes de mexer no
+# código): o estilo ia CONCATENADO NO FINAL do prompt, depois de uma
+# descrição de cena já "fotorrealista" — modelos de difusão dão mais peso
+# ao que vem primeiro, e um parágrafo de estilo cheio de instrução
+# NEGATIVA ("sem cores vibrantes", "sem elementos 3D") no fim praticamente
+# não pega. Fix: estilo agora vai NA FRENTE do image_prompt (testado ao
+# vivo: mesma cena, estilo na frente = resultado fiel). Junto, novo campo
+# "has_person" (mesmo padrão de "needs_media") pra decidir, por trecho, se
+# usa o estilo de PERSONAGEM do canal (character_style_prompt, novo em
+# webapp/channels.py) em vez do estilo padrão — pedido do usuário pra
+# evitar gerar pessoa fotorrealista no canal Gesund ab 60.
+TIMELINE_HINTS_VERSION = 8
 
 _HINTS_MAX_TOKENS = 2000
 
@@ -106,7 +120,7 @@ _HINTS_PROMPT_TEMPLATE = """Você ajuda um criador de vídeos documentários que
 {language_name}. Responda com UM ÚNICO objeto JSON, sem markdown:
 
 {{"slots": [{{"index": 0, "translation_pt": "...", "hint": "...", "image_prompt": "...", \
-"needs_media": true}}, ...]}}
+"needs_media": true, "has_person": false}}, ...]}}
 
 REGRA CRÍTICA DE IDIOMA (a mais importante desta tarefa — respostas erram nisso com frequência, \
 preste atenção mesmo que você esteja "pensando" em português agora): sempre que "image_prompt" \
@@ -140,6 +154,10 @@ o vídeo em si. Se a cena pedir texto na imagem, siga a REGRA CRÍTICA DE IDIOMA
 uma pergunta retórica — sem NADA concreto e específico pra mostrar; esse trecho vira um card de \
 texto na tela em vez de pedir foto/vídeo. Na dúvida, ou quando há qualquer coisa filmável/fotografável \
 (pessoa, lugar, objeto, ação, evento), responda true.
+- "has_person": true quando o "image_prompt" descreve uma PESSOA específica como sujeito central da \
+cena (uma pessoa, um casal, um paciente, um médico — alguém com rosto/corpo em destaque na imagem); \
+false quando a cena é só ambiente/objeto/diagrama/parte do corpo isolada (mão, órgão) sem pessoa \
+inteira em destaque, ou quando "needs_media" é false.
 
 Trechos:
 {numbered_slots}
@@ -376,10 +394,11 @@ def _hints_cache_path(slug: str, beat_id: int) -> Path:
     return cache_dir("timeline", slug) / f"beat_{beat_id:03d}_hints.json"
 
 
-def _cache_key(beat_text: str, language: str, model: str, image_style: str = "") -> str:
-    # image_style entra na chave: trocar o estilo do canal precisa
-    # regenerar (o image_prompt cacheado tem o estilo ANTIGO concatenado).
-    payload = f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}|{image_style}"
+def _cache_key(beat_text: str, language: str, model: str, image_style: str = "", character_style: str = "") -> str:
+    # image_style/character_style entram na chave: trocar qualquer um dos
+    # dois estilos do canal precisa regenerar (o image_prompt cacheado tem
+    # o estilo ANTIGO concatenado).
+    payload = f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}|{image_style}|{character_style}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -405,6 +424,7 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
         hint = item.get("hint")
         image_prompt = item.get("image_prompt")
         needs_media = item.get("needs_media")
+        has_person = item.get("has_person")
         by_index[idx] = {
             "translation_pt": translation.strip() if isinstance(translation, str) else "",
             "hint": hint.strip() if isinstance(hint, str) else "",
@@ -413,6 +433,10 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
             # mídia) — nunca deixa um trecho sem exigência por causa de
             # resposta incompleta da IA.
             "needs_media": needs_media if isinstance(needs_media, bool) else True,
+            # ausente/tipo errado -> False (comportamento conservador: sem
+            # sinal claro de pessoa, mantém o estilo padrão do canal em vez
+            # de arriscar aplicar o estilo de personagem errado).
+            "has_person": has_person if isinstance(has_person, bool) else False,
         }
     if not by_index:
         return None
@@ -447,6 +471,7 @@ def generate_slot_hints(
     slug: str,
     beat_id: int,
     image_style: str | None = None,
+    character_style: str | None = None,
 ) -> list[dict]:
     """Tradução pra português + dica curta de mídia, um item por trecho —
     UMA chamada de LLM pro bloco inteiro (evita N chamadas separadas),
@@ -457,12 +482,17 @@ def generate_slot_hints(
 
     `image_style`: estilo visual fixo do canal (webapp/channels.py::
     image_style_prompt, ex. "quadro-negro, giz branco e azul claro sobre
-    fundo preto"), CONCATENADO no final de cada `image_prompt` depois da
-    resposta da IA — não é pedido pra IA lembrar de aplicar sozinha (uma
-    instrução assim pode não "pegar" de forma confiável em toda resposta,
-    mesmo bem escrita; ver a regra de idioma logo acima no arquivo, que
-    precisou de reforço depois de vazar duas vezes). A IA só descreve o
-    CONTEÚDO da cena, igual antes.
+    fundo preto"), aplicado por padrão. `character_style`
+    (webapp/channels.py::character_style_prompt) SUBSTITUI `image_style`
+    nos trechos onde a IA respondeu `has_person: true` — pedido do
+    usuário pra evitar gerar pessoa fotorrealista em canais que preferem
+    um "personagem" ilustrado (ex.: Gesund ab 60). Os dois casos são
+    CONCATENADOS NA FRENTE do `image_prompt` (não no final) — não é
+    pedido pra IA lembrar de aplicar sozinha, e a posição importa de
+    verdade: testado ao vivo que um parágrafo de estilo no FINAL do
+    prompt, depois de uma cena já descrita de forma "fotorrealista",
+    praticamente não pegava no FLUX schnell (ver TIMELINE_HINTS_VERSION=8).
+    A IA só descreve o CONTEÚDO da cena e decide `has_person`, igual antes.
 
     O fallback de string vazia NÃO é gravado no cache (bug real: gerar
     vários blocos em sequência dispara uma chamada de LLM por bloco em
@@ -480,9 +510,10 @@ def generate_slot_hints(
     kw_cfg = cfg["keywords"]
     call = {"anthropic": _call_anthropic, "openai": _call_openai}.get(kw_cfg["provider"])
     image_style = (image_style or "").strip()
+    character_style = (character_style or "").strip()
 
     cache_path = _hints_cache_path(slug, beat_id)
-    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style)
+    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style, character_style)
     if cache_path.exists():
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if cached.get("cache_key") == cache_key and len(cached.get("hints", [])) == len(slots):
@@ -531,18 +562,24 @@ def generate_slot_hints(
                     f"be written in {lang_en}"
                 )
 
-        if image_style:
-            # Concatenado aqui, em Python — não faz parte do que a IA
-            # decide. Só em quem tem image_prompt de verdade (fallback
-            # vazio continua vazio, sem vírgula solta no final).
-            for hint in hints:
-                if hint["image_prompt"]:
-                    hint["image_prompt"] = f"{hint['image_prompt']}, {image_style}"
+        # Estilo (padrão ou personagem, ver TIMELINE_HINTS_VERSION=8) vai
+        # NA FRENTE do image_prompt, como frase própria — não concatenado
+        # no final. Só em quem tem image_prompt de verdade (fallback vazio
+        # continua vazio). character_style SUBSTITUI image_style no trecho
+        # (nunca soma os dois — evitaria misturar "lousa de giz" com
+        # "ilustração vetorial colorida" na mesma cena, estilos
+        # conflitantes).
+        for hint in hints:
+            if not hint["image_prompt"]:
+                continue
+            style = character_style if (hint["has_person"] and character_style) else image_style
+            if style:
+                hint["image_prompt"] = f"{style}. {hint['image_prompt']}"
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
         return [
-            {"translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True}
+            {"translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True, "has_person": False}
             for _ in slots
         ]
 

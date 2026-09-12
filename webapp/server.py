@@ -137,6 +137,10 @@ class ImageStyleRequest(BaseModel):
     style: str
 
 
+class CharacterStyleRequest(BaseModel):
+    style: str
+
+
 class ScriptExampleRequest(BaseModel):
     text: str
 
@@ -749,17 +753,18 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
         raise HTTPException(status_code=404, detail="Bloco ainda não foi fatiado.")
 
     beat_text = " ".join(s["text"] for s in manifest)
-    image_style = (
-        channels_module.get_identity(req.channel).get("image_style_prompt") if req.channel else None
-    )
+    channel_identity = channels_module.get_identity(req.channel) if req.channel else {}
+    image_style = channel_identity.get("image_style_prompt")
+    character_style = channel_identity.get("character_style_prompt")
     hints = await asyncio.to_thread(
         timeline_module.generate_slot_hints,
-        manifest, beat_text, req.language, slug, block_id, image_style,
+        manifest, beat_text, req.language, slug, block_id, image_style, character_style,
     )
     for slot, hint in zip(manifest, hints):
         slot["translation_pt"] = hint["translation_pt"]
         slot["hint"] = hint["hint"]
         slot["image_prompt"] = hint["image_prompt"]
+        slot["has_person"] = hint["has_person"]
         # Só aplica a classificação da IA se o usuário ainda não decidiu
         # manualmente (ver POST .../needs-media) — sem isso, gerar de novo
         # (ex.: "Regenerar" o bloco) apagaria uma escolha explícita.
@@ -1147,6 +1152,7 @@ def _identity_response(name: str) -> dict:
         "handle": identity["handle"],
         "avatar_url": avatar_url,
         "image_style_prompt": identity["image_style_prompt"],
+        "character_style_prompt": identity["character_style_prompt"],
         "script_examples": identity["script_examples"],
     }
 
@@ -1168,6 +1174,14 @@ async def post_image_style(name: str, req: ImageStyleRequest) -> dict:
     canal (ver webapp/channels.py::set_image_style) — concatenado em
     modules/timeline.py::generate_slot_hints, não pedido pra IA lembrar."""
     channels_module.set_image_style(name, req.style.strip())
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/character-style")
+async def post_character_style(name: str, req: CharacterStyleRequest) -> dict:
+    """Estilo visual que SUBSTITUI o `image_style_prompt` nos trechos com
+    pessoa em destaque (ver webapp/channels.py::set_character_style)."""
+    channels_module.set_character_style(name, req.style.strip())
     return _identity_response(name)
 
 
