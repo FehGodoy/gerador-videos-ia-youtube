@@ -459,10 +459,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--cycle-images", default=None,
-        help="Caminhos de imagem separados por vírgula (ex.: 'a.jpg,b.jpg,c.jpg'). Em vez de gerar "
-             "uma imagem por trecho via fal.ai, sobe esse punhado fixo de imagens e distribui elas "
-             "em loop por todos os trechos do vídeo inteiro — pra vídeos longos onde uma imagem por "
-             "trecho não faz sentido (ex.: histórias narradas de 40+ minutos).",
+        help="Uma PASTA contendo as imagens (usadas em ordem alfabética do nome do arquivo) OU "
+             "caminhos de imagem separados por ponto e vírgula (';', não vírgula — nomes de arquivo "
+             "de export de IA costumam ter vírgula na data, ex. 'ChatGPT Image ..., 18_57_25.png'). "
+             "Em vez de gerar uma imagem por trecho via fal.ai, sobe esse punhado fixo de imagens e "
+             "distribui elas em loop por todos os trechos do vídeo inteiro — pra vídeos longos onde "
+             "uma imagem por trecho não faz sentido (ex.: histórias narradas de 40+ minutos).",
     )
     render_group = parser.add_mutually_exclusive_group()
     render_group.add_argument("--remote-render", dest="remote_render", action="store_true", default=True)
@@ -486,12 +488,21 @@ def main() -> int:
         if not script_path.exists():
             parser.error(f"Arquivo de roteiro não encontrado: {script_path}")
 
+    _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
     cycle_image_paths = None
     if args.cycle_images:
-        cycle_image_paths = [Path(p.strip()) for p in args.cycle_images.split(",") if p.strip()]
-        missing = [p for p in cycle_image_paths if not p.exists()]
-        if missing:
-            parser.error(f"Imagem(ns) de --cycle-images não encontrada(s): {', '.join(str(p) for p in missing)}")
+        cycle_images_arg = Path(args.cycle_images)
+        if cycle_images_arg.is_dir():
+            cycle_image_paths = sorted(
+                p for p in cycle_images_arg.iterdir() if p.suffix.lower() in _IMAGE_EXTENSIONS
+            )
+            if not cycle_image_paths:
+                parser.error(f"Nenhuma imagem encontrada em --cycle-images: {cycle_images_arg}")
+        else:
+            cycle_image_paths = [Path(p.strip()) for p in args.cycle_images.split(";") if p.strip()]
+            missing = [p for p in cycle_image_paths if not p.exists()]
+            if missing:
+                parser.error(f"Imagem(ns) de --cycle-images não encontrada(s): {'; '.join(str(p) for p in missing)}")
 
     try:
         ensure_server_running(args.base_url)
