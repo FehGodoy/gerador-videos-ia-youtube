@@ -113,7 +113,20 @@ def effect_media_bounds(effect: str) -> tuple[int, int]:
 # evitar gerar pessoa fotorrealista no canal Gesund ab 60.
 TIMELINE_HINTS_VERSION = 8
 
-_HINTS_MAX_TOKENS = 2000
+# Bug real pego rodando um roteiro de ficção longa agrupado por ato
+# (--group-by-section, ver scripts/auto_generate_video.py): um bloco de
+# ~1800 palavras vira ~120 trechos de ~5s, e a resposta de dica/tradução/
+# prompt de imagem (translation_pt + hint + image_prompt + needs_media +
+# has_person, UM item por trecho) passa fácil de 8000-10000 tokens.
+# Esta constante existia mas NUNCA era passada de verdade pra chamada da
+# IA (bug antigo, silencioso) — o limite real em vigor sempre foi o
+# default de keyword_extractor.MAX_TOKENS (4000), que trunca o JSON no
+# meio pra blocos grandes: a resposta vem cortada, o parse falha, e as 3
+# tentativas de retry falham DA MESMA FORMA sempre (não é instabilidade
+# aleatória da API, é estrutural). Agora vai explicitamente na chamada
+# abaixo, com folga generosa — não custa mais caro pra blocos pequenos
+# (é só o TETO da resposta, não uma cota paga antecipada).
+_HINTS_MAX_TOKENS = 16000
 
 _HINTS_PROMPT_TEMPLATE = """Você ajuda um criador de vídeos documentários que sobe a própria mídia \
 (fotos/vídeos) a decidir o que colocar em cada trecho da narração. O roteiro abaixo está em \
@@ -593,7 +606,7 @@ def generate_slot_hints(
             if attempt_index > 0:
                 time.sleep(2 * attempt_index)
             try:
-                hints = _parse_hints(call(attempt_prompt, kw_cfg["model"]), len(slots))
+                hints = _parse_hints(call(attempt_prompt, kw_cfg["model"], _HINTS_MAX_TOKENS), len(slots))
                 if hints is not None:
                     break
             except Exception as exc:
