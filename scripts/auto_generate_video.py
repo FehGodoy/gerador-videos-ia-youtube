@@ -249,7 +249,11 @@ def create_narration_block(base_url: str, slug: str, block_id: int, text: str, v
             "speed": speed,
             "auto_mode": True,
         },
-        timeout=120,
+        # bug real: bloco de ~1800 palavras (--group-by-section num roteiro
+        # de ficcao longa) demora mais que 120s pra sintetizar via
+        # Cartesia -- app.js (fetch do navegador) nao tem timeout nenhum
+        # nessa chamada, entao o CLI precisa de bem mais folga.
+        timeout=900,
     )
     if not resp.ok:
         raise RuntimeError(f"Falha ao gerar narração do bloco {block_id}: {resp.json().get('detail', resp.text)}")
@@ -285,7 +289,10 @@ def fetch_hints(base_url: str, slug: str, block_id: int, language: str, channel:
         resp = requests.post(
             f"{base_url}/api/narration-blocks/{slug}/{block_id}/hints",
             json={"language": language, "channel": channel},
-            timeout=180,
+            # mesma folga de create_narration_block acima -- bloco grande
+            # (~120 trechos) com _HINTS_MAX_TOKENS=16000 pode demorar mais
+            # que os 180s de antes.
+            timeout=900,
         )
         if not resp.ok:
             raise RuntimeError(f"Falha ao gerar dica/prompt do bloco {block_id}: {resp.json().get('detail', resp.text)}")
@@ -466,6 +473,13 @@ def main() -> int:
              "distribui elas em loop por todos os trechos do vídeo inteiro — pra vídeos longos onde "
              "uma imagem por trecho não faz sentido (ex.: histórias narradas de 40+ minutos).",
     )
+    parser.add_argument(
+        "--slug", default=None,
+        help="Reaproveita um rascunho JÁ EXISTENTE (ex.: 'cli-ba349e25a4') em vez de criar um novo "
+             "aleatório — útil pra retomar depois de um erro no meio do processo sem regastar "
+             "narração/dica dos blocos que já ficaram prontos (o servidor cacheia por slug+bloco, "
+             "então um bloco já processado volta na hora em vez de sintetizar de novo).",
+    )
     render_group = parser.add_mutually_exclusive_group()
     render_group.add_argument("--remote-render", dest="remote_render", action="store_true", default=True)
     render_group.add_argument("--no-remote-render", dest="remote_render", action="store_false")
@@ -507,8 +521,8 @@ def main() -> int:
     try:
         ensure_server_running(args.base_url)
 
-        slug = f"cli-{uuid.uuid4().hex[:10]}"
-        log(f"Rascunho: {slug}")
+        slug = args.slug or f"cli-{uuid.uuid4().hex[:10]}"
+        log(f"Rascunho: {slug}" + (" (retomando)" if args.slug else ""))
 
         if script_path:
             log("Usando roteiro já pronto (sem passar pela IA) — só fatiando em blocos...")
