@@ -275,6 +275,36 @@ def _is_eligible_for_image_gen(slot: dict) -> bool:
     return not media or not media[0]
 
 
+def upload_and_distribute_cycle_images(base_url: str, slug: str, image_paths: list[Path]) -> None:
+    """Sobe um punhado FIXO de imagens (ex.: 5) pra biblioteca do rascunho
+    e distribui elas em loop por TODOS os trechos de TODOS os blocos já
+    criados — usado no lugar de `generate_block_images` (uma imagem por
+    trecho via fal.ai) quando `--cycle-images` é passado. Pensado pro
+    canal "Secretos del Corazón": vídeos de 40+ minutos onde gerar uma
+    imagem por trecho (~480 trechos) não faz sentido nem financeiramente
+    nem editorialmente — o usuário fornece as imagens, a IA só escreve os
+    prompts (ver modules/timeline.py::distribute_media_round_robin pro
+    critério de elegibilidade, mesmo usado no preenchimento automático)."""
+    log(f"Subindo {len(image_paths)} imagem(ns) fixa(s) pra biblioteca do rascunho...")
+    files = [("files", (path.name, path.read_bytes())) for path in image_paths]
+    resp = requests.post(f"{base_url}/api/media-pool/{slug}", files=files, timeout=120)
+    if not resp.ok:
+        raise RuntimeError(f"Falha ao subir as imagens fixas: {resp.json().get('detail', resp.text)}")
+    saved = resp.json()["saved"]
+    pool_filenames = [{"pool_filename": item["filename"], "media_type": "image"} for item in saved]
+
+    log("Distribuindo as imagens em loop por todos os trechos do vídeo...")
+    resp = requests.post(
+        f"{base_url}/api/timeline/{slug}/distribute-cycle",
+        json={"pool_filenames": pool_filenames},
+        timeout=60,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Falha ao distribuir as imagens fixas: {resp.json().get('detail', resp.text)}")
+    result = resp.json()
+    log(f"Imagens distribuídas: {result['slots_filled']} trecho(s) em {result['blocks_updated']} bloco(s).")
+
+
 def generate_block_images(base_url: str, slug: str, block_id: int, slots: list[dict], block_label: str) -> None:
     eligible = [s for s in slots if _is_eligible_for_image_gen(s)]
     for i, slot in enumerate(eligible):
@@ -391,6 +421,13 @@ def main() -> int:
              "numa única narração, em vez de um bloco por parágrafo — menos chamadas de "
              "narração/dica; o número de imagens geradas não muda.",
     )
+    parser.add_argument(
+        "--cycle-images", default=None,
+        help="Caminhos de imagem separados por vírgula (ex.: 'a.jpg,b.jpg,c.jpg'). Em vez de gerar "
+             "uma imagem por trecho via fal.ai, sobe esse punhado fixo de imagens e distribui elas "
+             "em loop por todos os trechos do vídeo inteiro — pra vídeos longos onde uma imagem por "
+             "trecho não faz sentido (ex.: histórias narradas de 40+ minutos).",
+    )
     render_group = parser.add_mutually_exclusive_group()
     render_group.add_argument("--remote-render", dest="remote_render", action="store_true", default=True)
     render_group.add_argument("--no-remote-render", dest="remote_render", action="store_false")
@@ -412,6 +449,13 @@ def main() -> int:
         script_path = Path(args.script_file)
         if not script_path.exists():
             parser.error(f"Arquivo de roteiro não encontrado: {script_path}")
+
+    cycle_image_paths = None
+    if args.cycle_images:
+        cycle_image_paths = [Path(p.strip()) for p in args.cycle_images.split(",") if p.strip()]
+        missing = [p for p in cycle_image_paths if not p.exists()]
+        if missing:
+            parser.error(f"Imagem(ns) de --cycle-images não encontrada(s): {', '.join(str(p) for p in missing)}")
 
     try:
         ensure_server_running(args.base_url)
@@ -440,8 +484,12 @@ def main() -> int:
             slots = create_narration_block(args.base_url, slug, i, text, args.voice_id, args.language, args.speed)
             log(f"{label}: gerando tradução/dica/prompt de imagem...")
             slots = fetch_hints(args.base_url, slug, i, args.language, args.channel)
-            generate_block_images(args.base_url, slug, i, slots, label)
+            if not cycle_image_paths:
+                generate_block_images(args.base_url, slug, i, slots, label)
             blocks_for_job.append({"id": i, "text": text})
+
+        if cycle_image_paths:
+            upload_and_distribute_cycle_images(args.base_url, slug, cycle_image_paths)
 
         job_id = create_job(
             args.base_url, slug, blocks_for_job, args.voice_id, args.language, args.speed,

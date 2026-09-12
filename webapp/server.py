@@ -141,6 +141,15 @@ class CharacterStyleRequest(BaseModel):
     style: str
 
 
+class PoolMediaItem(BaseModel):
+    pool_filename: str
+    media_type: str = "image"
+
+
+class DistributeCycleRequest(BaseModel):
+    pool_filenames: list[PoolMediaItem]
+
+
 class ScriptExampleRequest(BaseModel):
     text: str
 
@@ -1062,6 +1071,27 @@ async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int
     slot.pop("sync_warning", None)
     timeline_module.save_manifest(slug, block_id, manifest)
     return {"slot": slot}
+
+
+@app.post("/api/timeline/{slug}/distribute-cycle")
+async def distribute_cycle(slug: str, req: DistributeCycleRequest) -> dict:
+    """Distribui um conjunto FIXO de mídias (ver
+    modules/timeline.py::distribute_media_round_robin) em loop por todos
+    os trechos elegíveis de todos os blocos já fatiados do rascunho —
+    pedido do usuário pro canal "Secretos del Corazón" (vídeos longos de
+    40+ minutos que reaproveitam um punhado pequeno de imagens fixas em
+    vez de gerar uma imagem por trecho)."""
+    if not req.pool_filenames:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma mídia pra distribuir.")
+    try:
+        result = timeline_module.distribute_media_round_robin(
+            slug, [item.model_dump() for item in req.pool_filenames]
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if result["blocks_updated"] == 0:
+        raise HTTPException(status_code=404, detail="Nenhum bloco fatiado encontrado pra este rascunho.")
+    return result
 
 
 @app.post("/api/jobs/{job_id}/footage-candidates/{beat_id}/{slot}/youtube")

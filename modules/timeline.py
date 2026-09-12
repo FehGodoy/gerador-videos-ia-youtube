@@ -309,6 +309,60 @@ def count_text_image_generations(slug: str) -> int:
     return count
 
 
+def distribute_media_round_robin(slug: str, pool_filenames: list[dict]) -> dict:
+    """Distribui um conjunto FIXO de mídias (poucas — ex.: 5 imagens) em
+    looping (1, 2, 3, 4, 5, 1, 2, 3...) por TODOS os trechos elegíveis de
+    TODOS os blocos já fatiados do rascunho — pedido do usuário pro canal
+    "Secretos del Corazón": vídeos de 40+ minutos que reaproveitam um
+    punhado pequeno de imagens fixas em vez de gerar uma imagem por
+    trecho (~480 trechos num vídeo de 40min, custaria caro e não faz
+    sentido pra esse formato de história longa).
+
+    `pool_filenames`: lista de dicts `{"pool_filename": ..., "media_type": ...}`
+    (mesmo formato que `media_pool.save_pool_upload` devolve), na ORDEM em
+    que devem ciclar. Só entra em trechos elegíveis pro preenchimento
+    automático de mídia única (`is_single_media_slot` — pula
+    `needs_media=false` e efeito de galeria, mesmo critério que
+    `folder_sync.py` já usa), preservando o comportamento de "vira card de
+    texto" pros trechos que a IA marcou como abstratos/transição.
+
+    Sobrescreve a posição 0 de todo trecho elegível, mesmo os que já
+    tinham mídia atribuída — é uma operação de uma vez só, chamada depois
+    que todos os blocos do vídeo já foram criados, não incremental como o
+    sincronizador de pasta.
+
+    Retorna {"blocks_updated": int, "slots_filled": int}."""
+    if not pool_filenames:
+        raise ValueError("pool_filenames não pode ser vazio.")
+
+    blocks_updated = 0
+    slots_filled = 0
+    cycle_len = len(pool_filenames)
+    cursor = 0
+
+    for beat_id in list_block_ids(slug):
+        manifest = load_manifest(slug, beat_id)
+        if not manifest:
+            continue
+        changed = False
+        for slot in manifest:
+            if not is_single_media_slot(slot):
+                continue
+            media_item = pool_filenames[cursor % cycle_len]
+            slot["media"] = [
+                {"pool_filename": media_item["pool_filename"], "media_type": media_item.get("media_type", "image")}
+            ]
+            slot.pop("sync_warning", None)
+            cursor += 1
+            slots_filled += 1
+            changed = True
+        if changed:
+            save_manifest(slug, beat_id, manifest)
+            blocks_updated += 1
+
+    return {"blocks_updated": blocks_updated, "slots_filled": slots_filled}
+
+
 def is_single_media_slot(slot: dict) -> bool:
     """True quando o trecho é elegível pro preenchimento automático de
     mídia única (padrão/parallax_pan) — mesmo critério de
