@@ -1031,8 +1031,8 @@ async def set_timeline_slot_fill_screen(
 
 @app.post("/api/timeline/{slug}/{block_id}/{slot_index}/generate-image")
 async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int) -> dict:
-    """Gera a imagem deste trecho via IA (fal.ai FLUX schnell,
-    modules/image_gen.py) a partir do `image_prompt` já salvo no
+    """Gera a imagem deste trecho via IA (fal.ai FLUX schnell/dev/Ideogram,
+    ver roteamento em modules/image_gen.py) a partir do `image_prompt` já salvo no
     manifesto, e já atribui na posição 0 — substitui o fluxo de copiar o
     prompt, gerar num serviço externo e reanexar pela sincronização de
     pasta (webapp/folder_sync.py), sem o risco de desalinhamento por
@@ -1059,12 +1059,19 @@ async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int
     # inteiro (config.yaml::image_gen.max_text_images_per_draft) — acima
     # disso, cai pro FLUX schnell mesmo se o prompt pedir texto na cena
     # (perde nitidez do texto, mas nunca estoura o orçamento do vídeo).
-    max_text_images = load_config()["image_gen"]["max_text_images_per_draft"]
-    allow_ideogram = timeline_module.count_text_image_generations(slug) < max_text_images
+    img_cfg = load_config()["image_gen"]
+    allow_ideogram = timeline_module.count_text_image_generations(slug) < img_cfg["max_text_images_per_draft"]
+    # mesmo princípio, mas pro modelo caro de PESSOA (FLUX.1 [dev]) — só
+    # entra em trecho com has_person=true E ainda dentro do teto
+    # max_dev_images_per_draft (ver modules/image_gen.py e
+    # modules/timeline.py::count_dev_image_generations).
+    prefer_dev = bool(slot.get("has_person")) and (
+        timeline_module.count_dev_image_generations(slug) < img_cfg["max_dev_images_per_draft"]
+    )
 
     try:
         image_bytes, ext, model_used = await asyncio.to_thread(
-            image_gen.generate_image, slot["image_prompt"], "landscape_16_9", allow_ideogram
+            image_gen.generate_image, slot["image_prompt"], "landscape_16_9", allow_ideogram, prefer_dev
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e)) from e

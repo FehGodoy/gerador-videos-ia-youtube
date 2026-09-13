@@ -322,6 +322,20 @@ def count_text_image_generations(slug: str) -> int:
     return count
 
 
+def count_dev_image_generations(slug: str) -> int:
+    """Mesmo princípio de count_text_image_generations, mas pro modelo
+    caro de PESSOA (FLUX.1 [dev], ver modules/image_gen.py) — usado pra
+    aplicar o teto `image_gen.max_dev_images_per_draft` do config.yaml
+    antes de cada nova geração (webapp/server.py). Pedido explícito do
+    usuário pra não gastar os créditos do fal.ai rápido demais testando
+    o modelo mais caro num vídeo só."""
+    count = 0
+    for beat_id in list_block_ids(slug):
+        manifest = load_manifest(slug, beat_id) or []
+        count += sum(1 for slot in manifest if slot.get("image_gen_model") == "flux_dev")
+    return count
+
+
 def distribute_media_round_robin(slug: str, pool_filenames: list[dict]) -> dict:
     """Distribui um conjunto FIXO de mídias (poucas — ex.: 5 imagens) em
     looping (1, 2, 3, 4, 5, 1, 2, 3...) por TODOS os trechos elegíveis de

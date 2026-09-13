@@ -196,6 +196,14 @@ image_gen:
   # schnell mesmo assim (perde nitidez do texto, mas não estoura o
   # orçamento do vídeo). Contagem em modules/timeline.py::count_text_image_generations.
   max_text_images_per_draft: 8
+  # FLUX schnell (~$0,003/imagem) x FLUX.1 [dev] (~$0,025/imagem, ~8x mais
+  # caro) -- usado só nos trechos com pessoa em destaque (has_person, ver
+  # modules/timeline.py), onde o schnell erra mais rosto/mão/anatomia.
+  # Teto por RASCUNHO pra não estourar o orçamento testando o modelo mais
+  # caro (pedido explícito do usuário) -- acima disso, cai pro schnell
+  # mesmo em trecho com pessoa. Contagem em
+  # modules/timeline.py::count_dev_image_generations.
+  max_dev_images_per_draft: 15
 
 remotion:
   project_dir: "remotion"

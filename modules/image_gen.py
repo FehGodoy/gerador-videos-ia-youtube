@@ -14,7 +14,7 @@ que gerar via API do GPT Image (~$0,003/megapixel). Constante no código
 (não config.yaml) porque é uma integração de fornecedor único, mesmo
 padrão de outras integrações do projeto (ex.: Cartesia em narration.py).
 
-Exceção: quando o prompt pede texto legível NA CENA (infográfico, placa,
+Exceção 1: quando o prompt pede texto legível NA CENA (infográfico, placa,
 capa, documento — ver REGRA CRÍTICA DE IDIOMA em modules/timeline.py), o
 FLUX schnell renderiza mal (letras "tremidas"/incompletas — limitação
 conhecida de modelos rápidos/destilados, que "adivinham" a forma da letra
@@ -26,6 +26,17 @@ impacto no custo total é pequeno. Detecção: o próprio prompt de dica
 (_HINTS_PROMPT_TEMPLATE) já instrui a IA a escrever o texto exato ENTRE
 ASPAS dentro do image_prompt quando a cena pede texto — reaproveita esse
 sinal existente em vez de pedir um campo novo (ver _prompt_wants_text_in_image).
+
+Exceção 2: quando o trecho tem pessoa em destaque (`has_person`, ver
+modules/timeline.py), o schnell erra mais em rosto/mão/anatomia — usa
+FLUX.1 [dev] em vez do schnell nesses casos (~$0,025/imagem, ~8x mais
+caro, mesma família/estilo do FLUX então não muda a "cara" do vídeo,
+só a coerência). Diferente do texto (detectável no PRÓPRIO prompt), esse
+sinal vem de fora (`prefer_dev`, decidido por quem chama a partir do
+`has_person` do trecho e do teto `image_gen.max_dev_images_per_draft` do
+config.yaml) — pedido explícito do usuário pra não gastar rápido demais
+os créditos do fal.ai testando o modelo mais caro (ver
+modules/timeline.py::count_dev_image_generations).
 """
 from __future__ import annotations
 
@@ -38,6 +49,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 FAL_FLUX_SCHNELL_URL = "https://fal.run/fal-ai/flux/schnell"
+FAL_FLUX_DEV_URL = "https://fal.run/fal-ai/flux/dev"
 FAL_IDEOGRAM_URL = "https://fal.run/fal-ai/ideogram/v3"
 _TIMEOUT_SECONDS = 60
 _MAX_ATTEMPTS = 2
@@ -74,24 +86,37 @@ def _download(image: dict) -> tuple[bytes, str]:
 
 
 def generate_image(
-    prompt: str, image_size: str = "landscape_16_9", allow_ideogram: bool = True
+    prompt: str,
+    image_size: str = "landscape_16_9",
+    allow_ideogram: bool = True,
+    prefer_dev: bool = False,
 ) -> tuple[bytes, str, str]:
     """Gera uma imagem via fal.ai a partir de `prompt` e devolve
     `(bytes_da_imagem, extensao, modelo_usado)` — `modelo_usado` é
-    "ideogram" ou "flux_schnell", pra quem chama persistir e contar (ver
-    modules/timeline.py::count_text_image_generations, usado pra aplicar o
-    teto `image_gen.max_text_images_per_draft` do config.yaml).
+    "ideogram", "flux_dev" ou "flux_schnell", pra quem chama persistir e
+    contar (ver modules/timeline.py::count_text_image_generations e
+    count_dev_image_generations, usados pra aplicar os tetos
+    `image_gen.max_text_images_per_draft`/`max_dev_images_per_draft` do
+    config.yaml).
 
-    `allow_ideogram=False` força FLUX schnell mesmo quando o prompt pede
+    `allow_ideogram=False` força FLUX schnell/dev mesmo quando o prompt pede
     texto na cena — usado quando o rascunho já bateu o teto de imagens
-    caras: a imagem sai com texto pior (mesma limitação de sempre do
-    schnell), mas o pipeline nunca quebra nem para de gerar imagem por
-    causa de orçamento.
+    caras de texto: a imagem sai com texto pior (mesma limitação de sempre
+    do schnell/dev), mas o pipeline nunca quebra nem para de gerar imagem
+    por causa de orçamento.
+
+    `prefer_dev=True` pede FLUX.1 [dev] em vez do schnell (texto ainda tem
+    prioridade — Ideogram vence se `allow_ideogram` também mandar). Quem
+    chama decide isso a partir do `has_person` do trecho E do teto já
+    verificado (`count_dev_image_generations(slug) < max_dev_images_per_draft`)
+    — esta função não sabe nada de slug/rascunho, só executa a preferência
+    que já chegou pronta.
 
     `image_size` aceita os presets do FLUX (landscape_16_9 combina com o
     formato 1920x1080 do projeto — o Remotion recorta com
-    object-fit:cover, não precisa bater pixel a pixel); o Ideogram usa o
-    MESMO enum de preset (confirmado testando ao vivo contra a API real).
+    object-fit:cover, não precisa bater pixel a pixel); Ideogram e FLUX dev
+    usam o MESMO enum de preset do schnell (confirmado testando ao vivo
+    contra a API real).
 
     Levanta RuntimeError com mensagem clara (chave ausente, erro da API)
     em vez de deixar a exceção genérica do requests vazar — quem chama
@@ -103,6 +128,13 @@ def generate_image(
     """
     fal_key = _get_fal_key()
     use_ideogram = allow_ideogram and _prompt_wants_text_in_image(prompt)
+    use_dev = not use_ideogram and prefer_dev
+    if use_ideogram:
+        model_name, url = "ideogram", FAL_IDEOGRAM_URL
+    elif use_dev:
+        model_name, url = "flux_dev", FAL_FLUX_DEV_URL
+    else:
+        model_name, url = "flux_schnell", FAL_FLUX_SCHNELL_URL
 
     last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
@@ -111,7 +143,7 @@ def generate_image(
         try:
             if use_ideogram:
                 resp = requests.post(
-                    FAL_IDEOGRAM_URL,
+                    url,
                     headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
                     json={
                         "prompt": prompt,
@@ -125,9 +157,24 @@ def generate_image(
                     },
                     timeout=_TIMEOUT_SECONDS,
                 )
+            elif use_dev:
+                resp = requests.post(
+                    url,
+                    headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
+                    json={
+                        "prompt": prompt,
+                        "image_size": image_size,
+                        "num_images": 1,
+                        "enable_safety_checker": True,
+                        # sem num_inference_steps -- deixa o padrão do [dev]
+                        # (mais alto que os 4 passos do schnell), é isso que
+                        # compra a qualidade extra.
+                    },
+                    timeout=_TIMEOUT_SECONDS,
+                )
             else:
                 resp = requests.post(
-                    FAL_FLUX_SCHNELL_URL,
+                    url,
                     headers={"Authorization": f"Key {fal_key}", "Content-Type": "application/json"},
                     json={
                         "prompt": prompt,
@@ -140,13 +187,12 @@ def generate_image(
                 )
             resp.raise_for_status()
             img_bytes, ext = _download(resp.json()["images"][0])
-            return img_bytes, ext, ("ideogram" if use_ideogram else "flux_schnell")
+            return img_bytes, ext, model_name
         except Exception as exc:
             last_error = exc
             logger.warning(
                 "Geração de imagem via fal.ai (%s) falhou (tentativa %d/%d): %s",
-                "Ideogram v3" if use_ideogram else "FLUX schnell",
-                attempt + 1, _MAX_ATTEMPTS, exc, exc_info=True,
+                model_name, attempt + 1, _MAX_ATTEMPTS, exc, exc_info=True,
             )
 
     raise RuntimeError(f"Falha ao gerar imagem via fal.ai: {last_error}") from last_error
