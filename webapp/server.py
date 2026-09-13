@@ -801,7 +801,13 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
         if not slot.get("needs_media_overridden"):
             slot["needs_media"] = hint["needs_media"]
     timeline_module.save_manifest(slug, block_id, manifest)
-    return {"slots": manifest}
+    # `_error` (ver modules/timeline.py::generate_slot_hints) carrega a
+    # mensagem real da última exceção quando a dica/tradução veio vazia —
+    # repassa pro chamador (CLI) distinguir um erro definitivo (ex.: saldo
+    # da API zerado) de uma instabilidade transitória, em vez de só ver
+    # "veio vazio" e supor o motivo errado.
+    hints_error = next((h.get("_error") for h in hints if h.get("_error")), None)
+    return {"slots": manifest, "hints_error": hints_error}
 
 
 # Registradas ANTES de /api/timeline/{slug}/{block_id}: rotas são casadas

@@ -622,6 +622,7 @@ def generate_slot_hints(
             return cached["hints"]
 
     hints = None
+    last_exc: Exception | None = None
     if call is not None:
         numbered = "\n".join(f"{s['index']}. {s['text']}" for s in slots)
         prompt = _HINTS_PROMPT_TEMPLATE.format(
@@ -645,6 +646,7 @@ def generate_slot_hints(
                 if hints is not None:
                     break
             except Exception as exc:
+                last_exc = exc
                 logger.warning(
                     "Geração de dica/tradução do beat %d falhou (tentativa %d/%d): %s",
                     beat_id, attempt_index + 1, len(attempts), exc, exc_info=True,
@@ -682,8 +684,21 @@ def generate_slot_hints(
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
+        # `_error` (com underscore, pra não ser confundido com um campo de
+        # dado de verdade) carrega a mensagem da ÚLTIMA exceção real pra
+        # quem chama (server.py) repassar pro usuário/CLI — sem isso, um
+        # erro definitivo (ex.: "credit balance too low", chave inválida)
+        # ficava indistinguível de uma instabilidade transitória de rede,
+        # e a mensagem genérica mandava procurar a causa errada (bug real
+        # encontrado ao vivo: 3 vídeos abortaram com "provável
+        # instabilidade da API" quando na verdade o saldo da Anthropic
+        # tinha zerado — só apareceu chamando a API direto pra depurar).
+        error_message = str(last_exc) if last_exc is not None else None
         return [
-            {"translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True, "has_person": False}
+            {
+                "translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True,
+                "has_person": False, "_error": error_message,
+            }
             for _ in slots
         ]
 

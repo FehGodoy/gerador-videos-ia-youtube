@@ -296,12 +296,21 @@ def fetch_hints(base_url: str, slug: str, block_id: int, language: str, channel:
         )
         if not resp.ok:
             raise RuntimeError(f"Falha ao gerar dica/prompt do bloco {block_id}: {resp.json().get('detail', resp.text)}")
-        last_slots = resp.json()["slots"]
+        resp_json = resp.json()
+        last_slots = resp_json["slots"]
+        last_hints_error = resp_json.get("hints_error")
         if not _hints_all_empty(last_slots):
             return last_slots
+    # `hints_error` (ver webapp/server.py e modules/timeline.py::
+    # generate_slot_hints) carrega a mensagem real da última exceção, se
+    # teve uma -- erro real encontrado ao vivo: "provável instabilidade da
+    # API" era só um palpite genérico, e mascarou por várias tentativas um
+    # erro DEFINITIVO (saldo da API zerado) que retry nenhum resolveria.
+    # Mostra a causa de verdade quando disponível, em vez de só o palpite.
+    detail = f" Causa reportada pela API: {last_hints_error}" if last_hints_error else ""
     raise RuntimeError(
         f"Bloco {block_id}: tradução/dica/prompt de imagem vieram vazios em {_HINTS_MAX_ATTEMPTS} "
-        "tentativas — provável instabilidade da API de LLM. Abortando em vez de criar um job que "
+        f"tentativas.{detail} Abortando em vez de criar um job que "
         "certamente falharia por falta de mídia nesses trechos."
     )
 
