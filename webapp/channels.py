@@ -64,6 +64,7 @@ _DEFAULT_IDENTITY = {
     "handle": "", "avatar_filename": None, "image_style_prompt": "", "character_style_prompt": "",
     "voice_waveform_enabled": False, "script_examples": [], "force_schnell_only": False,
     "scene_first_prompt_order": False,
+    "max_dev_images_override": None, "max_text_images_override": None,
 }
 
 
@@ -141,6 +142,26 @@ def set_scene_first_prompt_order(channel: str, enabled: bool) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", _new_identity())
     identity["scene_first_prompt_order"] = bool(enabled)
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_image_gen_caps(
+    channel: str, max_dev_images: int | None, max_text_images: int | None
+) -> dict:
+    """Teto por vídeo (não por rascunho inteiro só nesse canal) pros
+    modelos caros FLUX dev e Ideogram v3, SUBSTITUINDO os tetos globais de
+    config.yaml (image_gen.max_dev_images_per_draft/max_text_images_per_draft)
+    só pra este canal -- pedido do usuário pro canal "Honda Deep Dive" pra
+    gastar menos que o teto padrão (15 dev / 8 Ideogram) sem travar 100% em
+    schnell como o L'Argent Silencieux (ver set_force_schnell_only).
+    None em qualquer um dos dois volta a usar o teto global pra aquele
+    modelo. Ver uso em webapp/server.py::generate_timeline_slot_image."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity["max_dev_images_override"] = max_dev_images
+    identity["max_text_images_override"] = max_text_images
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
 

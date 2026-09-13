@@ -153,6 +153,11 @@ class SceneFirstPromptOrderRequest(BaseModel):
     enabled: bool
 
 
+class ImageGenCapsRequest(BaseModel):
+    max_dev_images: int | None = None
+    max_text_images: int | None = None
+
+
 class PoolMediaItem(BaseModel):
     pool_filename: str
     media_type: str = "image"
@@ -1073,22 +1078,28 @@ async def generate_timeline_slot_image(
     # depois de comparar Ideogram (texto em francês saindo embaralhado) e
     # dev (caro demais pro formato "personagem em quase toda cena") ao
     # vivo e preferir sempre a opção mais barata.
-    force_schnell = bool(channel) and channels_module.get_identity(channel)["force_schnell_only"]
+    identity = channels_module.get_identity(channel) if channel else {}
+    force_schnell = bool(identity.get("force_schnell_only"))
 
     # teto de imagens pelo modelo caro de texto (Ideogram v3) por rascunho
-    # inteiro (config.yaml::image_gen.max_text_images_per_draft) — acima
-    # disso, cai pro FLUX schnell mesmo se o prompt pedir texto na cena
-    # (perde nitidez do texto, mas nunca estoura o orçamento do vídeo).
+    # inteiro — canal pode SUBSTITUIR o teto global de config.yaml por um
+    # mais baixo (ver webapp/channels.py::set_image_gen_caps, pedido do
+    # canal "Honda Deep Dive" pra gastar menos sem travar 100% em
+    # schnell). Acima do teto, cai pro FLUX schnell mesmo se o prompt
+    # pedir texto na cena (perde nitidez do texto, mas nunca estoura o
+    # orçamento do vídeo).
     img_cfg = load_config()["image_gen"]
+    max_text_images = identity.get("max_text_images_override") or img_cfg["max_text_images_per_draft"]
     allow_ideogram = not force_schnell and (
-        timeline_module.count_text_image_generations(slug) < img_cfg["max_text_images_per_draft"]
+        timeline_module.count_text_image_generations(slug) < max_text_images
     )
     # mesmo princípio, mas pro modelo caro de PESSOA (FLUX.1 [dev]) — só
-    # entra em trecho com has_person=true E ainda dentro do teto
-    # max_dev_images_per_draft (ver modules/image_gen.py e
+    # entra em trecho com has_person=true E ainda dentro do teto (padrão
+    # global ou o override do canal, ver modules/image_gen.py e
     # modules/timeline.py::count_dev_image_generations).
+    max_dev_images = identity.get("max_dev_images_override") or img_cfg["max_dev_images_per_draft"]
     prefer_dev = not force_schnell and bool(slot.get("has_person")) and (
-        timeline_module.count_dev_image_generations(slug) < img_cfg["max_dev_images_per_draft"]
+        timeline_module.count_dev_image_generations(slug) < max_dev_images
     )
 
     try:
@@ -1223,6 +1234,8 @@ def _identity_response(name: str) -> dict:
         "script_examples": identity["script_examples"],
         "force_schnell_only": identity["force_schnell_only"],
         "scene_first_prompt_order": identity["scene_first_prompt_order"],
+        "max_dev_images_override": identity["max_dev_images_override"],
+        "max_text_images_override": identity["max_text_images_override"],
     }
 
 
@@ -1268,6 +1281,15 @@ async def post_scene_first_prompt_order(name: str, req: SceneFirstPromptOrderReq
     """Inverte a ordem cena/estilo no image_prompt deste canal — ver
     webapp/channels.py::set_scene_first_prompt_order."""
     channels_module.set_scene_first_prompt_order(name, req.enabled)
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/image-gen-caps")
+async def post_image_gen_caps(name: str, req: ImageGenCapsRequest) -> dict:
+    """Teto por vídeo pros modelos caros (dev/Ideogram), substituindo o
+    teto global de config.yaml só pra este canal — ver
+    webapp/channels.py::set_image_gen_caps."""
+    channels_module.set_image_gen_caps(name, req.max_dev_images, req.max_text_images)
     return _identity_response(name)
 
 
