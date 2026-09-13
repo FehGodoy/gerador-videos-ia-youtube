@@ -63,6 +63,7 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
 _DEFAULT_IDENTITY = {
     "handle": "", "avatar_filename": None, "image_style_prompt": "", "character_style_prompt": "",
     "voice_waveform_enabled": False, "script_examples": [], "force_schnell_only": False,
+    "scene_first_prompt_order": False,
 }
 
 
@@ -122,6 +123,24 @@ def set_voice_waveform_enabled(channel: str, enabled: bool) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", _new_identity())
     identity["voice_waveform_enabled"] = bool(enabled)
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_scene_first_prompt_order(channel: str, enabled: bool) -> dict:
+    """Inverte a ordem do estilo no `image_prompt`: por padrão o estilo vai
+    NA FRENTE da cena (ver TIMELINE_HINTS_VERSION=8 em modules/timeline.py
+    -- fix pro Gesund ab 60, onde o estilo no final era ignorado). Mas pro
+    canal "L'Argent Silencieux", o character_style_prompt é um parágrafo
+    bem mais longo (identidade de personagem fiel) e o problema vira o
+    OPOSTO: com estilo na frente, a CENA some em vez do estilo -- testado
+    ao vivo (mesma cena com dois carros: com estilo na frente virou fundo
+    genérico; com cena na frente, saiu certo). Cada canal escolhe a ordem
+    que funciona pro tamanho do próprio style prompt."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity["scene_first_prompt_order"] = bool(enabled)
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
 

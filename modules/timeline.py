@@ -475,11 +475,22 @@ def _hints_cache_path(slug: str, beat_id: int) -> Path:
     return cache_dir("timeline", slug) / f"beat_{beat_id:03d}_hints.json"
 
 
-def _cache_key(beat_text: str, language: str, model: str, image_style: str = "", character_style: str = "") -> str:
+def _cache_key(
+    beat_text: str,
+    language: str,
+    model: str,
+    image_style: str = "",
+    character_style: str = "",
+    scene_first: bool = False,
+) -> str:
     # image_style/character_style entram na chave: trocar qualquer um dos
     # dois estilos do canal precisa regenerar (o image_prompt cacheado tem
-    # o estilo ANTIGO concatenado).
-    payload = f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}|{image_style}|{character_style}"
+    # o estilo ANTIGO concatenado). scene_first também: muda a ORDEM da
+    # concatenação, então o cache antigo teria a ordem errada.
+    payload = (
+        f"{TIMELINE_HINTS_VERSION}|{beat_text}|{language}|{model}|{image_style}|"
+        f"{character_style}|{scene_first}"
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
@@ -553,6 +564,7 @@ def generate_slot_hints(
     beat_id: int,
     image_style: str | None = None,
     character_style: str | None = None,
+    scene_first: bool = False,
 ) -> list[dict]:
     """Tradução pra português + dica curta de mídia, um item por trecho —
     UMA chamada de LLM pro bloco inteiro (evita N chamadas separadas),
@@ -567,13 +579,22 @@ def generate_slot_hints(
     (webapp/channels.py::character_style_prompt) SUBSTITUI `image_style`
     nos trechos onde a IA respondeu `has_person: true` — pedido do
     usuário pra evitar gerar pessoa fotorrealista em canais que preferem
-    um "personagem" ilustrado (ex.: Gesund ab 60). Os dois casos são
-    CONCATENADOS NA FRENTE do `image_prompt` (não no final) — não é
-    pedido pra IA lembrar de aplicar sozinha, e a posição importa de
+    um "personagem" ilustrado (ex.: Gesund ab 60). Por padrão os dois
+    casos são CONCATENADOS NA FRENTE do `image_prompt` (não no final) —
+    não é pedido pra IA lembrar de aplicar sozinha, e a posição importa de
     verdade: testado ao vivo que um parágrafo de estilo no FINAL do
     prompt, depois de uma cena já descrita de forma "fotorrealista",
     praticamente não pegava no FLUX schnell (ver TIMELINE_HINTS_VERSION=8).
     A IA só descreve o CONTEÚDO da cena e decide `has_person`, igual antes.
+
+    `scene_first` (webapp/channels.py::scene_first_prompt_order) inverte
+    essa ordem: cena primeiro, estilo depois. Existe porque o MESMO
+    princípio ("o que vem primeiro pega mais") vira problema oposto
+    quando o style prompt é longo (personagem fiel com várias regras,
+    ex.: L'Argent Silencieux) — aí é a CENA que some, não o estilo.
+    Testado ao vivo (mesma cena com dois carros): estilo na frente = fundo
+    genérico; cena na frente = cena certa. Cada canal escolhe o que
+    funciona pro tamanho do próprio style prompt.
 
     O fallback de string vazia NÃO é gravado no cache (bug real: gerar
     vários blocos em sequência dispara uma chamada de LLM por bloco em
@@ -594,7 +615,7 @@ def generate_slot_hints(
     character_style = (character_style or "").strip()
 
     cache_path = _hints_cache_path(slug, beat_id)
-    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style, character_style)
+    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style, character_style, scene_first)
     if cache_path.exists():
         cached = json.loads(cache_path.read_text(encoding="utf-8"))
         if cached.get("cache_key") == cache_key and len(cached.get("hints", [])) == len(slots):
@@ -655,7 +676,9 @@ def generate_slot_hints(
                 continue
             style = character_style if (hint["has_person"] and character_style) else image_style
             if style:
-                hint["image_prompt"] = f"{style}. {hint['image_prompt']}"
+                hint["image_prompt"] = (
+                    f"{hint['image_prompt']}. {style}" if scene_first else f"{style}. {hint['image_prompt']}"
+                )
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)

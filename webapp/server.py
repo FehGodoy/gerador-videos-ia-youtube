@@ -149,6 +149,10 @@ class ForceSchnellRequest(BaseModel):
     enabled: bool
 
 
+class SceneFirstPromptOrderRequest(BaseModel):
+    enabled: bool
+
+
 class PoolMediaItem(BaseModel):
     pool_filename: str
     media_type: str = "image"
@@ -776,9 +780,10 @@ async def generate_block_hints(slug: str, block_id: int, req: SlotHintsRequest) 
     channel_identity = channels_module.get_identity(req.channel) if req.channel else {}
     image_style = channel_identity.get("image_style_prompt")
     character_style = channel_identity.get("character_style_prompt")
+    scene_first = bool(channel_identity.get("scene_first_prompt_order"))
     hints = await asyncio.to_thread(
         timeline_module.generate_slot_hints,
-        manifest, beat_text, req.language, slug, block_id, image_style, character_style,
+        manifest, beat_text, req.language, slug, block_id, image_style, character_style, scene_first,
     )
     for slot, hint in zip(manifest, hints):
         slot["translation_pt"] = hint["translation_pt"]
@@ -1217,6 +1222,7 @@ def _identity_response(name: str) -> dict:
         "voice_waveform_enabled": identity["voice_waveform_enabled"],
         "script_examples": identity["script_examples"],
         "force_schnell_only": identity["force_schnell_only"],
+        "scene_first_prompt_order": identity["scene_first_prompt_order"],
     }
 
 
@@ -1254,6 +1260,14 @@ async def post_force_schnell(name: str, req: ForceSchnellRequest) -> dict:
     ignorando Ideogram (texto) e FLUX dev (pessoa) — ver
     webapp/channels.py::set_force_schnell_only."""
     channels_module.set_force_schnell_only(name, req.enabled)
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/scene-first-prompt-order")
+async def post_scene_first_prompt_order(name: str, req: SceneFirstPromptOrderRequest) -> dict:
+    """Inverte a ordem cena/estilo no image_prompt deste canal — ver
+    webapp/channels.py::set_scene_first_prompt_order."""
+    channels_module.set_scene_first_prompt_order(name, req.enabled)
     return _identity_response(name)
 
 
