@@ -348,12 +348,15 @@ def upload_and_distribute_cycle_images(base_url: str, slug: str, image_paths: li
     log(f"Imagens distribuídas: {result['slots_filled']} trecho(s) em {result['blocks_updated']} bloco(s).")
 
 
-def generate_block_images(base_url: str, slug: str, block_id: int, slots: list[dict], block_label: str) -> None:
+def generate_block_images(
+    base_url: str, slug: str, block_id: int, slots: list[dict], block_label: str, channel: str
+) -> None:
     eligible = [s for s in slots if _is_eligible_for_image_gen(s)]
     for i, slot in enumerate(eligible):
         log(f"{block_label}: imagem {i + 1}/{len(eligible)} (trecho {slot['index'] + 1})...")
         resp = requests.post(
             f"{base_url}/api/timeline/{slug}/{block_id}/{slot['index']}/generate-image",
+            params={"channel": channel} if channel else None,
             timeout=120,
         )
         if not resp.ok:
@@ -546,7 +549,7 @@ def main() -> int:
             log(f"{label}: gerando tradução/dica/prompt de imagem...")
             slots = fetch_hints(args.base_url, slug, i, args.language, args.channel)
             if not cycle_image_paths:
-                generate_block_images(args.base_url, slug, i, slots, label)
+                generate_block_images(args.base_url, slug, i, slots, label, args.channel)
             blocks_for_job.append({"id": i, "text": text})
 
         if cycle_image_paths:

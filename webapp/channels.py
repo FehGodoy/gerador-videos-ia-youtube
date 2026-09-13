@@ -62,7 +62,7 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
 
 _DEFAULT_IDENTITY = {
     "handle": "", "avatar_filename": None, "image_style_prompt": "", "character_style_prompt": "",
-    "voice_waveform_enabled": False, "script_examples": [],
+    "voice_waveform_enabled": False, "script_examples": [], "force_schnell_only": False,
 }
 
 
@@ -122,6 +122,22 @@ def set_voice_waveform_enabled(channel: str, enabled: bool) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", _new_identity())
     identity["voice_waveform_enabled"] = bool(enabled)
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_force_schnell_only(channel: str, enabled: bool) -> dict:
+    """Trava a geração de imagem deste canal SEMPRE em FLUX schnell (o mais
+    barato), ignorando as trocas automáticas pra Ideogram v3 (texto na
+    cena) e FLUX dev (pessoa em destaque) — pedido explícito do usuário
+    (canal "L'Argent Silencieux") depois de comparar os resultados: nem
+    Ideogram acertava o texto em francês nem dev cabia no orçamento, e ele
+    preferiu previsibilidade de custo a essas duas exceções. Ver uso em
+    webapp/server.py::generate_timeline_slot_image."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity["force_schnell_only"] = bool(enabled)
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
 

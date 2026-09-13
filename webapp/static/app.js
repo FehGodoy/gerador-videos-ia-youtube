@@ -1284,9 +1284,10 @@ async function runImageGenQueue() {
   while (draftImageGenState.queue.length && !draftImageGenState.cancelled) {
     const { blockId, slot } = draftImageGenState.queue.shift();
     try {
-      const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image`, {
-        method: "POST",
-      });
+      const resp = await fetch(
+        `/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image${currentChannel ? `?channel=${encodeURIComponent(currentChannel)}` : ""}`,
+        { method: "POST" }
+      );
       if (resp.ok) {
         const { slot: updated } = await resp.json();
         blockSlots[blockId][updated.index] = updated;
@@ -1813,9 +1814,10 @@ async function generateSlotImage(blockId, slot, btnEl) {
   btnEl.disabled = true;
   btnEl.textContent = "Gerando...";
   try {
-    const resp = await fetch(`/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image`, {
-      method: "POST",
-    });
+    const resp = await fetch(
+      `/api/timeline/${draftSlug}/${blockId}/${slot.index}/generate-image${currentChannel ? `?channel=${encodeURIComponent(currentChannel)}` : ""}`,
+      { method: "POST" }
+    );
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Erro ao gerar imagem (${resp.status})`);

@@ -145,6 +145,10 @@ class VoiceWaveformRequest(BaseModel):
     enabled: bool
 
 
+class ForceSchnellRequest(BaseModel):
+    enabled: bool
+
+
 class PoolMediaItem(BaseModel):
     pool_filename: str
     media_type: str = "image"
@@ -1030,7 +1034,9 @@ async def set_timeline_slot_fill_screen(
 
 
 @app.post("/api/timeline/{slug}/{block_id}/{slot_index}/generate-image")
-async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int) -> dict:
+async def generate_timeline_slot_image(
+    slug: str, block_id: int, slot_index: int, channel: str | None = None
+) -> dict:
     """Gera a imagem deste trecho via IA (fal.ai FLUX schnell/dev/Ideogram,
     ver roteamento em modules/image_gen.py) a partir do `image_prompt` já salvo no
     manifesto, e já atribui na posição 0 — substitui o fluxo de copiar o
@@ -1055,17 +1061,28 @@ async def generate_timeline_slot_image(slug: str, block_id: int, slot_index: int
             detail="Geração automática só funciona em efeitos de mídia única (padrão/parallax pan).",
         )
 
+    # canal pode travar SEMPRE em FLUX schnell (ver webapp/channels.py::
+    # set_force_schnell_only) -- nesse caso pula os dois tetos abaixo
+    # inteiramente, nem conta pra eles: pedido explícito do usuário
+    # (L'Argent Silencieux) de previsibilidade de custo acima de tudo,
+    # depois de comparar Ideogram (texto em francês saindo embaralhado) e
+    # dev (caro demais pro formato "personagem em quase toda cena") ao
+    # vivo e preferir sempre a opção mais barata.
+    force_schnell = bool(channel) and channels_module.get_identity(channel)["force_schnell_only"]
+
     # teto de imagens pelo modelo caro de texto (Ideogram v3) por rascunho
     # inteiro (config.yaml::image_gen.max_text_images_per_draft) — acima
     # disso, cai pro FLUX schnell mesmo se o prompt pedir texto na cena
     # (perde nitidez do texto, mas nunca estoura o orçamento do vídeo).
     img_cfg = load_config()["image_gen"]
-    allow_ideogram = timeline_module.count_text_image_generations(slug) < img_cfg["max_text_images_per_draft"]
+    allow_ideogram = not force_schnell and (
+        timeline_module.count_text_image_generations(slug) < img_cfg["max_text_images_per_draft"]
+    )
     # mesmo princípio, mas pro modelo caro de PESSOA (FLUX.1 [dev]) — só
     # entra em trecho com has_person=true E ainda dentro do teto
     # max_dev_images_per_draft (ver modules/image_gen.py e
     # modules/timeline.py::count_dev_image_generations).
-    prefer_dev = bool(slot.get("has_person")) and (
+    prefer_dev = not force_schnell and bool(slot.get("has_person")) and (
         timeline_module.count_dev_image_generations(slug) < img_cfg["max_dev_images_per_draft"]
     )
 
@@ -1199,6 +1216,7 @@ def _identity_response(name: str) -> dict:
         "character_style_prompt": identity["character_style_prompt"],
         "voice_waveform_enabled": identity["voice_waveform_enabled"],
         "script_examples": identity["script_examples"],
+        "force_schnell_only": identity["force_schnell_only"],
     }
 
 
@@ -1227,6 +1245,15 @@ async def post_character_style(name: str, req: CharacterStyleRequest) -> dict:
     """Estilo visual que SUBSTITUI o `image_style_prompt` nos trechos com
     pessoa em destaque (ver webapp/channels.py::set_character_style)."""
     channels_module.set_character_style(name, req.style.strip())
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/force-schnell")
+async def post_force_schnell(name: str, req: ForceSchnellRequest) -> dict:
+    """Trava a geração de imagem deste canal sempre em FLUX schnell,
+    ignorando Ideogram (texto) e FLUX dev (pessoa) — ver
+    webapp/channels.py::set_force_schnell_only."""
+    channels_module.set_force_schnell_only(name, req.enabled)
     return _identity_response(name)
 
 
