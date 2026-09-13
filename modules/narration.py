@@ -183,6 +183,32 @@ def synthesize_beat(
     return {"audio_path": wav_path, **meta}
 
 
+def _compute_waveform_envelope(audio: AudioSegment, samples_per_second: int) -> list[int]:
+    """Calcula um envelope de amplitude (RMS por janela) do áudio final da
+    narração, pro overlay de "raio-X da voz" no vídeo (ver
+    remotion/src/VoiceWaveform.tsx). Pré-computado aqui, UMA vez, em
+    Python — decisão deliberada em vez de carregar o WAV inteiro dentro
+    do Chromium durante o render (`@remotion/media-utils::useAudioData`):
+    um vídeo de 40+ minutos gera um WAV de 200+ MB, que viraria uns
+    450MB de Float32Array POR ABA do Chromium — risco real de estourar
+    memória com o render já sabidamente sensível a isso nesse projeto
+    (ver memória "Performance de render no GH Actions"). Assim, o
+    Remotion só faz aritmética simples em cima de uma lista de inteiros
+    já pronta.
+
+    Retorna uma lista de inteiros 0-255 (RMS de cada janela, normalizado
+    pelo pico do próprio áudio — não pelo máximo teórico do formato, que
+    deixaria a fala normal parecendo baixa demais o tempo todo), na taxa
+    `samples_per_second`."""
+    window_ms = max(1, round(1000 / samples_per_second))
+    total_ms = len(audio)
+    raw = [audio[start:start + window_ms].rms for start in range(0, total_ms, window_ms)]
+    peak = max(raw) if raw else 0
+    if not peak:
+        return [0 for _ in raw]
+    return [round(min(255, (v / peak) * 255)) for v in raw]
+
+
 def build_narration(
     beats: list[Beat],
     slug: str,
@@ -190,11 +216,15 @@ def build_narration(
     voice_id: str | None = None,
     language: str | None = None,
     speed: float | None = None,
+    waveform_samples_per_second: int | None = None,
 ) -> dict:
     """Sintetiza todos os beats e concatena em um único WAV final.
 
     Retorna {"audio_path", "duration_seconds", "beats": [{id, start_seconds,
-    end_seconds, captions}]} pronto para alimentar o composition_builder.
+    end_seconds, captions}], "waveform_envelope"} pronto para alimentar o
+    composition_builder. `waveform_envelope` é `None` quando
+    `waveform_samples_per_second` não é passado (overlay desligado pro
+    canal) — não calcula à toa.
 
     `on_beat_done`, se passado, é chamado com o id de cada beat assim que sua
     narração termina de ser sintetizada (usado pelo painel web para mostrar
@@ -243,10 +273,15 @@ def build_narration(
     audio_path = out_dir / "narration.wav"
     final_audio.export(audio_path, format="wav")
 
+    waveform_envelope = None
+    if waveform_samples_per_second:
+        waveform_envelope = _compute_waveform_envelope(final_audio, waveform_samples_per_second)
+
     return {
         "audio_path": audio_path,
         "duration_seconds": final_audio.duration_seconds,
         "beats": beats_timing,
+        "waveform_envelope": waveform_envelope,
     }
 
 

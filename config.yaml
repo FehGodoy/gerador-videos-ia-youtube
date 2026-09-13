@@ -168,6 +168,19 @@ subscribe:
   # do documentário dizer qualquer coisa. Atraso fixo pra não atropelar.
   offset_seconds: 8
 
+voice_waveform:
+  # "Raio-X da voz": barras reagindo à amplitude real da narração, por
+  # todo o vídeo — só aparece em canais com voice_waveform_enabled=true
+  # (webapp/channels.py), pedido inicialmente pro "Secretos del Corazón"
+  # (histórias longas narradas). O envelope de amplitude é pré-calculado
+  # em Python (modules/narration.py::_compute_waveform_envelope) — o
+  # Remotion nunca carrega o áudio, só lê uma lista de números.
+  samples_per_second: 20 # resolução do envelope; não é o frame rate do vídeo
+  bar_count: 140 # quantas barras aparecem na tela ao mesmo tempo (janela deslizante do envelope)
+  width_percent: 72 # largura da faixa de barras, em % da largura do vídeo
+  bottom_px: 270 # distância do rodapé — acima da barra de inscrever-se (que fica em bottom:110) pra não sobrepor
+  color: "#50F0FF" # ciano, mesmo tom aprovado no mockup estático
+
 paths:
   cache_dir: "cache"
   output_dir: "output"

@@ -141,6 +141,10 @@ class CharacterStyleRequest(BaseModel):
     style: str
 
 
+class VoiceWaveformRequest(BaseModel):
+    enabled: bool
+
+
 class PoolMediaItem(BaseModel):
     pool_filename: str
     media_type: str = "image"
@@ -413,6 +417,7 @@ async def create_job(req: CreateJobRequest) -> dict:
     # conceito só do painel (state/channels.json), e modules/ nunca importa
     # webapp/ — só desce um dict com dados já primitivos.
     subscribe_identity = None
+    voice_waveform_enabled = False
     if req.channel:
         identity = channels_module.get_identity(req.channel)
         if identity["handle"]:
@@ -421,6 +426,7 @@ async def create_job(req: CreateJobRequest) -> dict:
                 "handle": identity["handle"],
                 "avatar_filename": identity["avatar_filename"],
             }
+        voice_waveform_enabled = identity["voice_waveform_enabled"]
 
     beats = [Beat(id=b.id, text=b.text) for b in req.blocks]
     job = job_manager.create_job(
@@ -434,6 +440,7 @@ async def create_job(req: CreateJobRequest) -> dict:
         google_images_recency=req.google_images_recency,
         media_mode=req.media_mode,
         subscribe_identity=subscribe_identity,
+        voice_waveform_enabled=voice_waveform_enabled,
     )
     return {"job_id": job.id, "beats": job.beats}
 
@@ -1183,6 +1190,7 @@ def _identity_response(name: str) -> dict:
         "avatar_url": avatar_url,
         "image_style_prompt": identity["image_style_prompt"],
         "character_style_prompt": identity["character_style_prompt"],
+        "voice_waveform_enabled": identity["voice_waveform_enabled"],
         "script_examples": identity["script_examples"],
     }
 
@@ -1212,6 +1220,14 @@ async def post_character_style(name: str, req: CharacterStyleRequest) -> dict:
     """Estilo visual que SUBSTITUI o `image_style_prompt` nos trechos com
     pessoa em destaque (ver webapp/channels.py::set_character_style)."""
     channels_module.set_character_style(name, req.style.strip())
+    return _identity_response(name)
+
+
+@app.post("/api/channels/{name}/voice-waveform")
+async def post_voice_waveform(name: str, req: VoiceWaveformRequest) -> dict:
+    """Liga/desliga o overlay de "raio-X da voz" pra este canal (ver
+    webapp/channels.py::set_voice_waveform_enabled)."""
+    channels_module.set_voice_waveform_enabled(name, req.enabled)
     return _identity_response(name)
 
 

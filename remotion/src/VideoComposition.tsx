@@ -18,6 +18,7 @@ import { GalleryGrid } from "./GalleryGrid";
 import { MasonryGallery } from "./MasonryGallery";
 import { whipPan } from "./transitions/whipPan";
 import { SubscribeBar } from "./SubscribePopup";
+import { VoiceWaveform } from "./VoiceWaveform";
 import { PAPER_COLOR } from "./theme";
 
 const TRANSITION_FRAMES = 9; // ~300ms a 30fps
@@ -235,6 +236,21 @@ export const VideoComposition: React.FC<CompositionData> = (data) => {
           offsetSec={data.subscribe_popup.offset_seconds}
           subscribeText={data.subscribe_popup.subscribe_text}
           subscribedText={data.subscribe_popup.subscribed_text}
+        />
+      )}
+
+      {/* "Raio-X da voz": mesmo motivo de ser irmã da TransitionSeries que a
+          SubscribeBar acima — lê useCurrentFrame() como tempo absoluto pra
+          indexar o envelope de amplitude, então não pode ficar dentro da
+          série que sobrepõe frames pro crossfade. */}
+      {data.voice_waveform && (
+        <VoiceWaveform
+          envelope={data.voice_waveform.envelope}
+          samplesPerSecond={data.voice_waveform.samples_per_second}
+          color={data.voice_waveform.color}
+          barCount={data.voice_waveform.bar_count}
+          widthPercent={data.voice_waveform.width_percent}
+          bottomPx={data.voice_waveform.bottom_px}
         />
       )}
     </AbsoluteFill>

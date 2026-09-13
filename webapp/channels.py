@@ -62,7 +62,7 @@ def remove_favorite(channel: str, voice_id: str) -> list[dict]:
 
 _DEFAULT_IDENTITY = {
     "handle": "", "avatar_filename": None, "image_style_prompt": "", "character_style_prompt": "",
-    "script_examples": [],
+    "voice_waveform_enabled": False, "script_examples": [],
 }
 
 
@@ -108,6 +108,20 @@ def set_image_style(channel: str, style: str) -> dict:
     entry = data.setdefault(channel, {"favorites": []})
     identity = entry.setdefault("identity", _new_identity())
     identity["image_style_prompt"] = style
+    _save(data)
+    return {**_DEFAULT_IDENTITY, **identity}
+
+
+def set_voice_waveform_enabled(channel: str, enabled: bool) -> dict:
+    """Liga/desliga o overlay de "raio-X da voz" (barras reagindo à
+    amplitude real da narração, por todo o vídeo — ver
+    modules/composition_builder.py e remotion/src/VoiceWaveform.tsx)
+    pra este canal. Default False: não muda a aparência de vídeos de
+    canais que não pediram isso."""
+    data = _load()
+    entry = data.setdefault(channel, {"favorites": []})
+    identity = entry.setdefault("identity", _new_identity())
+    identity["voice_waveform_enabled"] = bool(enabled)
     _save(data)
     return {**_DEFAULT_IDENTITY, **identity}
 

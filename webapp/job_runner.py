@@ -59,6 +59,7 @@ class JobManager:
         google_images_recency: str | None = None,
         media_mode: str = "ai_search",
         subscribe_identity: dict | None = None,
+        voice_waveform_enabled: bool = False,
     ) -> Job:
         # o slug do rascunho já vem do painel web (gerado quando a voz foi
         # escolhida) — os blocos já foram narrados individualmente sob esse
@@ -73,7 +74,7 @@ class JobManager:
             self._run(
                 job, beats, voice_id, language, speed, remote,
                 allowed_sources, google_images_recency, media_mode,
-                subscribe_identity,
+                subscribe_identity, voice_waveform_enabled,
             )
         )
         return job
@@ -90,6 +91,7 @@ class JobManager:
         google_images_recency: str | None = None,
         media_mode: str = "ai_search",
         subscribe_identity: dict | None = None,
+        voice_waveform_enabled: bool = False,
     ) -> None:
         loop = asyncio.get_running_loop()
 
@@ -118,6 +120,7 @@ class JobManager:
                 google_images_recency=google_images_recency,
                 media_mode=media_mode,
                 subscribe_identity=subscribe_identity,
+                voice_waveform_enabled=voice_waveform_enabled,
             )
             composition_path = output_dir(job.slug) / "composition.json"
 

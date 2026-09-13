@@ -182,6 +182,7 @@ export interface CompositionData {
   };
   music: { path: string; volume: number } | null;
   subscribe_popup: SubscribePopupData | null;
+  voice_waveform: VoiceWaveformData | null;
   beats: Beat[];
 }
 
@@ -195,6 +196,19 @@ export interface SubscribePopupData {
   subscribed_text: string;
 }
 
+// "Raio-X da voz": barras reagindo à amplitude real da narração, por todo o
+// vídeo. `envelope` já vem pronto do Python (modules/narration.py::
+// _compute_waveform_envelope) — nunca decodificamos áudio aqui dentro,
+// justamente pra não arriscar estourar memória do Chromium num vídeo longo.
+export interface VoiceWaveformData {
+  samples_per_second: number;
+  envelope: number[];
+  color: string;
+  bar_count: number;
+  width_percent: number;
+  bottom_px: number;
+}
+
 // Usado como defaultProps no Root para o Remotion Studio ter algo válido para
 // mostrar antes de um composition.json real ser passado via --props.
 export const emptyCompositionData: CompositionData = {
@@ -204,5 +218,6 @@ export const emptyCompositionData: CompositionData = {
   audio: { path: "", duration_seconds: 1 },
   music: null,
   subscribe_popup: null,
+  voice_waveform: null,
   beats: [],
 };

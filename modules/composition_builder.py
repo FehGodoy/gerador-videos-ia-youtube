@@ -937,6 +937,7 @@ def _assemble_composition(
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
     subscribe_identity: dict | None = None,
+    voice_waveform_enabled: bool = False,
 ) -> dict:
     """Monta o composition.json a partir de uma lista de beats já pronta —
     tanto faz se vieram do parsing de um arquivo de roteiro (CLI) ou já
@@ -954,9 +955,18 @@ def _assemble_composition(
     resolvido pelo caller (webapp/server.py — este módulo nunca importa
     webapp/, então não sabe o que é "canal" nem lê state/channels.json
     sozinho). None ou handle vazio = vídeo sem a barra de inscrever-se.
+
+    `voice_waveform_enabled`: overlay de "raio-X da voz" (barras reagindo
+    à amplitude real da narração, ver remotion/src/VoiceWaveform.tsx) —
+    também resolvido pelo caller a partir do canal (webapp/channels.py::
+    voice_waveform_enabled), mesmo princípio de não misturar conceito de
+    "canal" aqui dentro. Pedido inicialmente pro canal "Secretos del
+    Corazón" (histórias longas narradas) — default False pra não mudar
+    a aparência de vídeos de outros canais sem o usuário pedir.
     """
     cfg = load_config()
 
+    waveform_cfg = cfg["voice_waveform"]
     on_narration_beat_done = None
     if on_beat_progress is not None:
         on_narration_beat_done = lambda beat_id: on_beat_progress(beat_id, "narration", "done")
@@ -967,6 +977,9 @@ def _assemble_composition(
         voice_id=voice_id,
         language=language,
         speed=speed,
+        waveform_samples_per_second=(
+            waveform_cfg["samples_per_second"] if voice_waveform_enabled else None
+        ),
     )
 
     beats_by_id = {b["id"]: b for b in narration["beats"]}
@@ -1196,6 +1209,17 @@ def _assemble_composition(
             "subscribed_text": subscribed_text,
         }
 
+    voice_waveform = None
+    if voice_waveform_enabled and narration.get("waveform_envelope") is not None:
+        voice_waveform = {
+            "samples_per_second": waveform_cfg["samples_per_second"],
+            "envelope": narration["waveform_envelope"],
+            "color": waveform_cfg["color"],
+            "bar_count": waveform_cfg["bar_count"],
+            "width_percent": waveform_cfg["width_percent"],
+            "bottom_px": waveform_cfg["bottom_px"],
+        }
+
     composition = {
         "fps": cfg["video"]["fps"],
         "width": cfg["video"]["width"],
@@ -1206,6 +1230,7 @@ def _assemble_composition(
         },
         "music": None,
         "subscribe_popup": subscribe_popup,
+        "voice_waveform": voice_waveform,
         "beats": composition_beats,
     }
 
@@ -1231,6 +1256,7 @@ def build_composition(
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
     subscribe_identity: dict | None = None,
+    voice_waveform_enabled: bool = False,
 ) -> dict:
     """Usada pelo CLI (pipeline.py): lê e divide um arquivo de roteiro."""
     script_path = Path(script_path)
@@ -1247,6 +1273,7 @@ def build_composition(
         google_images_recency,
         media_mode,
         subscribe_identity,
+        voice_waveform_enabled,
     )
 
 
@@ -1261,6 +1288,7 @@ def build_composition_from_beats(
     google_images_recency: str | None = None,
     media_mode: str = "ai_search",
     subscribe_identity: dict | None = None,
+    voice_waveform_enabled: bool = False,
 ) -> dict:
     """Usada pelo painel web: os beats já vêm prontos (o usuário monta o
     roteiro bloco a bloco na interface), sem precisar de um arquivo no disco."""
@@ -1275,6 +1303,7 @@ def build_composition_from_beats(
         google_images_recency,
         media_mode,
         subscribe_identity,
+        voice_waveform_enabled,
     )
 
 

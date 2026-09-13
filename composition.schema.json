@@ -39,6 +39,18 @@
         "subscribed_text": { "type": "string" }
       }
     },
+    "voice_waveform": {
+      "type": ["object", "null"],
+      "description": "Overlay de 'raio-X da voz': barras reagindo à amplitude real da narração, ao longo de todo o vídeo. Nulo quando o canal escolhido não tem voice_waveform_enabled=true (webapp/channels.py). Envelope pré-calculado em Python (modules/narration.py::_compute_waveform_envelope) — o Remotion nunca decodifica o áudio.",
+      "properties": {
+        "samples_per_second": { "type": "number", "description": "Resolução do envelope (amostras por segundo de áudio) — não é o frame rate do vídeo." },
+        "envelope": { "type": "array", "items": { "type": "number" }, "description": "RMS por janela, inteiros 0-255, normalizado pelo pico do próprio áudio." },
+        "color": { "type": "string" },
+        "bar_count": { "type": "number", "description": "Quantas barras aparecem na tela ao mesmo tempo (janela deslizante do envelope)." },
+        "width_percent": { "type": "number" },
+        "bottom_px": { "type": "number" }
+      }
+    },
     "beats": {
       "type": "array",
       "items": { "$ref": "#/definitions/beat" }
