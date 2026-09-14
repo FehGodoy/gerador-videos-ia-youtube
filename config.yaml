@@ -17,7 +17,15 @@ narration:
   speed: 1.0 # 0.6 (mais lento) a 1.5 (mais rápido); painel web deixa ajustar por rascunho
 
 keywords:
-  provider: anthropic # anthropic | openai
+  # anthropic | openai | manual -- "manual" DESLIGA a chamada de API pra
+  # tradução/dica/prompt de imagem (ver modules/timeline.py::
+  # generate_slot_hints e inject_slot_hints). Pedido do usuário depois que
+  # o saldo da Anthropic zerou no meio de um lote de vídeos: nesse modo, o
+  # Claude Code escreve os hints à mão na conversa (scripts/inject_hints.py)
+  # em vez de gastar crédito de API. Com "manual", a função nem tenta
+  # chamar rede nenhuma -- falha rápido e aponta pro fluxo manual, em vez
+  # de esperar 3 tentativas com erro de crédito/rede.
+  provider: manual
   model: "claude-haiku-4-5-20251001"
   terms_per_beat: 3 # 2-4 termos de busca visual por beat
 

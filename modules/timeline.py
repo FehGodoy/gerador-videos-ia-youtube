@@ -556,6 +556,101 @@ def _parse_hints(raw_response: str, n_slots: int) -> list[dict] | None:
     return [by_index[i] for i in range(n_slots)]
 
 
+def _apply_deterministic_hint_rules(
+    hints: list[dict],
+    language: str,
+    image_style: str,
+    character_style: str,
+    scene_first: bool,
+) -> None:
+    """Reforços DETERMINÍSTICOS aplicados em Python (não pedidos pra IA
+    lembrar sozinha) em cima do `image_prompt` de cada hint, no lugar —
+    extraído de generate_slot_hints pra ser reaproveitado por
+    inject_slot_hints (ver lá), que injeta hints ESCRITOS À MÃO (pelo
+    Claude Code na conversa, sem gastar crédito da API da Anthropic) mas
+    ainda precisa passar pelas MESMAS regras de idioma/estilo que uma
+    resposta da IA passaria.
+
+    Reforço de idioma (ver TIMELINE_HINTS_VERSION=6): vai em TODO
+    image_prompt não vazio, mesmo quando não descreve texto nenhum na
+    cena — o gerador de imagem externo pode inventar letreiro por conta
+    própria, sem instrução nenhuma sobre idioma, e nesse caso tende a
+    escrever em português.
+
+    Estilo (padrão ou personagem, ver TIMELINE_HINTS_VERSION=8) vai NA
+    FRENTE do image_prompt por padrão, como frase própria — não
+    concatenado no final: testado ao vivo que um parágrafo de estilo no
+    FINAL do prompt, depois de uma cena já descrita de forma
+    "fotorrealista", praticamente não pegava no FLUX schnell.
+    `scene_first` (webapp/channels.py::scene_first_prompt_order) inverte
+    essa ordem pra canais com style prompt muito longo, onde o problema
+    vira o oposto (a CENA que some, não o estilo). character_style
+    SUBSTITUI image_style no trecho com pessoa (nunca soma os dois)."""
+    lang_en = _LANGUAGE_NAMES_EN.get(language, "English")
+    for hint in hints:
+        if hint["image_prompt"]:
+            hint["image_prompt"] = (
+                f"{hint['image_prompt']}, any text/labels/captions visible in the image must "
+                f"be written in {lang_en}"
+            )
+
+    for hint in hints:
+        if not hint["image_prompt"]:
+            continue
+        style = character_style if (hint["has_person"] and character_style) else image_style
+        if style:
+            hint["image_prompt"] = (
+                f"{hint['image_prompt']}. {style}" if scene_first else f"{style}. {hint['image_prompt']}"
+            )
+
+
+def inject_slot_hints(
+    slots: list[dict],
+    beat_text: str,
+    language: str,
+    slug: str,
+    beat_id: int,
+    hints: list[dict],
+    image_style: str | None = None,
+    character_style: str | None = None,
+    scene_first: bool = False,
+) -> list[dict]:
+    """Grava no MESMO cache que generate_slot_hints usaria, mas com hints
+    ESCRITOS À MÃO em vez de chamados da API da Anthropic — pedido do
+    usuário pra conseguir gerar vídeo sem depender de crédito separado da
+    API quando o saldo dela zera (ver modules/timeline.py::generate_slot_hints
+    e o bug real que motivou o campo `_error`). Depois de injetado, uma
+    chamada normal a generate_slot_hints (via CLI ou painel) encontra o
+    cache_key batendo e devolve isso direto, sem tentar a API nenhuma vez.
+
+    `hints`: lista na MESMA ordem de `slots`, cada item já no formato cru
+    que a IA devolveria — {"translation_pt", "hint", "image_prompt",
+    "needs_media", "has_person"} — SEM o reforço de idioma/estilo ainda
+    (aplicado aqui embaixo pelas mesmas regras de generate_slot_hints, ver
+    _apply_deterministic_hint_rules), pra quem escreve os hints (o Claude
+    Code) não precisar repetir essas regras manualmente em cada prompt."""
+    if len(hints) != len(slots):
+        raise ValueError(
+            f"inject_slot_hints: {len(hints)} hints pra {len(slots)} trechos — precisa ser 1 por 1."
+        )
+
+    cfg = load_config()
+    kw_cfg = cfg["keywords"]
+    image_style = (image_style or "").strip()
+    character_style = (character_style or "").strip()
+
+    hints = [dict(h) for h in hints]  # cópia -- não muta a lista que quem chama ainda tem
+    _apply_deterministic_hint_rules(hints, language, image_style, character_style, scene_first)
+
+    cache_path = _hints_cache_path(slug, beat_id)
+    cache_key = _cache_key(beat_text, language, kw_cfg["model"], image_style, character_style, scene_first)
+    cache_path.write_text(
+        json.dumps({"cache_key": cache_key, "hints": hints}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return hints
+
+
 def generate_slot_hints(
     slots: list[dict],
     beat_text: str,
@@ -653,34 +748,7 @@ def generate_slot_hints(
                 )
 
     if hints is not None:
-        # Reforço DETERMINÍSTICO de idioma (ver TIMELINE_HINTS_VERSION=6
-        # acima) — vai em TODO image_prompt não vazio, mesmo quando a IA
-        # não descreveu texto nenhum na cena: o gerador de imagem externo
-        # pode inventar letreiro/texto por conta própria, sem instrução
-        # nenhuma sobre idioma, e nesse caso tende a escrever em português.
-        lang_en = _LANGUAGE_NAMES_EN.get(language, "English")
-        for hint in hints:
-            if hint["image_prompt"]:
-                hint["image_prompt"] = (
-                    f"{hint['image_prompt']}, any text/labels/captions visible in the image must "
-                    f"be written in {lang_en}"
-                )
-
-        # Estilo (padrão ou personagem, ver TIMELINE_HINTS_VERSION=8) vai
-        # NA FRENTE do image_prompt, como frase própria — não concatenado
-        # no final. Só em quem tem image_prompt de verdade (fallback vazio
-        # continua vazio). character_style SUBSTITUI image_style no trecho
-        # (nunca soma os dois — evitaria misturar "lousa de giz" com
-        # "ilustração vetorial colorida" na mesma cena, estilos
-        # conflitantes).
-        for hint in hints:
-            if not hint["image_prompt"]:
-                continue
-            style = character_style if (hint["has_person"] and character_style) else image_style
-            if style:
-                hint["image_prompt"] = (
-                    f"{hint['image_prompt']}. {style}" if scene_first else f"{style}. {hint['image_prompt']}"
-                )
+        _apply_deterministic_hint_rules(hints, language, image_style, character_style, scene_first)
 
     if hints is None:
         logger.warning("Beat %d: dica/tradução ficou vazia (LLM indisponível ou resposta ruim).", beat_id)
@@ -693,7 +761,19 @@ def generate_slot_hints(
         # encontrado ao vivo: 3 vídeos abortaram com "provável
         # instabilidade da API" quando na verdade o saldo da Anthropic
         # tinha zerado — só apareceu chamando a API direto pra depurar).
-        error_message = str(last_exc) if last_exc is not None else None
+        if call is None:
+            # provider "manual" (ou valor não reconhecido) -- desligado de
+            # propósito (ver config.yaml::keywords.provider), não é uma
+            # falha. Mensagem aponta direto pro fluxo manual em vez de
+            # sugerir instabilidade de API que nunca vai se resolver
+            # sozinha aqui.
+            error_message = (
+                f"Provedor de hints é \"{kw_cfg['provider']}\" (modo manual, sem API) -- "
+                "use scripts/precompute_narration.py + scripts/inject_hints.py pra escrever "
+                "tradução/dica/prompt de imagem à mão."
+            )
+        else:
+            error_message = str(last_exc) if last_exc is not None else None
         return [
             {
                 "translation_pt": "", "hint": "", "image_prompt": "", "needs_media": True,
