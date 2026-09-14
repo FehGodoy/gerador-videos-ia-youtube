@@ -37,10 +37,27 @@ sinal vem de fora (`prefer_dev`, decidido por quem chama a partir do
 config.yaml) — pedido explícito do usuário pra não gastar rápido demais
 os créditos do fal.ai testando o modelo mais caro (ver
 modules/timeline.py::count_dev_image_generations).
+
+Camada de custo pro schnell: antes de gastar crédito do fal.ai, tenta
+gerar via Cloudflare Workers AI (mesmo modelo FLUX.1 [schnell] em cima
+de uma conta com 10.000 Neurons grátis por dia, ~173 imagens grátis/dia
+por conta) -- pedido do usuário pra não gastar fal.ai à toa quando a
+cota diária da Cloudflare ainda cobre. Cadeia: conta Cloudflare 1 →
+conta Cloudflare 2 (se configurada) → fal.ai schnell, cada uma só
+tentada se a anterior falhar por QUALQUER motivo (cota do dia esgotada,
+conta não configurada, erro de rede) — nunca trava o pipeline esperando
+uma camada específica funcionar. Só dev e Ideogram continuam sempre no
+fal.ai (Cloudflare não tem um equivalente confirmado funcionando pra
+esses dois nessa conta). `width`/`height` NÃO são aceitos pela Cloudflare
+nessa conta (testado ao vivo, erro 400 quando enviados) -- a imagem sai
+sempre quadrada, sem problema real porque o Remotion já recorta com
+object-fit:cover de qualquer jeito.
 """
 from __future__ import annotations
 
+import base64
 import logging
+import os
 import re
 import time
 
@@ -54,6 +71,44 @@ FAL_IDEOGRAM_URL = "https://fal.run/fal-ai/ideogram/v3"
 _TIMEOUT_SECONDS = 60
 _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 3
+
+_CLOUDFLARE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+
+
+def _get_cloudflare_accounts() -> list[tuple[str, str]]:
+    """Lê até 2 contas Cloudflare do .env (CLOUDFLARE_ACCOUNT_ID[_2] +
+    CLOUDFLARE_API_TOKEN[_2]) -- cada uma tem cota diária própria de
+    Neurons grátis, por isso 2 contas configuradas dobram o volume grátis
+    disponível antes de cair pro fal.ai. Conta sem as DUAS variáveis
+    definidas é ignorada silenciosamente (não é erro -- é opcional)."""
+    accounts = []
+    for suffix in ("", "_2"):
+        account_id = os.environ.get(f"CLOUDFLARE_ACCOUNT_ID{suffix}")
+        token = os.environ.get(f"CLOUDFLARE_API_TOKEN{suffix}")
+        if account_id and token:
+            accounts.append((account_id, token))
+    return accounts
+
+
+def _generate_via_cloudflare(prompt: str, account_id: str, token: str) -> bytes:
+    """Gera via Cloudflare Workers AI (mesmo FLUX.1 [schnell]). Só aceita
+    `prompt`, `seed` e `steps` nessa conta -- `width`/`height` derrubam a
+    chamada com 400 (testado ao vivo, contradiz a documentação pesquisada;
+    provavelmente uma diferença de schema entre planos/versões da API).
+    Devolve os bytes já decodificados de base64 (resposta vem como JPEG
+    embutido em JSON, formato diferente do fal.ai que devolve uma URL)."""
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{_CLOUDFLARE_MODEL}"
+    resp = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        json={"prompt": prompt, "steps": 4},
+        timeout=_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success", True) or "result" not in data or "image" not in data.get("result", {}):
+        raise RuntimeError(f"Resposta inesperada da Cloudflare: {data}")
+    return base64.b64decode(data["result"]["image"])
 
 # Sinal de que o image_prompt pede texto legível na cena: a REGRA CRÍTICA DE
 # IDIOMA (modules/timeline.py::_HINTS_PROMPT_TEMPLATE) instrui a IA a
@@ -135,6 +190,24 @@ def generate_image(
         model_name, url = "flux_dev", FAL_FLUX_DEV_URL
     else:
         model_name, url = "flux_schnell", FAL_FLUX_SCHNELL_URL
+
+    # Só o schnell tem camada Cloudflare antes do fal.ai (ver docstring do
+    # módulo) -- dev e Ideogram vão direto pro fal.ai, sem tentativa
+    # prévia. Cada conta configurada é tentada uma vez; QUALQUER falha
+    # (cota diária esgotada, rede, conta não configurada) passa pra
+    # próxima sem travar o pipeline. model_name distingue a origem
+    # ("flux_schnell_cloudflare" vs "flux_schnell") só pra auditoria de
+    # custo -- não entra em nenhum teto/contagem existente.
+    if not use_ideogram and not use_dev:
+        for account_id, token in _get_cloudflare_accounts():
+            try:
+                img_bytes = _generate_via_cloudflare(prompt, account_id, token)
+                return img_bytes, ".jpg", "flux_schnell_cloudflare"
+            except Exception as exc:
+                logger.warning(
+                    "Geração de imagem via Cloudflare Workers AI falhou (conta %s...): %s",
+                    account_id[:8], exc, exc_info=True,
+                )
 
     last_error: Exception | None = None
     for attempt in range(_MAX_ATTEMPTS):
