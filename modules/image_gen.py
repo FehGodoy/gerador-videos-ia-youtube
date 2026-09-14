@@ -38,20 +38,25 @@ config.yaml) — pedido explícito do usuário pra não gastar rápido demais
 os créditos do fal.ai testando o modelo mais caro (ver
 modules/timeline.py::count_dev_image_generations).
 
-Camada de custo pro schnell: antes de gastar crédito do fal.ai, tenta
-gerar via Cloudflare Workers AI (mesmo modelo FLUX.1 [schnell] em cima
-de uma conta com 10.000 Neurons grátis por dia, ~173 imagens grátis/dia
-por conta) -- pedido do usuário pra não gastar fal.ai à toa quando a
-cota diária da Cloudflare ainda cobre. Cadeia: conta Cloudflare 1 →
-conta Cloudflare 2 (se configurada) → fal.ai schnell, cada uma só
-tentada se a anterior falhar por QUALQUER motivo (cota do dia esgotada,
-conta não configurada, erro de rede) — nunca trava o pipeline esperando
-uma camada específica funcionar. Só dev e Ideogram continuam sempre no
-fal.ai (Cloudflare não tem um equivalente confirmado funcionando pra
-esses dois nessa conta). `width`/`height` NÃO são aceitos pela Cloudflare
-nessa conta (testado ao vivo, erro 400 quando enviados) -- a imagem sai
-sempre quadrada, sem problema real porque o Remotion já recorta com
-object-fit:cover de qualquer jeito.
+Camada de custo pro schnell E pro dev: antes de gastar crédito do
+fal.ai, tenta gerar via Cloudflare Workers AI -- schnell usa
+@cf/black-forest-labs/flux-1-schnell (JSON), dev usa
+@cf/black-forest-labs/flux-2-dev (precisa multipart/form-data, não
+JSON -- erro "required properties... 'multipart'" revelou isso testando
+ao vivo). Cota é 10.000 Neurons grátis por dia por conta; dev consome
+mais Neurons por imagem que schnell (modelo maior), então a cota
+grátis "acaba" mais rápido em volume de imagens quando dev é usado --
+ainda assim vale tentar primeiro, o fallback cobre o resto. Cadeia pra
+cada tier: conta Cloudflare 1 → conta Cloudflare 2 (se configurada) →
+fal.ai (schnell ou dev, conforme o tier), cada uma só tentada se a
+anterior falhar por QUALQUER motivo (cota do dia esgotada, conta não
+configurada, erro de rede) — nunca trava o pipeline esperando uma
+camada específica funcionar. Só Ideogram continua sempre no fal.ai
+(sem equivalente confirmado na Cloudflare pra texto-na-imagem).
+`width`/`height` NÃO são aceitos pela Cloudflare nessa conta em NENHUM
+dos dois modelos (testado ao vivo, erro 400 quando enviados) -- a
+imagem sai sempre quadrada, sem problema real porque o Remotion já
+recorta com object-fit:cover de qualquer jeito.
 """
 from __future__ import annotations
 
@@ -72,7 +77,8 @@ _TIMEOUT_SECONDS = 60
 _MAX_ATTEMPTS = 2
 _RETRY_DELAY_SECONDS = 3
 
-_CLOUDFLARE_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+_CLOUDFLARE_SCHNELL_MODEL = "@cf/black-forest-labs/flux-1-schnell"
+_CLOUDFLARE_DEV_MODEL = "@cf/black-forest-labs/flux-2-dev"
 
 
 def _get_cloudflare_accounts() -> list[tuple[str, str]]:
@@ -91,17 +97,37 @@ def _get_cloudflare_accounts() -> list[tuple[str, str]]:
 
 
 def _generate_via_cloudflare(prompt: str, account_id: str, token: str) -> bytes:
-    """Gera via Cloudflare Workers AI (mesmo FLUX.1 [schnell]). Só aceita
+    """Gera via Cloudflare Workers AI (FLUX.1 [schnell]). Só aceita
     `prompt`, `seed` e `steps` nessa conta -- `width`/`height` derrubam a
     chamada com 400 (testado ao vivo, contradiz a documentação pesquisada;
     provavelmente uma diferença de schema entre planos/versões da API).
     Devolve os bytes já decodificados de base64 (resposta vem como JPEG
     embutido em JSON, formato diferente do fal.ai que devolve uma URL)."""
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{_CLOUDFLARE_MODEL}"
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{_CLOUDFLARE_SCHNELL_MODEL}"
     resp = requests.post(
         url,
         headers={"Authorization": f"Bearer {token}"},
         json={"prompt": prompt, "steps": 4},
+        timeout=_TIMEOUT_SECONDS,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("success", True) or "result" not in data or "image" not in data.get("result", {}):
+        raise RuntimeError(f"Resposta inesperada da Cloudflare: {data}")
+    return base64.b64decode(data["result"]["image"])
+
+
+def _generate_via_cloudflare_dev(prompt: str, account_id: str, token: str) -> bytes:
+    """Gera via Cloudflare Workers AI (FLUX.2 [dev], equivalente ao FLUX.1
+    [dev] do fal.ai em qualidade). Diferente do schnell, esse modelo exige
+    o corpo em multipart/form-data -- mandar `json=` (como no schnell) dá
+    400 "required properties... 'multipart'" (testado ao vivo). Resposta
+    tem o mesmo formato do schnell (JPEG em base64 dentro de result.image)."""
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{_CLOUDFLARE_DEV_MODEL}"
+    resp = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+        files={"prompt": (None, prompt)},
         timeout=_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
@@ -146,10 +172,12 @@ def generate_image(
     allow_ideogram: bool = True,
     prefer_dev: bool = False,
 ) -> tuple[bytes, str, str]:
-    """Gera uma imagem via fal.ai a partir de `prompt` e devolve
-    `(bytes_da_imagem, extensao, modelo_usado)` — `modelo_usado` é
-    "ideogram", "flux_dev" ou "flux_schnell", pra quem chama persistir e
-    contar (ver modules/timeline.py::count_text_image_generations e
+    """Gera uma imagem (via Cloudflare Workers AI quando disponível, senão
+    fal.ai) a partir de `prompt` e devolve `(bytes_da_imagem, extensao,
+    modelo_usado)` — `modelo_usado` é "ideogram", "flux_dev",
+    "flux_dev_cloudflare", "flux_schnell" ou "flux_schnell_cloudflare",
+    pra quem chama persistir e contar (ver
+    modules/timeline.py::count_text_image_generations e
     count_dev_image_generations, usados pra aplicar os tetos
     `image_gen.max_text_images_per_draft`/`max_dev_images_per_draft` do
     config.yaml).
@@ -191,22 +219,24 @@ def generate_image(
     else:
         model_name, url = "flux_schnell", FAL_FLUX_SCHNELL_URL
 
-    # Só o schnell tem camada Cloudflare antes do fal.ai (ver docstring do
-    # módulo) -- dev e Ideogram vão direto pro fal.ai, sem tentativa
-    # prévia. Cada conta configurada é tentada uma vez; QUALQUER falha
-    # (cota diária esgotada, rede, conta não configurada) passa pra
-    # próxima sem travar o pipeline. model_name distingue a origem
-    # ("flux_schnell_cloudflare" vs "flux_schnell") só pra auditoria de
-    # custo -- não entra em nenhum teto/contagem existente.
-    if not use_ideogram and not use_dev:
+    # Schnell E dev têm camada Cloudflare antes do fal.ai (ver docstring do
+    # módulo) -- só Ideogram vai direto pro fal.ai, sem tentativa prévia.
+    # Cada conta configurada é tentada uma vez; QUALQUER falha (cota diária
+    # esgotada, rede, conta não configurada) passa pra próxima sem travar
+    # o pipeline. model_name distingue a origem ("flux_schnell_cloudflare"/
+    # "flux_dev_cloudflare" vs "flux_schnell"/"flux_dev") só pra auditoria
+    # de custo -- não entra em nenhum teto/contagem existente.
+    if not use_ideogram:
+        cloudflare_fn = _generate_via_cloudflare_dev if use_dev else _generate_via_cloudflare
+        cloudflare_model_name = "flux_dev_cloudflare" if use_dev else "flux_schnell_cloudflare"
         for account_id, token in _get_cloudflare_accounts():
             try:
-                img_bytes = _generate_via_cloudflare(prompt, account_id, token)
-                return img_bytes, ".jpg", "flux_schnell_cloudflare"
+                img_bytes = cloudflare_fn(prompt, account_id, token)
+                return img_bytes, ".jpg", cloudflare_model_name
             except Exception as exc:
                 logger.warning(
-                    "Geração de imagem via Cloudflare Workers AI falhou (conta %s...): %s",
-                    account_id[:8], exc, exc_info=True,
+                    "Geração de imagem via Cloudflare Workers AI falhou (conta %s..., modelo %s): %s",
+                    account_id[:8], cloudflare_model_name, exc, exc_info=True,
                 )
 
     last_error: Exception | None = None
